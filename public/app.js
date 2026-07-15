@@ -551,8 +551,8 @@ function renderUsage() {
 function renderServerPrimaryUsage(usage) {
   const totals = usage.totals;
   document.querySelector('#usage-kpis').innerHTML = [
-    kpiCard('총 토큰', formatTokens(totals.totalTokens), `${formatNumber(totals.requests)}회 요청`, 'token'),
-    kpiCard('입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatPercent(totals.cacheRate)}`, 'input'),
+    kpiCard('캐시 제외 토큰', formatTokens(totals.totalTokens), `${formatNumber(totals.requests)}회 요청`, 'token'),
+    kpiCard('입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatTokens(totals.inputCachedTokens)}`, 'input'),
     kpiCard('출력 토큰', formatTokens(totals.outputTokens), `추론 ${formatTokens(totals.reasoningTokens)}`, 'output'),
     kpiCard('실패율', formatPercent(totals.failureRate), `${formatNumber(totals.failedRequests)}회 실패`, totals.failedRequests ? 'danger' : 'ok'),
     kpiCard('평균 응답', formatDuration(totals.averageDurationMs), `${formatNumber(totals.successfulRequests)}회 성공`, 'latency'),
@@ -579,8 +579,8 @@ function renderExternalPrimaryUsage(usage) {
   const totals = external.totals;
   const quota = firstExternalQuota(external);
   document.querySelector('#usage-kpis').innerHTML = [
-    kpiCard('CLI 총 토큰', formatTokens(totals.totalTokens), `${formatNumber(totals.windows)}개 수집 창`, 'token'),
-    kpiCard('CLI 입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatPercent(totals.inputTokens ? totals.inputCachedTokens / totals.inputTokens : 0)}`, 'input'),
+    kpiCard('CLI 캐시 제외', formatTokens(totals.totalTokens), `${formatNumber(totals.windows)}개 수집 창`, 'token'),
+    kpiCard('CLI 입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatTokens(totals.inputCachedTokens)}`, 'input'),
     kpiCard('CLI 출력 토큰', formatTokens(totals.outputTokens), `추론 ${formatTokens(totals.reasoningTokens)}`, 'output'),
     kpiCard('잔여 한도', quota ? `${externalQuotaPercent(quota)}%` : '없음', quota ? `${quota.label}` : 'usage push 필요', quota ? 'ok' : 'latency'),
     kpiCard('연결 도구', formatNumber(external.byTool.length), external.byTool.map((item) => externalToolLabel(item.tool)).join(', ') || '없음', 'latency'),
@@ -616,7 +616,7 @@ function renderExternalPrimaryUsers(users) {
     target.innerHTML = '<div class="empty">아직 사용자별 CLI 사용량 기록이 없습니다.</div>';
     return;
   }
-  target.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>출력</th><th>총 토큰</th></tr></thead><tbody>${users.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
+  target.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${users.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
 }
 
 function renderExternalUsage(external) {
@@ -640,7 +640,7 @@ function renderExternalUsage(external) {
   if (!external.byUser.length) {
     userTarget.innerHTML = '<div class="empty">외부 토큰 기록이 없습니다.</div>';
   } else {
-    userTarget.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>출력</th><th>총 토큰</th></tr></thead><tbody>${external.byUser.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
+    userTarget.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${external.byUser.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
   }
 }
 
@@ -743,7 +743,7 @@ function renderUsageUsers(users) {
     target.innerHTML = '<div class="empty">아직 사용자별 기록이 없습니다.</div>';
     return;
   }
-  target.innerHTML = `<table><thead><tr><th>사용자</th><th>요청</th><th>입력</th><th>출력</th><th>총 토큰</th><th>비중</th></tr></thead><tbody>${users.map((item) => {
+  target.innerHTML = `<table><thead><tr><th>사용자</th><th>요청</th><th>입력</th><th>출력</th><th>캐시 제외</th><th>비중</th></tr></thead><tbody>${users.map((item) => {
     const share = state.usage.totals.totalTokens ? item.totalTokens / state.usage.totals.totalTokens : 0;
     return `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.requests)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td><td>${formatPercent(share)}</td></tr>`;
   }).join('')}</tbody></table>`;

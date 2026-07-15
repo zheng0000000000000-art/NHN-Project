@@ -51,12 +51,12 @@ test('usage tracker aggregates by user, source, feature and budget', async (t) =
     { id: 'usr_b', name: 'Bob', role: 'member' },
   ] });
   assert.equal(summary.totals.requests, 2);
-  assert.equal(summary.totals.totalTokens, 450);
+  assert.equal(summary.totals.totalTokens, 425);
   assert.equal(summary.totals.inputCachedTokens, 25);
-  assert.equal(summary.budget.tokens.percent, 45);
+  assert.equal(summary.budget.tokens.percent, 42.5);
   assert.equal(summary.byUser[0].name, 'Bob');
   assert.equal(summary.bySource.find((item) => item.source === 'cli').requests, 1);
-  assert.equal(summary.byFeature.find((item) => item.feature === 'task-draft').totalTokens, 150);
+  assert.equal(summary.byFeature.find((item) => item.feature === 'task-draft').totalTokens, 125);
   assert.equal(summary.recent.length, 2);
   assert.equal(summary.totals.pricedRequests, 2);
   assert.ok(summary.totals.estimatedCostUsd > 0);

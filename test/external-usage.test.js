@@ -54,7 +54,7 @@ test('external usage windows are idempotent and partial overlaps fail closed', a
   );
   const summary = await store.summary({ days: 90, users: [{ id: 'usr_a', name: 'Alice', role: 'admin' }] });
   assert.equal(summary.events, 1);
-  assert.equal(summary.totals.totalTokens, 150);
+  assert.equal(summary.totals.totalTokens, 130);
   assert.equal(summary.byUser[0].name, 'Alice');
 });
 

@@ -262,9 +262,10 @@ function aggregateRows(rows) {
   const total = { windows: 0, inputTokens: 0, inputCachedTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0 };
   for (const row of rows) {
     total.windows += 1;
-    for (const key of ['inputTokens', 'inputCachedTokens', 'outputTokens', 'reasoningTokens', 'totalTokens']) {
+    for (const key of ['inputTokens', 'inputCachedTokens', 'outputTokens', 'reasoningTokens']) {
       total[key] += Math.max(0, Math.round(Number(row.usage?.[key]) || 0));
     }
+    total.totalTokens += usageTokensExcludingCache(row.usage);
   }
   return total;
 }
@@ -324,4 +325,13 @@ function normalizeActorFilter(actorUserIds) {
   const values = Array.isArray(actorUserIds) ? actorUserIds : [actorUserIds];
   const ids = values.map((value) => String(value || '').trim()).filter(Boolean);
   return ids.length ? new Set(ids) : new Set();
+}
+
+function usageTokensExcludingCache(usage = {}) {
+  const input = Math.max(0, Math.round(Number(usage.inputTokens) || 0));
+  const cached = Math.min(input, Math.max(0, Math.round(Number(usage.inputCachedTokens) || 0)));
+  const output = Math.max(0, Math.round(Number(usage.outputTokens) || 0));
+  const fallback = Math.max(0, Math.round(Number(usage.totalTokens) || 0));
+  if (input === 0 && output === 0 && fallback > 0) return fallback;
+  return Math.max(0, input - cached) + output;
 }

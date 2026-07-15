@@ -272,7 +272,7 @@ function aggregate(events) {
     total.inputCachedTokens += nonNegative(event.usage?.inputCachedTokens);
     total.outputTokens += nonNegative(event.usage?.outputTokens);
     total.reasoningTokens += nonNegative(event.usage?.reasoningTokens);
-    total.totalTokens += nonNegative(event.usage?.totalTokens);
+    total.totalTokens += usageTokensExcludingCache(event.usage);
     if (Number.isFinite(event.estimatedCostUsd)) {
       total.estimatedCostUsd += event.estimatedCostUsd;
       total.pricedRequests += 1;
@@ -408,4 +408,13 @@ function normalizeActorFilter(actorUserIds) {
   const values = Array.isArray(actorUserIds) ? actorUserIds : [actorUserIds];
   const ids = values.map((value) => String(value || '').trim()).filter(Boolean);
   return ids.length ? new Set(ids) : new Set();
+}
+
+function usageTokensExcludingCache(usage = {}) {
+  const input = nonNegative(usage.inputTokens);
+  const cached = Math.min(input, nonNegative(usage.inputCachedTokens));
+  const output = nonNegative(usage.outputTokens);
+  const fallback = nonNegative(usage.totalTokens);
+  if (input === 0 && output === 0 && fallback > 0) return fallback;
+  return Math.max(0, input - cached) + output;
 }
