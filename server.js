@@ -13,8 +13,9 @@ import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
 import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
+import { ProjectContextStore } from './src/project-context.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
-import { assertPlainObject, HttpError, nowIso } from './src/utils.js';
+import { assertPlainObject, HttpError, nowIso, sha256 } from './src/utils.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
@@ -37,10 +38,11 @@ const verifier = new Verifier({ workspaceRoot, harnessRegistry });
 const failureCases = new FailureCaseStore(dataDirectory);
 const skillRegistry = new SkillRegistry({ dataDirectory });
 const learning = new FailureLearningService({ failureCases, harnessRegistry, skillRegistry });
+const projectContext = new ProjectContextStore(dataDirectory);
 const ai = new AIService();
 const usageTracker = new UsageTracker({ dataDirectory, configPath: usageConfigPath });
 const externalUsage = new ExternalUsageStore({ dataDirectory });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), usageTracker.initialize(), externalUsage.initialize()]);
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), usageTracker.initialize(), externalUsage.initialize()]);
 const sessionSecret = await loadOrCreateSecret(dataDirectory);
 
 const server = http.createServer(async (request, response) => {
@@ -69,7 +71,7 @@ async function handleApi(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   const method = request.method || 'GET';
 
-  if (method === 'POST') requireTrustedClientHeader(request);
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) requireTrustedClientHeader(request);
 
   if (method === 'POST' && url.pathname === '/api/auth/register') {
     const body = await readBody(request);
@@ -105,7 +107,7 @@ async function handleApi(request, response) {
   const actor = await requireUser(request);
 
   if (method === 'GET' && url.pathname === '/api/bootstrap') {
-    const [users, tasks, profiles, harnesses, skills, failures, failureSummary] = await Promise.all([
+    const [users, tasks, profiles, harnesses, skills, failures, failureSummary, context] = await Promise.all([
       store.listUsers(),
       store.listTasks(),
       verifier.publicProfiles(),
@@ -113,6 +115,7 @@ async function handleApi(request, response) {
       skillRegistry.list(),
       failureCases.list({ limit: 100 }),
       failureCases.summary(),
+      projectContext.get(),
     ]);
     sendJson(response, 200, {
       user: actor,
@@ -125,8 +128,21 @@ async function handleApi(request, response) {
       skills,
       failures,
       failureSummary,
+      projectContext: context,
       workspace: { root: workspaceRoot },
     });
+    return;
+  }
+
+  if (method === 'PUT' && url.pathname === '/api/project-context') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const context = await projectContext.update(actor, body);
+    await store.recordAudit(actor.id, 'PROJECT_CONTEXT_UPDATED', {
+      length: context.content.length,
+      contentSha256: context.content ? sha256(context.content) : null,
+    });
+    sendJson(response, 200, { projectContext: context });
     return;
   }
 
@@ -337,8 +353,8 @@ async function handleApi(request, response) {
   if (method === 'POST' && url.pathname === '/api/ai/draft-task') {
     const body = await readBody(request);
     assertPlainObject(body);
-    const [tasks, profiles] = await Promise.all([store.listTasks(), verifier.publicProfiles()]);
-    const draft = await runTrackedAI(request, actor, 'task-draft', () => ai.draftTask({ goal: body.goal, tasks, profiles }));
+    const [tasks, profiles, context] = await Promise.all([store.listTasks(), verifier.publicProfiles(), projectContext.get()]);
+    const draft = await runTrackedAI(request, actor, 'task-draft', () => ai.draftTask({ goal: body.goal, tasks, profiles, projectContext: context }));
     await store.recordAudit(actor.id, 'AI_TASK_DRAFTED', {
       contentSha256: draft.aiMeta.contentSha256,
       model: draft.aiMeta.model,
@@ -351,8 +367,8 @@ async function handleApi(request, response) {
   if (method === 'POST' && url.pathname === '/api/ai/next-tasks') {
     const body = await readBody(request);
     assertPlainObject(body);
-    const [tasks, profiles] = await Promise.all([store.listTasks(), verifier.publicProfiles()]);
-    const result = await runTrackedAI(request, actor, 'next-tasks', () => ai.suggestNextTasks({ objective: body.objective, tasks, profiles }));
+    const [tasks, profiles, context] = await Promise.all([store.listTasks(), verifier.publicProfiles(), projectContext.get()]);
+    const result = await runTrackedAI(request, actor, 'next-tasks', () => ai.suggestNextTasks({ objective: body.objective, tasks, profiles, projectContext: context }));
     await store.recordAudit(actor.id, 'AI_NEXT_TASKS_SUGGESTED', {
       contentSha256: result.aiMeta.contentSha256,
       suggestionCount: result.suggestions.length,
@@ -371,15 +387,15 @@ async function handleApi(request, response) {
     const current = await store.getTask(taskId);
     if (!current) throw new HttpError(404, 'Task not found.');
     requireTaskParticipantOrAdmin(current, actor);
-    const users = await store.listUsers();
+    const [users, context] = await Promise.all([store.listUsers(), projectContext.get()]);
     const appliedSkills = aiAction === 'brief' ? await skillRegistry.resolveActiveMany(current.skillIds ?? []) : [];
     const generated = await runTrackedAI(
       request,
       actor,
       aiAction === 'brief' ? 'task-brief' : 'verification-summary',
       () => aiAction === 'brief'
-        ? ai.taskBrief({ task: current, users, skills: appliedSkills })
-        : ai.verificationSummary({ task: current, users }),
+        ? ai.taskBrief({ task: current, users, skills: appliedSkills, projectContext: context })
+        : ai.verificationSummary({ task: current, users, projectContext: context }),
     );
     const field = aiAction === 'brief' ? 'brief' : 'verificationSummary';
     const mutation = aiAction === 'brief' ? 'AI_TASK_BRIEF_SAVED' : 'AI_VERIFICATION_SUMMARY_SAVED';

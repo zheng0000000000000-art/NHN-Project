@@ -136,6 +136,13 @@
             <button id="close-ai-panel" class="ghost" type="button">닫기</button>
           </div>
           <div id="ai-disabled-message" class="notice hidden"></div>
+          <form id="project-context-form" class="stack">
+            <label>Project context<textarea name="content" rows="5" maxlength="12000" placeholder="Stable project rules, product goals, coding conventions, team notes..."></textarea></label>
+            <div class="ai-actions">
+              <button class="ghost" type="submit">Save context</button>
+              <span id="project-context-meta" class="muted"></span>
+            </div>
+          </form>
           <form id="ai-form" class="stack">
             <label>만들고 싶은 목표 또는 현재 프로젝트 목표<textarea name="goal" rows="5" maxlength="6000" required placeholder="예: 플레이어가 적에게 맞을 때 체력 UI가 즉시 갱신되도록 구현한다."></textarea></label>
             <div class="ai-actions">

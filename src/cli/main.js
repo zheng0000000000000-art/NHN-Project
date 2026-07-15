@@ -4,6 +4,7 @@ import { botHome, clearSession, loadConfig, loadSession, loadSessionFrom, normal
 import { mergeCliExecutor } from '../executor.js';
 import { printFailures, printHarnesses, printTask, printTasks, printUsers, printValue } from './format.js';
 import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { readPassword } from './password.js';
 import { captureClaudeStatusline, collectUsageSnapshots, commitUsageCursor } from './usage-collector.js';
 import { startOtelReceiver } from './otel-receiver.js';
@@ -93,6 +94,7 @@ export async function runCli(argv) {
   if (command === 'solo') return runSolo(client, positionals.slice(1), options, json);
   if (command === 'reviewer') return runReviewer(client, positionals.slice(1), options, json);
   if (command === 'orchestrate') return runOrchestrate(client, positionals.slice(1), options, json);
+  if (command === 'dispatch') return runDispatch(client, positionals.slice(1), options, json);
 
   throw new Error(`Unknown command: ${command}. Run "team-loop help".`);
 }
@@ -113,6 +115,120 @@ async function reviewOneTask(client, taskId, approveComment, rejectComment) {
     if (latest && latest.status === 'REVIEW') return rejectTask(client, latest, `${rejectComment} (${error.message})`);
     return { taskId, action: 'skip', reason: error.message };
   }
+}
+
+function buildDispatchPrompt(task, rules, workspace) {
+  const lines = [];
+  lines.push(`You are an autonomous coding agent completing ONE task in the git repository at ${workspace}.`);
+  lines.push('');
+  lines.push(`# Task: ${task.title}`);
+  if (task.description) lines.push(task.description);
+  if (task.acceptanceCriteria?.length) {
+    lines.push('', '# Acceptance criteria (all must hold when you finish):');
+    for (const item of task.acceptanceCriteria) lines.push(`- ${item}`);
+  }
+  lines.push('', '# HARD scope constraint');
+  lines.push(`Create or modify ONLY files matching these path patterns: ${task.allowedPaths.join(', ')}.`);
+  lines.push('Do NOT touch any file outside this scope. Paths owned by other tasks/agents are off-limits.');
+  if (rules.length) {
+    lines.push('', '# Team rules (shared skills):');
+    for (const rule of rules) lines.push(`- ${rule}`);
+  }
+  lines.push('', '# Finish');
+  lines.push('Make the smallest change that satisfies the acceptance criteria, then stop. Do NOT run git commit, push, or any network calls.');
+  return lines.join('\n');
+}
+
+function runExecutor(tool, prompt, { workspace, model, permission, inherit }) {
+  return new Promise((resolve, reject) => {
+    if (tool !== 'claude-code') {
+      reject(new Error(`Executor "${tool}" is not supported yet (only claude-code).`));
+      return;
+    }
+    const args = ['-p', prompt, '--permission-mode', permission || 'acceptEdits'];
+    if (model) args.push('--model', model);
+    const exe = process.env.TEAM_LOOP_CLAUDE_BIN || 'claude';
+    const child = spawn(exe, args, {
+      cwd: workspace,
+      stdio: inherit ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
+      shell: false,
+      windowsHide: true,
+    });
+    let out = '';
+    if (!inherit) {
+      child.stdout.on('data', (chunk) => { out += chunk; });
+      child.stderr.on('data', (chunk) => { out += chunk; });
+    }
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, output: out }));
+  });
+}
+
+// Dispatch: hand an existing board task to a CLI executor that actually does the work,
+// then verify. Dry-run by default; --execute really runs the agent in WORKSPACE_ROOT.
+async function runDispatch(client, positionals, options, json) {
+  const taskId = requirePositional(positionals, 0, 'Task ID is required.');
+  const bootstrap = await client.request('/api/bootstrap');
+  let task = findTask(bootstrap.tasks, taskId);
+  if (!task) throw new Error(`Task ${taskId} not found.`);
+  const workspace = bootstrap.workspace?.root || process.cwd();
+
+  if (task.status === 'READY') {
+    const executor = mergeCliExecutor(await loadConfig());
+    task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
+      method: 'POST', body: { expectedVersion: task.version, ...(executor ? { executor } : {}) },
+    })).task;
+  }
+  if (task.status !== 'IN_PROGRESS') throw new Error(`Task must be IN_PROGRESS to dispatch (now ${task.status}).`);
+
+  const activeSkills = (await client.request('/api/skills')).skills
+    .filter((skill) => skill.status === 'ACTIVE' && (task.skillIds || []).includes(skill.id));
+  const rules = activeSkills.flatMap((skill) => skill.rules || []);
+  const tool = stringOption(options, 'executor', task.executor?.tool || 'claude-code');
+  const model = stringOption(options, 'model', task.executor?.model || '');
+  const prompt = buildDispatchPrompt(task, rules, workspace);
+
+  if (!options.execute) {
+    const plan = {
+      dryRun: true, taskId: task.id, status: task.status, executor: tool, model: model || null,
+      workspace, allowedPaths: task.allowedPaths, skillRules: rules, prompt,
+      wouldRun: `claude -p <prompt> --permission-mode ${stringOption(options, 'permission', 'acceptEdits')}${model ? ` --model ${model}` : ''}`,
+    };
+    printValue(plan, { json: true });
+    if (!json) process.stdout.write('\n[dry-run] Re-run with --execute to actually run the agent in the workspace.\n');
+    return 0;
+  }
+
+  if (!json) process.stdout.write(`Dispatching ${task.id} to ${tool} in ${workspace} ...\n`);
+  const run = await runExecutor(tool, prompt, {
+    workspace, model, permission: stringOption(options, 'permission', 'acceptEdits'), inherit: !json,
+  });
+  if (!json) process.stdout.write(`Executor exited with code ${run.code}. Verifying ...\n`);
+
+  const verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
+  task = verifyResult.task;
+  const passed = Boolean(task.verification?.passed);
+
+  let review = null;
+  const to = stringOption(options, 'to', 'verify');
+  if (passed && (to === 'review' || to === 'done')) {
+    task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/request-review`, { method: 'POST', body: { expectedVersion: task.version } })).task;
+    if (to === 'done') {
+      const reviewerSession = await loadSessionFrom(stringOption(options, 'reviewer-home', botHome()));
+      if (!reviewerSession?.cookie) throw new Error('No reviewer session; set up the reviewer bot or use --to review.');
+      const reviewerClient = new CliClient({ server: client.server, cookie: reviewerSession.cookie });
+      review = await reviewOneTask(reviewerClient, task.id, 'Auto-approved after dispatch (verification green).', 'Auto-rejected after dispatch: re-verification required.');
+    }
+  }
+
+  const final = findTask((await client.request('/api/bootstrap')).tasks, task.id);
+  const summary = { taskId: task.id, executorExit: run.code, verification: final.verification?.status, passed, finalStatus: final.status, review };
+  if (json) printValue({ ...summary, task: final }, { json: true });
+  else {
+    process.stdout.write(`verify=${final.verification?.status} passed=${passed} status=${final.status}${review ? ` review=${review.action}` : ''}\n`);
+    if (!passed) process.stdout.write(`Failure cases: ${(verifyResult.failureCases || []).map((f) => f.id).join(', ') || 'none'}\n`);
+  }
+  return passed ? 0 : 2;
 }
 
 // Full loop orchestration: the current account acts as worker (create -> claim ->
@@ -729,5 +845,5 @@ function requirePositional(positionals, index, message) {
 }
 
 function printHelp() {
-  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
+  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nDispatch (hand a task to a CLI agent that does the work):\n  team-loop dispatch <task-id> [--execute] [--model NAME] [--permission MODE]\n      [--to verify|review|done] [--reviewer-home DIR]\n  (default is a dry-run that prints the work order; --execute runs the agent\n   headless in WORKSPACE_ROOT, then verifies. Only claude-code executor for now.)\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
 }

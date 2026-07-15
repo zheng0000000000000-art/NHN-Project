@@ -4,6 +4,7 @@ const state = {
   tasks: [],
   profiles: {},
   ai: { enabled: false, missing: [] },
+  projectContext: { content: '', updatedAt: null, updatedByUserId: null },
   workspace: null,
   pollTimer: null,
   aiResults: null,
@@ -293,6 +294,22 @@ document.querySelector('#ai-next-tasks-button').addEventListener('click', async 
   await runAIGlobal('/api/ai/next-tasks', { objective }, 'suggestions');
 });
 
+document.querySelector('#project-context-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const payload = await api('/api/project-context', {
+      method: 'PUT',
+      body: { content: form.elements.content.value },
+    });
+    state.projectContext = payload.projectContext;
+    renderProjectContext();
+    showToast('Project context saved.');
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
 aiResults.addEventListener('click', (event) => {
   const button = event.target.closest('button[data-ai-draft-index]');
   if (!button || !state.aiResults) return;
@@ -401,6 +418,7 @@ async function bootstrap({ quiet = true } = {}) {
     document.querySelector('#workspace-root').textContent = state.workspace.root;
     populateTaskForm();
     renderAIStatus();
+    renderProjectContext();
     render();
     renderHarnessDashboard();
     switchView(state.activeView);
@@ -437,6 +455,17 @@ function populateTaskForm() {
   if ([...profile.options].some((option) => option.value === currentProfile)) profile.value = currentProfile;
 }
 
+function renderProjectContext() {
+  const form = document.querySelector('#project-context-form');
+  if (!form) return;
+  if (document.activeElement !== form.elements.content) {
+    form.elements.content.value = state.projectContext?.content || '';
+  }
+  const meta = document.querySelector('#project-context-meta');
+  const updatedAt = state.projectContext?.updatedAt;
+  meta.textContent = updatedAt ? `Updated ${new Date(updatedAt).toLocaleString()}` : 'Not saved yet';
+}
+
 function resetTaskForm(form) {
   form.reset();
   form.elements.priority.value = '100';
@@ -451,7 +480,7 @@ function userOption(user) {
 function renderAIStatus() {
   const badge = document.querySelector('#ai-status');
   const disabled = document.querySelector('#ai-disabled-message');
-  badge.textContent = state.ai.enabled ? `AI ${state.ai.model}` : 'AI 꺼짐';
+  badge.textContent = state.ai.enabled ? `AI ${state.ai.provider || 'openai'} ${state.ai.model}` : 'AI 꺼짐';
   badge.className = `badge ${state.ai.enabled ? 'pass' : 'fail'}`;
   disabled.classList.toggle('hidden', state.ai.enabled);
   disabled.textContent = state.ai.enabled

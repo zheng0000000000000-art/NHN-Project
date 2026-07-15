@@ -31,6 +31,14 @@ test('AI service stays disabled until key and model are configured', () => {
   assert.deepEqual(ai.status().missing, ['OPENAI_API_KEY', 'AI_MODEL']);
 });
 
+test('AI service can use Ollama without an API key', () => {
+  const ai = new AIService({ provider: 'ollama', apiKey: '', model: 'qwen2.5-coder:14b' });
+  assert.equal(ai.status().enabled, true);
+  assert.equal(ai.status().provider, 'ollama');
+  assert.equal(ai.status().baseUrl, 'http://127.0.0.1:11434');
+  assert.deepEqual(ai.status().missing, []);
+});
+
 test('AI task draft uses the Responses API with strict structured output', async () => {
   let captured;
   const draft = {
@@ -68,6 +76,56 @@ test('AI task draft uses the Responses API with strict structured output', async
   assert.equal(result.aiMeta.model, 'test-model');
   assert.equal(result.aiMeta.providerRequestId, 'resp_test_1');
   assert.deepEqual(result.aiMeta.usage, { inputTokens: 120, inputCachedTokens: 20, outputTokens: 30, reasoningTokens: 10, totalTokens: 150 });
+});
+
+test('AI task draft can use native Ollama chat with structured JSON', async () => {
+  let captured;
+  const draft = {
+    title: 'Local AI task',
+    description: 'Use a local model for AI assistance.',
+    priority: 20,
+    allowedPaths: ['src/ai.js'],
+    verificationProfile: 'node-project',
+    acceptanceCriteria: ['Ollama receives the request without an API key.'],
+    risks: [],
+  };
+  const ai = new AIService({
+    provider: 'ollama',
+    apiKey: '',
+    model: 'qwen2.5-coder:14b',
+    fetchImpl: async (url, init) => {
+      captured = { url, init, body: JSON.parse(init.body) };
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            model: 'qwen2.5-coder:14b',
+            message: { role: 'assistant', content: JSON.stringify({ output: { task: draft } }) },
+            prompt_eval_count: 11,
+            eval_count: 7,
+          };
+        },
+      };
+    },
+  });
+
+  const result = await ai.draftTask({
+    goal: 'Connect the AI helper to local AI.',
+    tasks: [],
+    profiles: { 'node-project': { id: 'node-project', label: 'Node' } },
+    projectContext: { content: 'Prefer tiny reviewable tasks.', updatedAt: '2026-07-15T00:00:00.000Z' },
+  });
+
+  assert.equal(captured.url, 'http://127.0.0.1:11434/api/chat');
+  assert.equal(captured.init.headers.Authorization, undefined);
+  assert.equal(captured.body.stream, false);
+  assert.equal(captured.body.model, 'qwen2.5-coder:14b');
+  assert.equal(captured.body.format.type, 'object');
+  assert.equal(JSON.parse(captured.body.messages[1].content).projectContext.content, 'Prefer tiny reviewable tasks.');
+  assert.equal(result.title, draft.title);
+  assert.equal(result.aiMeta.serviceTier, 'local');
+  assert.deepEqual(result.aiMeta.usage, { inputTokens: 11, inputCachedTokens: 0, outputTokens: 7, reasoningTokens: 0, totalTokens: 18 });
 });
 
 test('AI verification summary does not include command output by default', async () => {
