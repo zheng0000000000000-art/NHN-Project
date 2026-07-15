@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "source": "C:\\Users\\1\\Documents\\Local-First Workflow Dashboard\\docs\\wiki\\failures",
+  "cases": [
+    {
+      "sourceId": "FAIL-2026-006",
+      "title": "Storage project path allowed a sibling-prefix escape",
+      "failureClass": "path_escape",
+      "component": "path-guard",
+      "status": "resolved",
+      "suggestedArtifact": "path-guard-check",
+      "lesson": "Path containment must respect directory boundaries, not string prefixes."
+    },
+    {
+      "sourceId": "FAIL-2026-007",
+      "title": "Outbox read allowed encoded backslash sibling escape",
+      "failureClass": "path_escape",
+      "component": "path-guard",
+      "status": "resolved",
+      "suggestedArtifact": "path-guard-check",
+      "lesson": "Route-like path inputs must reject encoded traversal and sibling-prefix escapes."
+    },
+    {
+      "sourceId": "FAIL-2026-010",
+      "title": "Line-ending representation locked a gate",
+      "failureClass": "unnormalized_gate",
+      "component": "gate-evaluation",
+      "status": "resolved",
+      "suggestedArtifact": "gate-clean",
+      "lesson": "Gate verdicts should use normalized data and exit codes, not raw text formatting."
+    },
+    {
+      "sourceId": "FAIL-2026-012",
+      "title": "Commit prefix was mistaken for actor identity",
+      "failureClass": "proxy_actor_misjudgment",
+      "component": "review",
+      "status": "resolved",
+      "suggestedArtifact": "root-cause-diagnosis",
+      "lesson": "Actor attribution needs direct data, not prefixes, timestamps, or naming conventions."
+    },
+    {
+      "sourceId": "FAIL-2026-013",
+      "title": "Launch prompt was truncated before executor received it",
+      "failureClass": "transport_receipt",
+      "component": "executor-launch",
+      "status": "resolved",
+      "suggestedArtifact": "executor-transport-receipt",
+      "lesson": "A spawned process is not proof that the intended instruction arrived."
+    },
+    {
+      "sourceId": "FAIL-2026-015",
+      "title": "Harness measured the wrong thing",
+      "failureClass": "verification_gap",
+      "component": "verification-harness",
+      "status": "in_progress",
+      "suggestedArtifact": "execution-verification",
+      "lesson": "A green harness is only useful when it directly observes the target behavior."
+    },
+    {
+      "sourceId": "FAIL-2026-017",
+      "title": "PowerShell encoding corrupted reviewer input",
+      "failureClass": "encoding",
+      "component": "executor-orchestration",
+      "status": "resolved",
+      "suggestedArtifact": "powershell-encoding",
+      "lesson": "For Korean or structured text, verify bytes and round trips across PowerShell and cmd boundaries."
+    },
+    {
+      "sourceId": "FAIL-2026-019",
+      "title": "Empty args launched a webserver and deadlocked a harness",
+      "failureClass": "harness_runtime_error",
+      "component": "verification-harness",
+      "status": "unresolved",
+      "suggestedArtifact": "harness-command-shape-check",
+      "lesson": "A harness command must fail closed when args are empty or accidentally start a long-running server."
+    }
+  ]
+}
