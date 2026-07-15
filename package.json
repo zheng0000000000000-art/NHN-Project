@@ -1,0 +1,19 @@
+{
+  "name": "team-loop-lite-ai",
+  "version": "0.7.0",
+  "private": true,
+  "description": "Multi-user verified work loop with failure learning and external Claude Code/Codex usage collection.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-concurrency=1",
+    "check": "node --check server.js && node --check public/app.js && node --test --test-concurrency=1",
+    "cli": "node bin/team-loop.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "team-loop": "./bin/team-loop.js"
+  }
+}

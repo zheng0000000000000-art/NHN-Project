@@ -1,0 +1,6 @@
+data/*.json
+data/*.jsonl
+data/*.key
+!data/.gitkeep
+node_modules/
+.DS_Store

@@ -1,0 +1,21 @@
+{
+  "measuredAt": "2026-07-15T06:16:10.953Z",
+  "node": "v22.16.0",
+  "eventCount": 10000,
+  "coldMs": 80.026,
+  "warmMs": [
+    9.144,
+    9.971,
+    6.793,
+    8.626,
+    5.498,
+    6.256,
+    8.992
+  ],
+  "warmMedianMs": 8.626,
+  "criteria": {
+    "coldMaxMs": 100,
+    "warmMedianMaxMs": 10
+  },
+  "passed": true
+}

@@ -1,0 +1,700 @@
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/README.md /mnt/data/team-loop-lite-ai-learning-p0/README.md
+--- /mnt/data/team-loop-lite-ai-learning/README.md	2026-07-15 06:03:52.350525815 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/README.md	2026-07-15 06:14:34.434678806 +0000
+@@ -248,3 +248,50 @@
+ - 스킬 자동 승격과 자동 수정
+ 
+ 즉 이번 버전은 **실패를 잊지 않고, 사람이 고른 실패들을 재사용 가능한 검증과 작업 규칙으로 전환해 적용하는 최소 루프**입니다.
++
++## 보안·동시성 보강 (v0.6.1)
++
++### 비동기 비밀번호 검증과 로그인 제한
++
++PBKDF2는 Node 이벤트 루프를 막지 않는 비동기 API로 실행됩니다. 등록과 로그인은 IP·정규화된 사용자 이름 조합을 기준으로 분당 10회로 제한되며, 초과 요청은 `429`로 거부됩니다.
++
++### 첫 관리자 등록
++
++`SIGNUP_CODE` 설정을 권장합니다.
++
++```bash
++SIGNUP_CODE='팀에서 공유할 임의 문자열' npm start
++```
++
++- `SIGNUP_CODE`가 설정되어 있으면 모든 신규 등록에서 코드가 필요합니다.
++- 설정하지 않으면 첫 관리자 등록은 서버 시작 후 10분 동안만 허용됩니다.
++- 10분이 지난 뒤 첫 사용자가 아직 없다면 `SIGNUP_CODE`를 설정하고 서버를 재기동해야 합니다.
++- 코드가 없는 상태로 시작하면 서버 로그에 경고가 출력됩니다.
++
++### POST 요청 헤더
++
++모든 `POST /api/*` 요청은 다음 헤더 중 하나를 요구합니다.
++
++```text
++X-Team-Loop-Client: web | cli | collector
++```
++
++기본 웹 UI와 CLI는 이미 이 헤더를 전송합니다. 직접 API를 호출할 때도 반드시 추가해야 합니다.
++
++### 검증 동시 실행
++
++같은 `WORKSPACE_ROOT`에서는 검증을 한 번에 하나만 실행합니다. 검증 중 다른 요청이 들어오면 대기열에 넣지 않고 다음 오류로 즉시 거부합니다.
++
++```text
++409 Another verification is already running.
++```
++
++### 검증 fingerprint 경계
++
++리뷰 요청과 승인 상태 변경의 Store lock 안에서 fingerprint를 다시 확인합니다. 이는 작업 상태 경쟁을 막지만, IDE나 외부 프로세스의 파일 쓰기와 완전한 원자성을 제공하지는 않습니다. 완전한 해결은 향후 `verifiedCommit`과 리뷰 대상 Git commit을 결속하는 방식입니다.
++
++### 운영 경계
++
++- 같은 `DATA_DIR`를 여러 서버 프로세스가 동시에 사용하지 마십시오. 현재 락은 단일 Node 프로세스 안에서만 유효합니다.
++- CLI의 `--password` 인자와 `TEAM_LOOP_PASSWORD`는 프로세스 목록 또는 셸 히스토리에 노출될 수 있습니다. 대화형 입력을 우선 사용하십시오.
++- DST가 있는 time zone에서는 “최근 N일” 그래프의 날짜 경계가 달력 기준과 일부 다를 수 있습니다. 기본 `Asia/Seoul`은 DST를 사용하지 않습니다.
+Only in /mnt/data/team-loop-lite-ai-learning-p0/docs: BENCHMARK-P0.json
+Only in /mnt/data/team-loop-lite-ai-learning-p0/docs: VERIFICATION-P0-HARDENING.md
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/package.json /mnt/data/team-loop-lite-ai-learning-p0/package.json
+--- /mnt/data/team-loop-lite-ai-learning/package.json	2026-07-15 05:32:34.293433981 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/package.json	2026-07-15 06:14:34.299759169 +0000
+@@ -1,13 +1,13 @@
+ {
+   "name": "team-loop-lite-ai",
+-  "version": "0.6.0",
++  "version": "0.6.1",
+   "private": true,
+-  "description": "Multi-user verified work loop that turns recorded failures into reusable harnesses and skill rules.",
++  "description": "Multi-user verified work loop with failure learning, non-blocking auth, cached usage aggregation, and verification concurrency guards.",
+   "type": "module",
+   "scripts": {
+     "start": "node server.js",
+-    "test": "node --test",
+-    "check": "node --check server.js && node --check public/app.js && node --test",
++    "test": "node --test --test-concurrency=1",
++    "check": "node --check server.js && node --check public/app.js && node --test --test-concurrency=1",
+     "cli": "node bin/team-loop.js"
+   },
+   "engines": {
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/server.js /mnt/data/team-loop-lite-ai-learning-p0/server.js
+--- /mnt/data/team-loop-lite-ai-learning/server.js	2026-07-15 05:42:03.951338382 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/server.js	2026-07-15 06:10:28.423795207 +0000
+@@ -11,6 +11,7 @@
+ import { FailureCaseStore } from './src/failure-cases.js';
+ import { SkillRegistry } from './src/skill-registry.js';
+ import { FailureLearningService } from './src/failure-learning.js';
++import { FixedWindowRateLimiter } from './src/rate-limit.js';
+ import { assertPlainObject, HttpError, nowIso } from './src/utils.js';
+ 
+ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+@@ -23,8 +24,10 @@
+ const port = Number(process.env.PORT || 4173);
+ const secureCookies = process.env.SECURE_COOKIES === 'true';
+ const signupCode = process.env.SIGNUP_CODE || '';
++const serverStartedAt = Date.now();
++const authRateLimiter = new FixedWindowRateLimiter({ limit: 10, windowMs: 60_000 });
+ 
+-const store = new Store(dataDirectory);
++const store = new Store(dataDirectory, { signupCode, serverStartedAt });
+ const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
+ const verifier = new Verifier({ workspaceRoot, harnessRegistry });
+ const failureCases = new FailureCaseStore(dataDirectory);
+@@ -48,18 +51,25 @@
+ });
+ 
+ server.listen(port, host, () => {
+-  console.log(`Team Loop Lite listening on http://${host}:${port}`);
++  const address = server.address();
++  const listeningPort = typeof address === 'object' && address ? address.port : port;
++  console.log(`Team Loop Lite listening on http://${host}:${listeningPort}`);
+   console.log(`Workspace: ${workspaceRoot}`);
++  if (!signupCode) {
++    console.warn('WARNING: SIGNUP_CODE is not configured. The first administrator may register only during the first 10 minutes after startup.');
++  }
+ });
+ 
+ async function handleApi(request, response) {
+   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+   const method = request.method || 'GET';
+ 
++  if (method === 'POST') requireTrustedClientHeader(request);
++
+   if (method === 'POST' && url.pathname === '/api/auth/register') {
+     const body = await readBody(request);
+     assertPlainObject(body);
+-    if (signupCode && body.signupCode !== signupCode) throw new HttpError(403, 'Invalid signup code.');
++    authRateLimiter.consume(authRateKey(request, 'register', body.name));
+     const user = await store.registerUser(body);
+     response.setHeader('Set-Cookie', sessionCookie(issueSession(sessionSecret, user.id), secureCookies));
+     sendJson(response, 201, { user });
+@@ -69,6 +79,7 @@
+   if (method === 'POST' && url.pathname === '/api/auth/login') {
+     const body = await readBody(request);
+     assertPlainObject(body);
++    authRateLimiter.consume(authRateKey(request, 'login', body.name));
+     const user = await store.authenticate(body.name, body.password);
+     response.setHeader('Set-Cookie', sessionCookie(issueSession(sessionSecret, user.id), secureCookies));
+     sendJson(response, 200, { user });
+@@ -378,39 +389,41 @@
+   }
+ 
+   if (action === 'verify') {
+-    const runningTask = await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_STARTED', async (next) => {
+-      requireAssigneeOrAdmin(next, actor);
+-      if (next.status !== 'IN_PROGRESS') throw new HttpError(409, 'Verification requires an IN_PROGRESS task.');
+-      next.verification = {
+-        status: 'RUNNING',
+-        profile: next.verificationProfile,
+-        startedAt: nowIso(),
+-        requestedByUserId: actor.id,
+-      };
+-    });
++    await verifier.withWorkspaceLock(async () => {
++      const runningTask = await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_STARTED', async (next) => {
++        requireAssigneeOrAdmin(next, actor);
++        if (next.status !== 'IN_PROGRESS') throw new HttpError(409, 'Verification requires an IN_PROGRESS task.');
++        next.verification = {
++          status: 'RUNNING',
++          profile: next.verificationProfile,
++          startedAt: nowIso(),
++          requestedByUserId: actor.id,
++        };
++      });
+ 
+-    let verification;
+-    try {
+-      verification = await verifier.run(runningTask);
+-    } catch (error) {
+-      verification = {
+-        status: 'ERROR',
+-        profile: runningTask.verificationProfile,
+-        startedAt: runningTask.verification?.startedAt,
+-        finishedAt: nowIso(),
+-        passed: false,
+-        error: error.message,
+-      };
+-    }
++      let verification;
++      try {
++        verification = await verifier.runLocked(runningTask);
++      } catch (error) {
++        verification = {
++          status: 'ERROR',
++          profile: runningTask.verificationProfile,
++          startedAt: runningTask.verification?.startedAt,
++          finishedAt: nowIso(),
++          passed: false,
++          error: error.message,
++        };
++      }
+ 
+-    const recordedFailures = verification.passed
+-      ? []
+-      : await failureCases.recordVerification({ task: runningTask, verification, actorUserId: actor.id });
+-    verification.failureCaseIds = recordedFailures.map((item) => item.id);
+-    const task = await store.mutateTask(taskId, actor, runningTask.version, 'VERIFICATION_FINISHED', async (next) => {
+-      next.verification = verification;
++      const recordedFailures = verification.passed
++        ? []
++        : await failureCases.recordVerification({ task: runningTask, verification, actorUserId: actor.id });
++      verification.failureCaseIds = recordedFailures.map((item) => item.id);
++      const task = await store.mutateTask(taskId, actor, runningTask.version, 'VERIFICATION_FINISHED', async (next) => {
++        next.verification = verification;
++      });
++      sendJson(response, 200, { task, failureCases: recordedFailures });
+     });
+-    sendJson(response, 200, { task, failureCases: recordedFailures });
+     return;
+   }
+ 
+@@ -421,13 +434,16 @@
+     if (current.status !== 'IN_PROGRESS') throw new HttpError(409, 'Only IN_PROGRESS tasks can request review.');
+     if (!current.verification?.passed) throw new HttpError(409, 'A passing verification is required.');
+     if (!await verifier.fingerprintMatches(current.verification)) {
+-      await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_STALE', async (next) => {
++      await store.mutateTask(taskId, actor, current.version, 'VERIFICATION_STALE', async (next) => {
+         next.verification = { ...next.verification, status: 'STALE', passed: false, staleAt: nowIso() };
+       });
+       throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
+     }
+     if (current.reviewerUserId === current.assigneeUserId) throw new HttpError(409, 'Reviewer must differ from assignee.');
+     const task = await store.mutateTask(taskId, actor, expectedVersion, 'REVIEW_REQUESTED', async (next) => {
++      if (!next.verification?.passed || !await verifier.fingerprintMatches(next.verification)) {
++        throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
++      }
+       next.status = 'REVIEW';
+       next.review = { status: 'PENDING', requestedAt: nowIso(), requestedByUserId: actor.id };
+     });
+@@ -447,6 +463,9 @@
+       throw new HttpError(409, 'Workspace changed after verification. Approval is blocked.');
+     }
+     const task = await store.mutateTask(taskId, actor, expectedVersion, decision === 'APPROVE' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED', async (next) => {
++      if (decision === 'APPROVE' && !await verifier.fingerprintMatches(next.verification)) {
++        throw new HttpError(409, 'Workspace changed after verification. Approval is blocked.');
++      }
+       next.review = {
+         status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+         reviewerUserId: actor.id,
+@@ -541,6 +560,19 @@
+   return 'api';
+ }
+ 
++function requireTrustedClientHeader(request) {
++  const value = String(request.headers['x-team-loop-client'] || '').toLowerCase();
++  if (!['web', 'cli', 'collector'].includes(value)) {
++    throw new HttpError(403, 'X-Team-Loop-Client header is required for POST requests.');
++  }
++}
++
++function authRateKey(request, action, name) {
++  const address = request.socket?.remoteAddress || 'unknown';
++  const normalizedName = String(name || '').trim().toLowerCase();
++  return `${action}:${address}:${normalizedName}`;
++}
++
+ async function validatePeople(assigneeUserId, reviewerUserId) {
+   const users = await store.listUsers();
+   const userIds = new Set(users.map((user) => user.id));
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/src/auth.js /mnt/data/team-loop-lite-ai-learning-p0/src/auth.js
+--- /mnt/data/team-loop-lite-ai-learning/src/auth.js	2026-07-15 02:54:12.000000000 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/src/auth.js	2026-07-15 06:08:23.291340721 +0000
+@@ -1,19 +1,21 @@
+-import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto';
++import { createHmac, pbkdf2 as pbkdf2Callback, randomBytes, timingSafeEqual } from 'node:crypto';
+ import { readFile, writeFile } from 'node:fs/promises';
+ import path from 'node:path';
++import { promisify } from 'node:util';
+ import { ensureDir, pathExists, randomId } from './utils.js';
+ 
+ const ITERATIONS = 210_000;
+ const KEY_LENGTH = 32;
+ const DIGEST = 'sha256';
++const pbkdf2 = promisify(pbkdf2Callback);
+ 
+-export function hashPassword(password, salt = randomBytes(16).toString('hex')) {
+-  const hash = pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
+-  return { salt, hash, iterations: ITERATIONS, digest: DIGEST };
++export async function hashPassword(password, salt = randomBytes(16).toString('hex')) {
++  const derived = await pbkdf2(password, salt, ITERATIONS, KEY_LENGTH, DIGEST);
++  return { salt, hash: derived.toString('hex'), iterations: ITERATIONS, digest: DIGEST };
+ }
+ 
+-export function verifyPassword(password, record) {
+-  const candidate = pbkdf2Sync(
++export async function verifyPassword(password, record) {
++  const candidate = await pbkdf2(
+     password,
+     record.passwordSalt,
+     record.passwordIterations,
+Only in /mnt/data/team-loop-lite-ai-learning-p0/src: rate-limit.js
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/src/store.js /mnt/data/team-loop-lite-ai-learning-p0/src/store.js
+--- /mnt/data/team-loop-lite-ai-learning/src/store.js	2026-07-15 05:34:55.994146815 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/src/store.js	2026-07-15 06:08:24.426707581 +0000
+@@ -6,12 +6,15 @@
+ const EMPTY_TASKS = { schemaVersion: 1, tasks: [] };
+ 
+ export class Store {
+-  constructor(dataDirectory) {
++  constructor(dataDirectory, { signupCode = '', serverStartedAt = Date.now(), bootstrapWindowMs = 10 * 60 * 1000 } = {}) {
+     this.dataDirectory = dataDirectory;
+     this.usersPath = path.join(dataDirectory, 'users.json');
+     this.tasksPath = path.join(dataDirectory, 'tasks.json');
+     this.auditPath = path.join(dataDirectory, 'audit.jsonl');
+     this.lock = Promise.resolve();
++    this.signupCode = String(signupCode || '');
++    this.serverStartedAt = Number(serverStartedAt) || Date.now();
++    this.bootstrapWindowMs = Number(bootstrapWindowMs) || 10 * 60 * 1000;
+   }
+ 
+   async initialize() {
+@@ -23,21 +26,31 @@
+     });
+   }
+ 
+-  async registerUser({ name, password }) {
++  async registerUser({ name, password, signupCode = '' }) {
+     const cleanName = String(name ?? '').trim();
+     if (cleanName.length < 2 || cleanName.length > 40) throw new HttpError(400, 'Name must be 2-40 characters.');
+     if (String(password ?? '').length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
+ 
++    // PBKDF2 is deliberately outside the global state lock. Duplicate-name races are
++    // still closed by the second check inside #withLock; the losing request only wastes
++    // its own password derivation instead of blocking all state mutations.
++    const passwordRecord = await hashPassword(String(password));
+     return this.#withLock(async () => {
+       const db = await readJson(this.usersPath, EMPTY_USERS);
+       if (db.users.some((user) => user.name.toLowerCase() === cleanName.toLowerCase())) {
+         throw new HttpError(409, 'That name is already registered.');
+       }
+-      const passwordRecord = hashPassword(password);
++      const isFirstUser = db.users.length === 0;
++      if (this.signupCode && String(signupCode) !== this.signupCode) {
++        throw new HttpError(403, 'Invalid signup code.');
++      }
++      if (isFirstUser && !this.signupCode && Date.now() - this.serverStartedAt > this.bootstrapWindowMs) {
++        throw new HttpError(403, 'First administrator registration window expired. Set SIGNUP_CODE and restart the server.');
++      }
+       const user = {
+         id: randomId('usr_'),
+         name: cleanName,
+-        role: db.users.length === 0 ? 'admin' : 'member',
++        role: isFirstUser ? 'admin' : 'member',
+         createdAt: nowIso(),
+         passwordSalt: passwordRecord.salt,
+         passwordHash: passwordRecord.hash,
+@@ -54,7 +67,7 @@
+   async authenticate(name, password) {
+     const db = await readJson(this.usersPath, EMPTY_USERS);
+     const user = db.users.find((entry) => entry.name.toLowerCase() === String(name ?? '').trim().toLowerCase());
+-    if (!user || !verifyPassword(String(password ?? ''), user)) throw new HttpError(401, 'Invalid name or password.');
++    if (!user || !await verifyPassword(String(password ?? ''), user)) throw new HttpError(401, 'Invalid name or password.');
+     return this.#publicUser(user);
+   }
+ 
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/src/usage.js /mnt/data/team-loop-lite-ai-learning-p0/src/usage.js
+--- /mnt/data/team-loop-lite-ai-learning/src/usage.js	2026-07-15 04:07:37.000000000 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/src/usage.js	2026-07-15 06:15:29.625941443 +0000
+@@ -1,7 +1,10 @@
+ import path from 'node:path';
+-import { readFile } from 'node:fs/promises';
++import { readFile, stat } from 'node:fs/promises';
+ import { appendJsonLine, ensureDir, nowIso, randomId, readJson } from './utils.js';
+ 
++const DATE_FORMATTERS = new Map();
++const EVENT_DATE_KEY = Symbol('usageDateKey');
++
+ const EMPTY_CONFIG = {
+   schemaVersion: 1,
+   timeZone: 'Asia/Seoul',
+@@ -18,6 +21,7 @@
+     this.configPath = configPath;
+     this.config = structuredClone(EMPTY_CONFIG);
+     this.lock = Promise.resolve();
++    this.eventCache = null;
+   }
+ 
+   async initialize() {
+@@ -58,7 +62,20 @@
+       error: error ? String(error).slice(0, 500) : null,
+     };
+     return this.#withLock(async () => {
++      const before = await fileMetadata(this.eventsPath);
++      const canExtendCache = this.eventCache
++        && metadataEqual(this.eventCache, before);
+       await appendJsonLine(this.eventsPath, event);
++      const after = await fileMetadata(this.eventsPath);
++      if (canExtendCache) {
++        this.#attachDateKey(event);
++        this.eventCache.events.push(event);
++        this.eventCache.exists = after.exists;
++        this.eventCache.size = after.size;
++        this.eventCache.mtimeMs = after.mtimeMs;
++      } else {
++        this.eventCache = null;
++      }
+       return event;
+     });
+   }
+@@ -70,7 +87,7 @@
+     const cutoff = now.getTime() - safeDays * 24 * 60 * 60 * 1000;
+     const periodEvents = events.filter((event) => Date.parse(event.at) >= cutoff);
+     const monthKey = dateKey(now, this.config.timeZone).slice(0, 7);
+-    const monthEvents = events.filter((event) => dateKey(new Date(event.at), this.config.timeZone).startsWith(monthKey));
++    const monthEvents = events.filter((event) => event[EVENT_DATE_KEY].startsWith(monthKey));
+     const userMap = new Map(users.map((user) => [user.id, user]));
+ 
+     const totals = aggregate(periodEvents);
+@@ -121,24 +138,48 @@
+   }
+ 
+   async #readEvents() {
+-    let text;
+-    try {
+-      text = await readFile(this.eventsPath, 'utf8');
+-    } catch (error) {
+-      if (error?.code === 'ENOENT') return [];
+-      throw error;
++    const metadata = await fileMetadata(this.eventsPath);
++    if (this.eventCache && metadataEqual(this.eventCache, metadata)) return this.eventCache.events;
++    if (!metadata.exists) {
++      this.eventCache = { ...metadata, events: [] };
++      return this.eventCache.events;
+     }
+-    const events = [];
+-    for (const line of text.split(/\r?\n/)) {
+-      if (!line.trim()) continue;
+-      try {
+-        const value = JSON.parse(line);
+-        if (value && typeof value === 'object' && typeof value.at === 'string') events.push(value);
+-      } catch {
+-        // A malformed line is ignored rather than making the whole dashboard unavailable.
++
++    // Retry once if another process appends while the file is being read. This project
++    // remains single-process by contract, but the cache must still fail safely when an
++    // operator edits or restores the JSONL file externally.
++    for (let attempt = 0; attempt < 2; attempt += 1) {
++      const before = await fileMetadata(this.eventsPath);
++      const text = await readFile(this.eventsPath, 'utf8');
++      const after = await fileMetadata(this.eventsPath);
++      if (!metadataEqual(before, after) && attempt === 0) continue;
++      const events = [];
++      for (const line of text.split(/\r?\n/)) {
++        if (!line.trim()) continue;
++        try {
++          const value = JSON.parse(line);
++          if (value && typeof value === 'object' && typeof value.at === 'string') {
++            this.#attachDateKey(value);
++            events.push(value);
++          }
++        } catch {
++          // A malformed line is ignored rather than making the whole dashboard unavailable.
++        }
+       }
++      this.eventCache = { ...after, events };
++      return events;
+     }
+-    return events;
++    return [];
++  }
++
++  #attachDateKey(event) {
++    if (event[EVENT_DATE_KEY]) return event;
++    Object.defineProperty(event, EVENT_DATE_KEY, {
++      value: dateKey(new Date(event.at), this.config.timeZone),
++      enumerable: false,
++      configurable: false,
++    });
++    return event;
+   }
+ 
+   #withLock(work) {
+@@ -254,7 +295,7 @@
+ function buildDaily(events, days, timeZone) {
+   const byDay = new Map();
+   for (const event of events) {
+-    const key = dateKey(new Date(event.at), timeZone);
++    const key = event[EVENT_DATE_KEY] ?? dateKey(new Date(event.at), timeZone);
+     if (!byDay.has(key)) byDay.set(key, []);
+     byDay.get(key).push(event);
+   }
+@@ -295,14 +336,34 @@
+ }
+ 
+ function dateKey(date, timeZone) {
+-  const parts = new Intl.DateTimeFormat('en-CA', {
+-    timeZone,
+-    year: 'numeric',
+-    month: '2-digit',
+-    day: '2-digit',
+-  }).formatToParts(date);
+-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+-  return `${value.year}-${value.month}-${value.day}`;
++  let formatter = DATE_FORMATTERS.get(timeZone);
++  if (!formatter) {
++    formatter = new Intl.DateTimeFormat('en-CA', {
++      timeZone,
++      year: 'numeric',
++      month: '2-digit',
++      day: '2-digit',
++    });
++    DATE_FORMATTERS.set(timeZone, formatter);
++  }
++  return formatter.format(date);
++}
++
++async function fileMetadata(filePath) {
++  try {
++    const value = await stat(filePath);
++    return { exists: true, size: value.size, mtimeMs: value.mtimeMs };
++  } catch (error) {
++    if (error?.code === 'ENOENT') return { exists: false, size: 0, mtimeMs: 0 };
++    throw error;
++  }
++}
++
++function metadataEqual(left, right) {
++  return Boolean(left && right)
++    && left.exists === right.exists
++    && left.size === right.size
++    && left.mtimeMs === right.mtimeMs;
+ }
+ 
+ function validTimeZone(value) {
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/src/verifier.js /mnt/data/team-loop-lite-ai-learning-p0/src/verifier.js
+--- /mnt/data/team-loop-lite-ai-learning/src/verifier.js	2026-07-15 05:10:18.553822683 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/src/verifier.js	2026-07-15 06:09:30.698881018 +0000
+@@ -4,6 +4,7 @@
+ import { HttpError, normalizeRelativePath, nowIso, readJson, sha256 } from './utils.js';
+ 
+ const MAX_CAPTURE_BYTES = 256 * 1024;
++const ACTIVE_WORKSPACES = new Set();
+ 
+ export class Verifier {
+   constructor({ workspaceRoot, profilePath = null, harnessRegistry = null }) {
+@@ -30,6 +31,22 @@
+   }
+ 
+   async run(task) {
++    return this.withWorkspaceLock(() => this.runLocked(task));
++  }
++
++  async withWorkspaceLock(work) {
++    if (ACTIVE_WORKSPACES.has(this.workspaceRoot)) {
++      throw new HttpError(409, 'Another verification is already running.');
++    }
++    ACTIVE_WORKSPACES.add(this.workspaceRoot);
++    try {
++      return await work();
++    } finally {
++      ACTIVE_WORKSPACES.delete(this.workspaceRoot);
++    }
++  }
++
++  async runLocked(task) {
+     const profile = this.harnessRegistry
+       ? await this.harnessRegistry.resolveActive(task.verificationProfile)
+       : (await this.#config()).profiles[task.verificationProfile];
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/test/auth.test.js /mnt/data/team-loop-lite-ai-learning-p0/test/auth.test.js
+--- /mnt/data/team-loop-lite-ai-learning/test/auth.test.js	2026-07-15 02:58:55.000000000 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/test/auth.test.js	2026-07-15 06:13:08.392294394 +0000
+@@ -2,16 +2,16 @@
+ import assert from 'node:assert/strict';
+ import { hashPassword, issueSession, readSession, verifyPassword } from '../src/auth.js';
+ 
+-test('password hashes verify and reject wrong passwords', () => {
+-  const record = hashPassword('correct horse battery staple');
++test('password hashes verify and reject wrong passwords', async () => {
++  const record = await hashPassword('correct horse battery staple');
+   const user = {
+     passwordSalt: record.salt,
+     passwordHash: record.hash,
+     passwordIterations: record.iterations,
+     passwordDigest: record.digest,
+   };
+-  assert.equal(verifyPassword('correct horse battery staple', user), true);
+-  assert.equal(verifyPassword('wrong password', user), false);
++  assert.equal(await verifyPassword('correct horse battery staple', user), true);
++  assert.equal(await verifyPassword('wrong password', user), false);
+ });
+ 
+ test('signed sessions cannot be edited', () => {
+Only in /mnt/data/team-loop-lite-ai-learning-p0/test: server-security.test.js
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/test/store.test.js /mnt/data/team-loop-lite-ai-learning-p0/test/store.test.js
+--- /mnt/data/team-loop-lite-ai-learning/test/store.test.js	2026-07-15 03:33:32.000000000 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/test/store.test.js	2026-07-15 06:13:08.549577837 +0000
+@@ -42,3 +42,30 @@
+     (error) => error.status === 409,
+   );
+ });
++
++test('first administrator bootstrap expires without SIGNUP_CODE', async (t) => {
++  const directory = await mkdtemp(path.join(os.tmpdir(), 'team-loop-store-bootstrap-'));
++  t.after(() => rm(directory, { recursive: true, force: true }));
++  const store = new Store(directory, {
++    serverStartedAt: Date.now() - 11 * 60 * 1000,
++    bootstrapWindowMs: 10 * 60 * 1000,
++  });
++  await store.initialize();
++  await assert.rejects(
++    () => store.registerUser({ name: 'Alice', password: 'password-1' }),
++    (error) => error.status === 403 && /SIGNUP_CODE/.test(error.message),
++  );
++});
++
++test('configured SIGNUP_CODE is checked inside the registration lock', async (t) => {
++  const directory = await mkdtemp(path.join(os.tmpdir(), 'team-loop-store-code-'));
++  t.after(() => rm(directory, { recursive: true, force: true }));
++  const store = new Store(directory, { signupCode: 'team-secret' });
++  await store.initialize();
++  await assert.rejects(
++    () => store.registerUser({ name: 'Alice', password: 'password-1', signupCode: 'wrong' }),
++    (error) => error.status === 403,
++  );
++  const user = await store.registerUser({ name: 'Alice', password: 'password-1', signupCode: 'team-secret' });
++  assert.equal(user.role, 'admin');
++});
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/test/usage.test.js /mnt/data/team-loop-lite-ai-learning-p0/test/usage.test.js
+--- /mnt/data/team-loop-lite-ai-learning/test/usage.test.js	2026-07-15 04:02:38.000000000 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/test/usage.test.js	2026-07-15 06:13:08.565668938 +0000
+@@ -61,3 +61,54 @@
+   assert.equal(summary.totals.pricedRequests, 2);
+   assert.ok(summary.totals.estimatedCostUsd > 0);
+ });
++
++test('usage summary caches 10k parsed events and invalidates on external append', async (t) => {
++  const { performance } = await import('node:perf_hooks');
++  const { mkdir, appendFile } = await import('node:fs/promises');
++  const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-usage-perf-'));
++  t.after(() => rm(root, { recursive: true, force: true }));
++  const dataDirectory = path.join(root, 'data');
++  await mkdir(dataDirectory, { recursive: true });
++  const configPath = path.join(root, 'usage.json');
++  await writeFile(configPath, JSON.stringify({ timeZone: 'Asia/Seoul' }));
++  const at = new Date().toISOString();
++  const events = Array.from({ length: 10_000 }, (_, index) => JSON.stringify({
++    eventId: `event-${index}`,
++    at,
++    actorUserId: `usr_${index % 3}`,
++    feature: 'task-brief',
++    model: 'test-model',
++    source: 'cli',
++    status: 'SUCCESS',
++    durationMs: 1,
++    usage: { inputTokens: 1, inputCachedTokens: 0, outputTokens: 1, reasoningTokens: 0, totalTokens: 2 },
++    estimatedCostUsd: null,
++  }));
++  const eventsPath = path.join(dataDirectory, 'ai-usage.jsonl');
++  await writeFile(eventsPath, `${events.join('\n')}\n`);
++
++  const tracker = new UsageTracker({ dataDirectory, configPath });
++  await tracker.initialize();
++  const coldStarted = performance.now();
++  const cold = await tracker.summary({ days: 30 });
++  const coldMs = performance.now() - coldStarted;
++
++  const warmDurations = [];
++  for (let index = 0; index < 5; index += 1) {
++    const started = performance.now();
++    await tracker.summary({ days: 30 });
++    warmDurations.push(performance.now() - started);
++  }
++  warmDurations.sort((a, b) => a - b);
++  const warmMedianMs = warmDurations[Math.floor(warmDurations.length / 2)];
++  assert.equal(cold.totals.requests, 10_000);
++  assert.ok(coldMs < 100, `cold summary took ${coldMs.toFixed(1)}ms`);
++  assert.ok(warmMedianMs < 10, `warm summary median took ${warmMedianMs.toFixed(1)}ms`);
++
++  await appendFile(eventsPath, `${JSON.stringify({
++    eventId: 'external-event', at, actorUserId: 'usr_external', feature: 'task-draft', model: 'test-model', source: 'api', status: 'SUCCESS', durationMs: 1,
++    usage: { inputTokens: 1, inputCachedTokens: 0, outputTokens: 1, reasoningTokens: 0, totalTokens: 2 }, estimatedCostUsd: null,
++  })}\n`);
++  const refreshed = await tracker.summary({ days: 30 });
++  assert.equal(refreshed.totals.requests, 10_001);
++});
+diff -ru '--exclude=data' '--exclude=P0-HARDENING.diff' /mnt/data/team-loop-lite-ai-learning/test/verifier.test.js /mnt/data/team-loop-lite-ai-learning-p0/test/verifier.test.js
+--- /mnt/data/team-loop-lite-ai-learning/test/verifier.test.js	2026-07-15 03:01:40.000000000 +0000
++++ /mnt/data/team-loop-lite-ai-learning-p0/test/verifier.test.js	2026-07-15 06:13:08.558178400 +0000
+@@ -70,3 +70,24 @@
+   assert.equal(fail.passed, false);
+   assert.deepEqual(fail.scopeViolations, ['game.js']);
+ });
++
++test('workspace verification mutex rejects a concurrent verification instead of queueing', async () => {
++  const verifier = new Verifier({ workspaceRoot: process.cwd(), profilePath: path.join(process.cwd(), 'config', 'verification-profiles.json') });
++  let releaseFirst;
++  const firstStarted = new Promise((resolve) => { releaseFirst = resolve; });
++  let enterFirst;
++  const firstEntered = new Promise((resolve) => { enterFirst = resolve; });
++
++  const first = verifier.withWorkspaceLock(async () => {
++    enterFirst();
++    await firstStarted;
++    return 'done';
++  });
++  await firstEntered;
++  await assert.rejects(
++    () => verifier.withWorkspaceLock(async () => 'should-not-run'),
++    (error) => error.status === 409 && error.message === 'Another verification is already running.',
++  );
++  releaseFirst();
++  assert.equal(await first, 'done');
++});

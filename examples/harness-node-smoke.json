@@ -1,0 +1,21 @@
+{
+  "id": "node-smoke",
+  "label": "Node smoke test",
+  "description": "Runs the Node test suite and checks the Git patch.",
+  "commands": [
+    {
+      "file": "node",
+      "args": ["--test"],
+      "cwd": ".",
+      "expectedExit": 0,
+      "timeoutMs": 180000
+    },
+    {
+      "file": "git",
+      "args": ["diff", "--check"],
+      "cwd": ".",
+      "expectedExit": 0,
+      "timeoutMs": 60000
+    }
+  ]
+}

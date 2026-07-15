@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "timeZone": "Asia/Seoul",
+  "monthlyTokenBudget": 0,
+  "monthlyRequestBudget": 0,
+  "monthlyCostBudgetUsd": 0,
+  "modelPricingUsdPerMillionTokens": {}
+}

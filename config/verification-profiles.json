@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "repository-basic": {
+      "label": "Repository basic",
+      "description": "Checks patch whitespace and merge-marker problems.",
+      "commands": [
+        {
+          "file": "git",
+          "args": ["diff", "--check"],
+          "expectedExit": 0,
+          "timeoutMs": 60000
+        }
+      ]
+    },
+    "node-project": {
+      "label": "Node project",
+      "description": "Runs the Node test suite and Git patch checks.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["--test"],
+          "expectedExit": 0,
+          "timeoutMs": 180000
+        },
+        {
+          "file": "git",
+          "args": ["diff", "--check"],
+          "expectedExit": 0,
+          "timeoutMs": 60000
+        }
+      ]
+    }
+  }
+}
