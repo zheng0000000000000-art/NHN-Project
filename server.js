@@ -13,6 +13,7 @@ import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
 import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
+import { scopesOverlap } from './src/scope.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
 import { assertPlainObject, HttpError, nowIso, sha256 } from './src/utils.js';
@@ -448,6 +449,17 @@ async function handleApi(request, response) {
       executor = sanitizeExecutorInput(body.executor, { actorUserId: actor.id, at: nowIso() });
     } catch (error) {
       throw new HttpError(error.statusCode || 400, error.message);
+    }
+    // Scope lock: refuse to start a task whose path scope overlaps an already-active task.
+    const claiming = await store.getTask(taskId);
+    if (claiming) {
+      const overlap = (await store.listTasks()).find((other) =>
+        other.id !== taskId
+        && ['IN_PROGRESS', 'REVIEW'].includes(other.status)
+        && scopesOverlap(other.allowedPaths, claiming.allowedPaths));
+      if (overlap) {
+        throw new HttpError(409, `Scope locked: task ${overlap.id} is already active on an overlapping path scope.`);
+      }
     }
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_STARTED', async (next) => {
       if (next.status !== 'READY') throw new HttpError(409, 'Only READY tasks can be started.');
