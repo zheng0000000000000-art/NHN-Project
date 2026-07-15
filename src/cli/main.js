@@ -145,12 +145,16 @@ function runExecutor(tool, prompt, { workspace, model, permission, inherit }) {
       reject(new Error(`Executor "${tool}" is not supported yet (only claude-code).`));
       return;
     }
-    const args = ['-p', prompt, '--permission-mode', permission || 'acceptEdits'];
+    // Deliver the prompt on STDIN, never as a CLI argument: a long multi-line prompt on
+    // the command line gets mangled by the shell/OS (the exact trap the powershell-encoding
+    // skill warns about), so the agent silently receives a broken prompt. `claude -p` reads
+    // the prompt from stdin when no prompt argument is given.
+    const args = ['-p', '--permission-mode', permission || 'acceptEdits'];
     if (model) args.push('--model', model);
     const exe = process.env.TEAM_LOOP_CLAUDE_BIN || 'claude';
     const child = spawn(exe, args, {
       cwd: workspace,
-      stdio: inherit ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', inherit ? 'inherit' : 'pipe', inherit ? 'inherit' : 'pipe'],
       shell: false,
       windowsHide: true,
     });
@@ -161,6 +165,8 @@ function runExecutor(tool, prompt, { workspace, model, permission, inherit }) {
     }
     child.on('error', reject);
     child.on('close', (code) => resolve({ code, output: out }));
+    child.stdin.write(prompt);
+    child.stdin.end();
   });
 }
 
