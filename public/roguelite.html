@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>족보 고스톱 로그라이트 Prototype</title>
+  <link rel="stylesheet" href="/roguelite.css">
+</head>
+<body>
+  <main class="game-shell">
+    <header class="game-header">
+      <div>
+        <p class="eyebrow">JOKBO GHOST ROGUELITE</p>
+        <h1>족보를 덱으로 짜고, 고스톱으로 터뜨려라</h1>
+      </div>
+      <div class="header-actions">
+        <button id="new-run" type="button">새 런</button>
+        <a href="/">대시보드</a>
+      </div>
+    </header>
+
+    <section class="status-strip" aria-live="polite">
+      <div><span>스테이지</span><strong id="stage-label">1 / 3</strong></div>
+      <div><span>목표</span><strong id="target-label">900</strong></div>
+      <div><span>현재 점수</span><strong id="score-label">0</strong></div>
+      <div><span>확정 점수</span><strong id="banked-label">0</strong></div>
+      <div><span>GO</span><strong id="go-label">0</strong></div>
+      <div><span>산패</span><strong id="deck-label">0</strong></div>
+    </section>
+
+    <section class="director-band">
+      <div>
+        <p class="eyebrow">AI DEALER</p>
+        <h2 id="rule-name">첫 판</h2>
+        <p id="rule-description">AI가 아직 당신의 빌드를 읽는 중입니다.</p>
+      </div>
+      <div class="readout">
+        <span id="ai-read">관찰 대기</span>
+        <span id="turn-label">턴 1</span>
+      </div>
+    </section>
+
+    <section class="board-grid">
+      <section class="panel hand-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">HAND</p>
+            <h2>손패</h2>
+          </div>
+          <span>낼 패를 선택</span>
+        </div>
+        <div id="hand" class="card-row"></div>
+      </section>
+
+      <section class="panel floor-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">FLOOR</p>
+            <h2>바닥패</h2>
+          </div>
+          <span id="floor-hint">같은 월을 먹습니다</span>
+        </div>
+        <div id="floor" class="card-row floor-row"></div>
+      </section>
+
+      <section class="panel combo-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">JOKBO DECK</p>
+            <h2>장착 족보</h2>
+          </div>
+          <span id="combo-count">0 완성</span>
+        </div>
+        <div id="combos" class="combo-list"></div>
+      </section>
+
+      <section class="panel relic-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">RELICS</p>
+            <h2>유물</h2>
+          </div>
+          <span>한 판당 1회</span>
+        </div>
+        <div id="relics" class="relic-list"></div>
+      </section>
+
+      <section class="panel captured-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">CAPTURED</p>
+            <h2>먹은 패</h2>
+          </div>
+          <span id="captured-count">0장</span>
+        </div>
+        <div id="captured" class="mini-card-row"></div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">FLOW</p>
+            <h2>점수 로그</h2>
+          </div>
+        </div>
+        <ol id="log" class="log-list"></ol>
+      </section>
+    </section>
+
+    <section id="decision" class="decision hidden" aria-live="assertive">
+      <div>
+        <p class="eyebrow">GO / STOP</p>
+        <h2 id="decision-title">족보 완성</h2>
+        <p id="decision-copy">지금 멈추면 점수를 확정합니다. GO를 누르면 배수가 오르지만 AI 압박도 커집니다.</p>
+      </div>
+      <div class="decision-actions">
+        <button id="stop-button" type="button">STOP</button>
+        <button id="go-button" type="button">GO</button>
+      </div>
+    </section>
+
+    <section id="stage-result" class="stage-result hidden">
+      <div>
+        <p class="eyebrow">STAGE RESULT</p>
+        <h2 id="result-title">스테이지 클리어</h2>
+        <p id="result-copy"></p>
+      </div>
+      <button id="next-stage" type="button">다음 스테이지</button>
+    </section>
+  </main>
+
+  <script type="module" src="/roguelite.js"></script>
+</body>
+</html>
