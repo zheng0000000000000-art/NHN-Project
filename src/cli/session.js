@@ -75,3 +75,20 @@ export async function saveConfig(value) {
   await rename(temporary, file);
   await chmod(file, 0o600).catch(() => {});
 }
+
+// Default CLI home for the reviewer bot account, kept separate from the human's session.
+export function botHome() {
+  return path.join(os.homedir(), '.team-loop-bot');
+}
+
+// Load a saved session from an arbitrary CLI home directory (used to act as a second
+// account, e.g. the reviewer bot, within a single orchestrate command).
+export async function loadSessionFrom(directory) {
+  try {
+    const value = JSON.parse(await readFile(path.join(directory, 'session.json'), 'utf8'));
+    return value && typeof value === 'object' ? value : null;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}

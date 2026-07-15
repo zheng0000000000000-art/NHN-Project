@@ -26,6 +26,7 @@ const host = process.env.HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 4173);
 const secureCookies = process.env.SECURE_COOKIES === 'true';
 const signupCode = process.env.SIGNUP_CODE || '';
+const soloMode = process.env.SOLO_MODE === 'true';
 const serverStartedAt = Date.now();
 const authRateLimiter = new FixedWindowRateLimiter({ limit: 10, windowMs: 60_000 });
 const externalUsageRateLimiter = new FixedWindowRateLimiter({ limit: 4, windowMs: 60_000 });
@@ -495,7 +496,7 @@ async function handleApi(request, response) {
       });
       throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
     }
-    if (current.reviewerUserId === current.assigneeUserId) throw new HttpError(409, 'Reviewer must differ from assignee.');
+    if (current.reviewerUserId === current.assigneeUserId && !soloMode) throw new HttpError(409, 'Reviewer must differ from assignee.');
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'REVIEW_REQUESTED', async (next) => {
       if (!next.verification?.passed || !await verifier.fingerprintMatches(next.verification)) {
         throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
@@ -511,7 +512,7 @@ async function handleApi(request, response) {
     const current = await store.getTask(taskId);
     if (!current) throw new HttpError(404, 'Task not found.');
     if (current.status !== 'REVIEW') throw new HttpError(409, 'Task is not waiting for review.');
-    if (actor.id === current.assigneeUserId) throw new HttpError(403, 'Assignees cannot review their own task.');
+    if (actor.id === current.assigneeUserId && !soloMode) throw new HttpError(403, 'Assignees cannot review their own task.');
     if (current.reviewerUserId && current.reviewerUserId !== actor.id) throw new HttpError(403, 'This task has a different assigned reviewer.');
     const decision = String(body.decision || '').toUpperCase();
     if (!['APPROVE', 'REJECT'].includes(decision)) throw new HttpError(400, 'Decision must be APPROVE or REJECT.');
@@ -527,6 +528,7 @@ async function handleApi(request, response) {
         reviewerUserId: actor.id,
         comment: String(body.comment ?? '').trim().slice(0, 2000),
         reviewedAt: nowIso(),
+        solo: soloMode && actor.id === next.assigneeUserId,
       };
       if (decision === 'APPROVE') {
         next.status = 'DONE';

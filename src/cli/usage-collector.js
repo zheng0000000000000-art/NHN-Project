@@ -8,11 +8,30 @@ import { cliHome } from './session.js';
 
 const CURSOR_VERSION = 1;
 
+// Directories scanned for Claude session logs. Includes the Claude Code CLI
+// (~/.claude/projects) and the Claude desktop app's agent-mode sessions, whose
+// logs share the same message.usage schema. Extra dirs can be added via
+// TEAM_LOOP_CLAUDE_LOG_DIRS (comma or semicolon separated).
+function defaultClaudeLogDirs(homeDirectory) {
+  const dirs = [
+    path.join(homeDirectory, '.claude', 'projects'),
+    path.join(homeDirectory, 'AppData', 'Roaming', 'Claude', 'local-agent-mode-sessions'),
+    path.join(homeDirectory, '.config', 'Claude', 'local-agent-mode-sessions'),
+    path.join(homeDirectory, 'Library', 'Application Support', 'Claude', 'local-agent-mode-sessions'),
+  ];
+  const extra = process.env.TEAM_LOOP_CLAUDE_LOG_DIRS;
+  if (extra) {
+    for (const dir of extra.split(/[;,]/).map((item) => item.trim()).filter(Boolean)) dirs.push(dir);
+  }
+  return dirs;
+}
+
 export async function collectUsageSnapshots({
   now = new Date(),
   homeDirectory = os.homedir(),
   queryCodex = queryCodexAppServer,
   includeInitialBackfill = false,
+  claudeLogDirs = defaultClaudeLogDirs(homeDirectory),
 } = {}) {
   const home = cliHome();
   await mkdir(home, { recursive: true, mode: 0o700 });
@@ -40,7 +59,13 @@ export async function collectUsageSnapshots({
 
   await collectSource('claude-session-log', async () => {
     if (otelTools.has('claude-code')) return;
-    const files = await walkJsonl(path.join(homeDirectory, '.claude', 'projects'));
+    const seenFiles = new Set();
+    const files = [];
+    for (const dir of claudeLogDirs) {
+      for (const file of await walkJsonl(dir)) {
+        if (!seenFiles.has(file)) { seenFiles.add(file); files.push(file); }
+      }
+    }
     for (const file of files) {
       const { rows, cursorValue, baselined } = await readNewJsonLines(file, cursor.files[file], { baselineOnly: baselineSessionLogs });
       nextCursor.files[file] = cursorValue;

@@ -1,6 +1,6 @@
 import { parseCliArgs, option, requireOption, listOption, repeatedOption } from './args.js';
 import { CliClient } from './client.js';
-import { clearSession, loadConfig, loadSession, normalizeServer, saveConfig, saveSession } from './session.js';
+import { botHome, clearSession, loadConfig, loadSession, loadSessionFrom, normalizeServer, saveConfig, saveSession } from './session.js';
 import { mergeCliExecutor } from '../executor.js';
 import { printFailures, printHarnesses, printTask, printTasks, printUsers, printValue } from './format.js';
 import { readFile } from 'node:fs/promises';
@@ -90,8 +90,233 @@ export async function runCli(argv) {
   if (command === 'failure') return runFailure(client, positionals.slice(1), options, json);
   if (command === 'usage') return runUsage(client, positionals.slice(1), options, json);
   if (command === 'config') return runConfig(positionals.slice(1), options, json);
+  if (command === 'solo') return runSolo(client, positionals.slice(1), options, json);
+  if (command === 'reviewer') return runReviewer(client, positionals.slice(1), options, json);
+  if (command === 'orchestrate') return runOrchestrate(client, positionals.slice(1), options, json);
 
   throw new Error(`Unknown command: ${command}. Run "team-loop help".`);
+}
+
+// Shared: one reviewer decision on a single task -- approve when program verification
+// is green and the workspace fingerprint still matches, otherwise reject.
+async function reviewOneTask(client, taskId, approveComment, rejectComment) {
+  const fresh = findTask((await client.request('/api/bootstrap')).tasks, taskId);
+  if (!fresh || fresh.status !== 'REVIEW') return { taskId, action: 'skip', reason: 'not in REVIEW' };
+  if (!fresh.verification?.passed) return rejectTask(client, fresh, `${rejectComment} (verification not green)`);
+  try {
+    const result = await client.request(`/api/tasks/${encodeURIComponent(fresh.id)}/review`, {
+      method: 'POST', body: { expectedVersion: fresh.version, decision: 'APPROVE', comment: approveComment },
+    });
+    return { taskId, action: 'approved', reason: `-> ${result.task.status}` };
+  } catch (error) {
+    const latest = findTask((await client.request('/api/bootstrap')).tasks, taskId);
+    if (latest && latest.status === 'REVIEW') return rejectTask(client, latest, `${rejectComment} (${error.message})`);
+    return { taskId, action: 'skip', reason: error.message };
+  }
+}
+
+// Full loop orchestration: the current account acts as worker (create -> claim ->
+// verify -> request-review); a separate reviewer bot account then approves (or rejects)
+// so a task reaches DONE end to end without SOLO_MODE self-approval.
+async function runOrchestrate(client, positionals, options, json) {
+  const action = positionals[0] || 'run';
+  if (action !== 'run') throw new Error('Orchestrate action must be run. Usage: team-loop orchestrate run --goal "..."');
+  const goal = requireOption(options, 'goal');
+  const steps = [];
+  const log = (message) => { steps.push(message); if (!json) process.stdout.write(`${message}\n`); };
+
+  // Reviewer bot session from a separate CLI home.
+  const reviewerHome = stringOption(options, 'reviewer-home', botHome());
+  const reviewerSession = await loadSessionFrom(reviewerHome);
+  if (!reviewerSession?.cookie) {
+    throw new Error(`No reviewer session in ${reviewerHome}. Set it up first, e.g. TEAM_LOOP_CLI_HOME="${reviewerHome}" team-loop register --name reviewer-bot`);
+  }
+  if (reviewerSession.server && normalizeServer(reviewerSession.server) !== client.server) {
+    throw new Error(`Reviewer session server (${reviewerSession.server}) differs from ${client.server}.`);
+  }
+  const reviewerClient = new CliClient({ server: client.server, cookie: reviewerSession.cookie });
+
+  const bootstrap = await client.request('/api/bootstrap');
+  const worker = bootstrap.user;
+  if (reviewerSession.user?.id && reviewerSession.user.id === worker.id) {
+    throw new Error('Reviewer bot must be a different account than the worker.');
+  }
+
+  // WORKER: create
+  const allowedPaths = listOption(options, 'allowed-path');
+  const criteria = listOption(options, 'criterion');
+  let task = (await client.request('/api/tasks', { method: 'POST', body: {
+    title: stringOption(options, 'title', String(goal).slice(0, 120)),
+    description: stringOption(options, 'description', String(goal)),
+    priority: numberOption(options, 'priority', 100),
+    allowedPaths: allowedPaths.length ? allowedPaths : ['**'],
+    acceptanceCriteria: criteria,
+    verificationProfile: stringOption(options, 'profile', 'repository-basic'),
+  } })).task;
+  log(`1) [worker ${worker.name}] created ${task.id}`);
+
+  // WORKER: claim (attach personal CLI executor profile)
+  const executor = mergeCliExecutor(await loadConfig());
+  task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
+    method: 'POST', body: { expectedVersion: task.version, ...(executor ? { executor } : {}) },
+  })).task;
+  log(`2) [worker] claimed -> ${task.status}${task.executor?.tool ? ` as ${task.executor.tool}${task.executor.model ? `/${task.executor.model}` : ''}` : ''}`);
+
+  // WORKER: verify (program decides pass/fail)
+  const verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
+  task = verifyResult.task;
+  log(`3) [worker] verify -> ${task.verification?.status} passed=${Boolean(task.verification?.passed)}`);
+  if (!task.verification?.passed) {
+    const ids = (verifyResult.failureCases || []).map((item) => item.id);
+    log(`   stopped at ${task.status}; failure cases: ${ids.length ? ids.join(', ') : 'none'}`);
+    if (json) printValue({ completed: false, task, steps }, { json: true });
+    return 2;
+  }
+
+  // WORKER: request review
+  task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/request-review`, { method: 'POST', body: { expectedVersion: task.version } })).task;
+  log(`4) [worker] request-review -> ${task.status}`);
+
+  // REVIEWER BOT: approve if still green + unchanged, else reject
+  const outcome = await reviewOneTask(
+    reviewerClient, task.id,
+    stringOption(options, 'comment', 'Auto-approved by reviewer bot: verification green and workspace unchanged.'),
+    stringOption(options, 'reject-comment', 'Auto-rejected by reviewer bot: re-verification required.'),
+  );
+  log(`5) [reviewer ${reviewerSession.user?.name || 'bot'}] ${outcome.action}${outcome.reason ? ` (${outcome.reason})` : ''}`);
+
+  const final = findTask((await client.request('/api/bootstrap')).tasks, task.id);
+  if (json) printValue({ completed: final?.status === 'DONE', task: final, steps }, { json: true });
+  else printTask(final, bootstrap.users, { json: false });
+  return final?.status === 'DONE' ? 0 : 2;
+}
+
+async function runReviewer(client, positionals, options, json) {
+  const action = positionals[0] || 'run';
+  if (action !== 'run') throw new Error('Reviewer action must be run. Usage: team-loop reviewer run [--once | --interval N]');
+  const approveComment = stringOption(options, 'comment', 'Auto-approved by reviewer bot: program verification green and workspace unchanged.');
+  const rejectComment = stringOption(options, 'reject-comment', 'Auto-rejected by reviewer bot: re-verification required.');
+  const daemon = options.interval !== undefined && !options.once;
+  const intervalSeconds = Math.max(30, numberOption(options, 'interval', 60));
+
+  const reviewOne = (taskId) => reviewOneTask(client, taskId, approveComment, rejectComment);
+
+  const runPass = async () => {
+    const bootstrap = await client.request('/api/bootstrap');
+    const me = bootstrap.user;
+    const reviewable = bootstrap.tasks.filter((task) =>
+      task.status === 'REVIEW' &&
+      task.assigneeUserId !== me.id &&
+      (!task.reviewerUserId || task.reviewerUserId === me.id));
+    const results = [];
+    for (const task of reviewable) {
+      const outcome = await reviewOne(task.id);
+      results.push(outcome);
+      if (!json) process.stdout.write(`${outcome.taskId}: ${outcome.action}${outcome.reason ? ` (${outcome.reason})` : ''}\n`);
+    }
+    if (!reviewable.length && !json) process.stdout.write('No reviewable tasks.\n');
+    return results;
+  };
+
+  if (!daemon) {
+    const results = await runPass();
+    if (json) printValue({ results }, { json: true });
+    return 0;
+  }
+  if (!json) process.stdout.write(`Reviewer bot polling every ${intervalSeconds}s. Ctrl+C to stop.\n`);
+  await runPass();
+  await new Promise((resolve) => {
+    const timer = setInterval(() => runPass().catch((error) => process.stderr.write(`reviewer pass failed: ${error.message}\n`)), intervalSeconds * 1000);
+    const stop = () => { clearInterval(timer); resolve(); };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+  });
+  return 0;
+}
+
+async function rejectTask(client, task, comment) {
+  try {
+    const result = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/review`, {
+      method: 'POST', body: { expectedVersion: task.version, decision: 'REJECT', comment: String(comment).slice(0, 2000) },
+    });
+    return { taskId: task.id, action: 'rejected', reason: `-> ${result.task.status}` };
+  } catch (error) {
+    return { taskId: task.id, action: 'error', reason: error.message };
+  }
+}
+
+async function runSolo(client, positionals, options, json) {
+  const action = positionals[0] || 'run';
+  if (action !== 'run') throw new Error('Solo action must be run. Usage: team-loop solo run --goal "..."');
+  const goal = requireOption(options, 'goal');
+  const bootstrap = await client.request('/api/bootstrap');
+  const steps = [];
+  const log = (message) => { steps.push(message); if (!json) process.stdout.write(`${message}\n`); };
+
+  // 1) create task (use AI draft when the server has AI enabled, else derive from the goal)
+  let draft = null;
+  if (bootstrap.ai?.enabled) {
+    try { draft = (await client.request('/api/ai/draft-task', { method: 'POST', body: { goal } })).draft; }
+    catch (error) { log(`  AI draft skipped: ${error.message}`); }
+  }
+  const allowedPaths = listOption(options, 'allowed-path');
+  const criteria = listOption(options, 'criterion');
+  const createBody = {
+    title: stringOption(options, 'title', String(draft?.title || goal).slice(0, 120)),
+    description: stringOption(options, 'description', String(draft?.description || goal)),
+    priority: numberOption(options, 'priority', 100),
+    allowedPaths: allowedPaths.length ? allowedPaths : (Array.isArray(draft?.allowedPaths) && draft.allowedPaths.length ? draft.allowedPaths : ['**']),
+    acceptanceCriteria: criteria.length ? criteria : (Array.isArray(draft?.acceptanceCriteria) ? draft.acceptanceCriteria : []),
+    verificationProfile: stringOption(options, 'profile', 'repository-basic'),
+  };
+  let task = (await client.request('/api/tasks', { method: 'POST', body: createBody })).task;
+  log(`1) created ${task.id} (${task.status})`);
+
+  // 2) claim, attaching this machine's personal CLI executor profile
+  const executor = mergeCliExecutor(await loadConfig());
+  task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
+    method: 'POST', body: { expectedVersion: task.version, ...(executor ? { executor } : {}) },
+  })).task;
+  log(`2) claimed -> ${task.status}${task.executor?.tool ? ` as ${task.executor.tool}${task.executor.model ? `/${task.executor.model}` : ''}` : ''}`);
+
+  // 3) AI brief (optional, advisory only)
+  if (bootstrap.ai?.enabled) {
+    try { task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/ai-brief`, { method: 'POST', body: { expectedVersion: task.version } })).task; log('3) AI brief attached'); }
+    catch (error) { log(`3) AI brief skipped: ${error.message}`); }
+  } else { log('3) AI brief skipped (AI disabled on server)'); }
+
+  // 4) program verification (harness) decides pass/fail -- AI never does
+  const verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
+  task = verifyResult.task;
+  const passed = Boolean(task.verification?.passed);
+  log(`4) verify -> ${task.verification?.status} passed=${passed}`);
+  if (!passed) {
+    const ids = (verifyResult.failureCases || []).map((item) => item.id);
+    log(`   verification failed; task left at ${task.status}. Failure cases: ${ids.length ? ids.join(', ') : 'none'}`);
+    if (json) printValue({ completed: false, task, steps }, { json: true });
+    return 2;
+  }
+
+  // 5) request review
+  task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/request-review`, { method: 'POST', body: { expectedVersion: task.version } })).task;
+  log(`5) request-review -> ${task.status}`);
+
+  // 6) self-approve (requires the server to run with SOLO_MODE=true)
+  try {
+    task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/review`, {
+      method: 'POST', body: { expectedVersion: task.version, decision: 'APPROVE', comment: stringOption(options, 'comment', 'Solo self-approval.') },
+    })).task;
+    log(`6) self-approve -> ${task.status}`);
+  } catch (error) {
+    log(`6) self-approve blocked: ${error.message}`);
+    log('   Start the server with SOLO_MODE=true to allow solo completion.');
+    if (json) printValue({ completed: false, task, steps }, { json: true });
+    return 2;
+  }
+
+  if (json) printValue({ completed: task.status === 'DONE', task, steps }, { json: true });
+  else printTask(task, bootstrap.users, { json: false });
+  return task.status === 'DONE' ? 0 : 2;
 }
 
 async function runConfig(positionals, options, json) {
@@ -504,5 +729,5 @@ function requirePositional(positionals, index, message) {
 }
 
 function printHelp() {
-  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
+  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
 }
