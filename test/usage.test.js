@@ -62,6 +62,35 @@ test('usage tracker aggregates by user, source, feature and budget', async (t) =
   assert.ok(summary.totals.estimatedCostUsd > 0);
 });
 
+test('usage summary can be limited to the current actor', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-usage-scope-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = path.join(root, 'usage.json');
+  await writeFile(configPath, JSON.stringify({ timeZone: 'Asia/Seoul' }));
+  const tracker = new UsageTracker({ dataDirectory: path.join(root, 'data'), configPath });
+  await tracker.initialize();
+  await tracker.record({
+    actorUserId: 'usr_a', feature: 'task-draft', model: 'test-model', source: 'cli',
+    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  });
+  await tracker.record({
+    actorUserId: 'usr_b', feature: 'task-brief', model: 'test-model', source: 'web',
+    usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+  });
+
+  const summary = await tracker.summary({
+    days: 7,
+    users: [{ id: 'usr_b', name: 'Bob', role: 'member' }],
+    actorUserIds: ['usr_b'],
+  });
+
+  assert.equal(summary.totals.requests, 1);
+  assert.equal(summary.totals.totalTokens, 10);
+  assert.deepEqual(summary.byUser.map((item) => item.userId), ['usr_b']);
+  assert.equal(summary.recent.length, 1);
+  assert.equal(summary.recent[0].actorUserId, 'usr_b');
+});
+
 test('usage summary caches 10k parsed events and invalidates on external append', async (t) => {
   const { performance } = await import('node:perf_hooks');
   const { mkdir, appendFile } = await import('node:fs/promises');

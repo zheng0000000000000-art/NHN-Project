@@ -58,6 +58,40 @@ test('external usage windows are idempotent and partial overlaps fail closed', a
   assert.equal(summary.byUser[0].name, 'Alice');
 });
 
+test('external usage summary can be limited to the current actor', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-external-scope-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new ExternalUsageStore({ dataDirectory: root });
+  await store.initialize();
+  await store.record('usr_a', snapshot({ machineId: 'machine-a' }));
+  await store.record('usr_b', snapshot({
+    machineId: 'machine-b',
+    tokens: {
+      windowId: 'window-b',
+      windowStart: '2026-07-15T08:00:00.000Z',
+      windowEnd: '2026-07-15T09:00:00.000Z',
+      byModel: { 'codex-test': { inputTokens: 4, outputTokens: 6, totalTokens: 10 } },
+    },
+    quota: {
+      source: 'codex-app-server',
+      windows: [{ limitId: 'codex', windowId: 'weekly', usedPercent: 8, resetsAt: '2026-07-16T03:00:00.000Z' }],
+    },
+  }));
+
+  const summary = await store.summary({
+    days: 90,
+    users: [{ id: 'usr_b', name: 'Bob', role: 'member' }],
+    actorUserIds: ['usr_b'],
+  });
+
+  assert.equal(summary.events, 1);
+  assert.equal(summary.totals.totalTokens, 10);
+  assert.deepEqual(summary.byUser.map((item) => item.userId), ['usr_b']);
+  assert.equal(summary.quota.length, 1);
+  assert.equal(summary.quota[0].actorUserId, 'usr_b');
+  assert.equal(summary.quota[0].actorName, 'Bob');
+});
+
 test('quota freshness handles live, stale, inferred reset, and missing reset', () => {
   const now = new Date('2026-07-15T10:00:00.000Z');
   const base = { usedPercent: 35, resetsAt: '2026-07-15T11:00:00.000Z' };

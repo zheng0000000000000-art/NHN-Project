@@ -80,14 +80,18 @@ export class UsageTracker {
     });
   }
 
-  async summary({ days = 30, users = [] } = {}) {
+  async summary({ days = 30, users = [], actorUserIds = null } = {}) {
     const safeDays = [7, 30, 90].includes(Number(days)) ? Number(days) : 30;
+    const visibleActorIds = normalizeActorFilter(actorUserIds);
     const events = await this.#readEvents();
     const now = new Date();
     const cutoff = now.getTime() - safeDays * 24 * 60 * 60 * 1000;
-    const periodEvents = events.filter((event) => Date.parse(event.at) >= cutoff);
+    const visibleEvents = visibleActorIds
+      ? events.filter((event) => visibleActorIds.has(event.actorUserId))
+      : events;
+    const periodEvents = visibleEvents.filter((event) => Date.parse(event.at) >= cutoff);
     const monthKey = dateKey(now, this.config.timeZone).slice(0, 7);
-    const monthEvents = events.filter((event) => event[EVENT_DATE_KEY].startsWith(monthKey));
+    const monthEvents = visibleEvents.filter((event) => event[EVENT_DATE_KEY].startsWith(monthKey));
     const userMap = new Map(users.map((user) => [user.id, user]));
 
     const totals = aggregate(periodEvents);
@@ -397,4 +401,11 @@ function renameKey(name) {
 
 function sortByTokens(a, b) {
   return b.totalTokens - a.totalTokens || b.requests - a.requests;
+}
+
+function normalizeActorFilter(actorUserIds) {
+  if (actorUserIds == null) return null;
+  const values = Array.isArray(actorUserIds) ? actorUserIds : [actorUserIds];
+  const ids = values.map((value) => String(value || '').trim()).filter(Boolean);
+  return ids.length ? new Set(ids) : new Set();
 }

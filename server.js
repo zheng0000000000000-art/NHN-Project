@@ -132,13 +132,18 @@ async function handleApi(request, response) {
 
   if (method === 'GET' && url.pathname === '/api/usage') {
     const days = Number(url.searchParams.get('days') || 30);
-    const users = await store.listUsers();
+    const allUsers = await store.listUsers();
+    const visibleUsers = actor.role === 'admin' ? allUsers : allUsers.filter((user) => user.id === actor.id);
+    const actorUserIds = visibleUsers.map((user) => user.id);
     const [usage, external] = await Promise.all([
-      usageTracker.summary({ days, users }),
-      externalUsage.summary({ days, users }),
+      usageTracker.summary({ days, users: visibleUsers, actorUserIds }),
+      externalUsage.summary({ days, users: visibleUsers, actorUserIds }),
     ]);
     usage.external = external;
-    usage.scope.description = 'Team Loop 서버 경유 AI 요청과 외부 Claude Code/Codex 참고 집계를 분리해 표시합니다. 외부 사용량은 예산에 합산하지 않습니다.';
+    usage.scope.visibility = actor.role === 'admin' ? 'TEAM' : 'SELF';
+    usage.scope.description = actor.role === 'admin'
+      ? 'Team Loop 서버 경유 AI 요청과 외부 Claude Code/Codex 참고 집계를 분리해 표시합니다. 외부 사용량은 예산에 합산하지 않습니다.'
+      : '현재 로그인한 사용자 본인의 서버 AI 요청과 외부 Claude Code/Codex 참고 집계만 표시합니다.';
     sendJson(response, 200, { usage });
     return;
   }

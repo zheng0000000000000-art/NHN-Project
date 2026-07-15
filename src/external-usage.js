@@ -79,12 +79,16 @@ export class ExternalUsageStore {
     });
   }
 
-  async summary({ days = 30, users = [] } = {}) {
+  async summary({ days = 30, users = [], actorUserIds = null } = {}) {
     const safeDays = [7, 30, 90].includes(Number(days)) ? Number(days) : 30;
+    const visibleActorIds = normalizeActorFilter(actorUserIds);
     const now = this.now();
     const cutoff = now.getTime() - safeDays * 24 * 60 * 60 * 1000;
     const userMap = new Map(users.map((user) => [user.id, user]));
-    const events = (await this.#readEvents()).filter((event) => Date.parse(event.tokens?.windowEnd || event.receivedAt) >= cutoff);
+    const events = (await this.#readEvents()).filter((event) => (
+      (!visibleActorIds || visibleActorIds.has(event.actorUserId))
+      && Date.parse(event.tokens?.windowEnd || event.receivedAt) >= cutoff
+    ));
     const modelRows = [];
     for (const event of events) {
       for (const [model, usage] of Object.entries(event.tokens?.byModel || {})) {
@@ -99,11 +103,13 @@ export class ExternalUsageStore {
       }
     }
     const state = await readJson(this.statePath, DEFAULT_STATE);
-    const quota = Object.values(state.quotas || {}).map((entry) => ({
-      ...entry,
-      actorName: userMap.get(entry.actorUserId)?.name || '알 수 없음',
-      windows: (entry.windows || []).map((window) => quotaFreshness(window, entry.collectedAt, now, this.freshnessMs)),
-    })).sort((a, b) => a.actorName.localeCompare(b.actorName) || a.tool.localeCompare(b.tool));
+    const quota = Object.values(state.quotas || {})
+      .filter((entry) => !visibleActorIds || visibleActorIds.has(entry.actorUserId))
+      .map((entry) => ({
+        ...entry,
+        actorName: userMap.get(entry.actorUserId)?.name || '알 수 없음',
+        windows: (entry.windows || []).map((window) => quotaFreshness(window, entry.collectedAt, now, this.freshnessMs)),
+      })).sort((a, b) => a.actorName.localeCompare(b.actorName) || a.tool.localeCompare(b.tool));
 
     return {
       scope: {
@@ -311,4 +317,11 @@ function metadataEqual(left, right) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeActorFilter(actorUserIds) {
+  if (actorUserIds == null) return null;
+  const values = Array.isArray(actorUserIds) ? actorUserIds : [actorUserIds];
+  const ids = values.map((value) => String(value || '').trim()).filter(Boolean);
+  return ids.length ? new Set(ids) : new Set();
 }
