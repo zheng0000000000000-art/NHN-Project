@@ -1,5 +1,5 @@
 const REPEATABLE = new Set(['allowed-path', 'criterion', 'arg', 'failure', 'rule', 'skill', 'default-skill']);
-const BOOLEAN = new Set(['json', 'mine', 'no-save', 'help', 'version', 'once', 'execute']);
+const BOOLEAN = new Set(['json', 'mine', 'no-save', 'help', 'version', 'once', 'execute', 'archived', 'all']);
 
 export function parseCliArgs(argv) {
   const positionals = [];

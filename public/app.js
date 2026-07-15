@@ -351,6 +351,8 @@ board.addEventListener('click', async (event) => {
       await taskAction(task, 'block', { reason });
     }
     if (action === 'unblock') await taskAction(task, 'unblock');
+    if (action === 'archive') await taskAction(task, 'archive');
+    if (action === 'unarchive') await taskAction(task, 'unarchive');
     if (action === 'ai-brief') {
       showToast('AI 작업 브리프를 만들고 있습니다…');
       await taskAIAction(task, 'ai-brief');
@@ -936,18 +938,24 @@ function renderFailureRow(failure) {
 function render() {
   renderSummary();
   board.innerHTML = columns.map(([status, label]) => {
-    const tasks = state.tasks.filter((task) => task.status === status);
+    const tasks = state.tasks.filter((task) => task.status === status && !task.archived);
     return `
       <section class="column" data-status="${status}">
         <div class="column-header"><h2>${label}</h2><span class="count">${tasks.length}</span></div>
         <div class="card-list">${tasks.length ? tasks.map(renderTask).join('') : '<div class="empty">작업 없음</div>'}</div>
       </section>`;
-  }).join('');
+  }).join('') + renderArchivedSection();
+}
+
+function renderArchivedSection() {
+  const archived = state.tasks.filter((task) => task.archived);
+  if (!archived.length) return '';
+  return `<details class="details" style="grid-column:1/-1"><summary>아카이브 (${archived.length})</summary><div class="card-list">${archived.map(renderTask).join('')}</div></details>`;
 }
 
 function renderSummary() {
   document.querySelector('#summary').innerHTML = columns.map(([status, label]) =>
-    `<span>${label} ${state.tasks.filter((task) => task.status === status).length}</span>`
+    `<span>${label} ${state.tasks.filter((task) => task.status === status && !task.archived).length}</span>`
   ).join('');
 }
 
@@ -1036,6 +1044,8 @@ function renderActions(task) {
   if (task.status === 'BLOCKED' && participant) actions.push(actionButton(task, 'unblock', '다시 준비'));
   if (state.ai.enabled && participant && task.status !== 'DONE') actions.push(actionButton(task, 'ai-brief', 'AI 브리프'));
   if (state.ai.enabled && participant && task.verification) actions.push(actionButton(task, 'ai-verification-summary', 'AI 검증 요약'));
+  if (task.status === 'DONE' && participant && !task.archived) actions.push(actionButton(task, 'archive', '아카이브'));
+  if (task.archived && participant) actions.push(actionButton(task, 'unarchive', '복원', 'primary'));
   return actions.join('');
 }
 

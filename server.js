@@ -436,7 +436,7 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request);
@@ -593,6 +593,23 @@ async function handleApi(request, response) {
       next.blocked = null;
       next.verification = null;
       next.review = null;
+    });
+    sendJson(response, 200, { task });
+  }
+
+  if (action === 'archive' || action === 'unarchive') {
+    const task = await store.mutateTask(taskId, actor, expectedVersion, action === 'archive' ? 'TASK_ARCHIVED' : 'TASK_UNARCHIVED', async (next) => {
+      requireTaskParticipantOrAdmin(next, actor);
+      if (action === 'archive') {
+        if (next.status !== 'DONE') throw new HttpError(409, 'Only DONE tasks can be archived.');
+        next.archived = true;
+        next.archivedAt = nowIso();
+        next.archivedByUserId = actor.id;
+      } else {
+        next.archived = false;
+        next.archivedAt = null;
+        next.archivedByUserId = null;
+      }
     });
     sendJson(response, 200, { task });
   }
