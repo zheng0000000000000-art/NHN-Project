@@ -26,6 +26,10 @@ export class SkillRegistry {
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  async activeIds() {
+    return (await this.list({ includeDisabled: false })).map((item) => item.id);
+  }
+
   async get(id) {
     const db = await readJson(this.path, EMPTY_DB);
     const skill = db.skills.find((item) => item.id === id);

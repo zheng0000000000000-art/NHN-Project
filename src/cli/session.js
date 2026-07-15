@@ -47,3 +47,31 @@ export function normalizeServer(value) {
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Server URL must use http or https.');
   return url.toString().replace(/\/$/, '');
 }
+
+function configFilePath() {
+  const home = cliHome();
+  return { directory: home, file: path.join(home, 'config.json') };
+}
+
+// Per-user CLI executor profile (tool/model + default harness/skills), stored next to
+// the session so each teammate's CLI carries their own configuration.
+export async function loadConfig() {
+  const { file } = configFilePath();
+  try {
+    const value = JSON.parse(await readFile(file, 'utf8'));
+    return value && typeof value === 'object' ? value : null;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export async function saveConfig(value) {
+  const { directory, file } = configFilePath();
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await chmod(temporary, 0o600).catch(() => {});
+  await rename(temporary, file);
+  await chmod(file, 0o600).catch(() => {});
+}

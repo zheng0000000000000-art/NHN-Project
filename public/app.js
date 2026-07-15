@@ -935,6 +935,10 @@ function renderTask(task) {
   const review = task.review?.comment ? `<p class="muted">리뷰: ${escapeHtml(task.review.comment)}</p>` : '';
   const criteria = renderListSection('완료 조건', task.acceptanceCriteria);
   const aiDetails = renderTaskAI(task.ai);
+  const executorText = task.executor && task.executor.tool
+    ? (task.executor.model ? `${task.executor.tool}/${task.executor.model}` : task.executor.tool)
+    : '';
+  const executorBadge = executorText ? `<span class="badge">CLI ${escapeHtml(executorText)}</span>` : '';
 
   return `
     <article class="task-card">
@@ -948,6 +952,7 @@ function renderTask(task) {
         <span class="badge">${escapeHtml(task.verificationProfile)}</span>
         ${(task.skillIds || []).map((id) => `<span class="badge">skill:${escapeHtml(id)}</span>`).join('')}
         ${verificationBadge}
+        ${executorBadge}
       </div>
       <div class="task-meta">${scope}</div>
       ${blocked}${review}

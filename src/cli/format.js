@@ -21,6 +21,7 @@ export function printTasks(tasks, users, { json = false } = {}) {
     ASSIGNEE: names.get(task.assigneeUserId) || '-',
     REVIEWER: names.get(task.reviewerUserId) || '-',
     V: String(task.version),
+    EXEC: executorLabel(task.executor),
     TITLE: task.title,
   }));
   printTable(rows);
@@ -44,6 +45,14 @@ export function printTask(task, users, { json = false } = {}) {
     `Profile: ${task.verificationProfile}`,
     `Allowed: ${task.allowedPaths.join(', ')}`,
   ];
+  if (task.executor) {
+    const executor = task.executor;
+    const head = [executor.tool, executor.model].filter(Boolean).join(' / ') || '-';
+    const extra = [];
+    if (executor.harness) extra.push(`harness=${executor.harness}`);
+    if (executor.skills?.length) extra.push(`skills=${executor.skills.join(',')}`);
+    lines.push(`Executor: ${head}${extra.length ? ` (${extra.join(' ')})` : ''}`);
+  }
   if (task.description) lines.push('', task.description);
   if (task.acceptanceCriteria?.length) lines.push('', 'Acceptance:', ...task.acceptanceCriteria.map((item) => `- ${item}`));
   if (task.verification) lines.push('', `Verification: ${task.verification.status} passed=${Boolean(task.verification.passed)}`);
@@ -87,4 +96,9 @@ export function printFailures(failures, { json = false } = {}) {
     LAST: item.lastSeenAt,
     TITLE: item.title,
   })));
+}
+
+function executorLabel(executor) {
+  if (!executor || !executor.tool) return '-';
+  return executor.model ? `${executor.tool}/${executor.model}` : executor.tool;
 }

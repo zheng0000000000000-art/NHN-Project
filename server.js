@@ -12,6 +12,7 @@ import { HarnessRegistry } from './src/harness-registry.js';
 import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
 import { FailureLearningService } from './src/failure-learning.js';
+import { sanitizeExecutorInput } from './src/executor.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
 import { assertPlainObject, HttpError, nowIso } from './src/utils.js';
 
@@ -399,7 +400,15 @@ async function handleApi(request, response) {
     const body = await readBody(request);
     assertPlainObject(body);
     await validatePeople(body.assigneeUserId, body.reviewerUserId);
-    const task = await store.createTask(actor, body, await verifier.profileNames());
+    const profileNames = await verifier.profileNames();
+    const explicitProfile = body.verificationProfile != null && String(body.verificationProfile).trim() !== '';
+    const explicitSkills = Object.hasOwn(body, 'skillIds');
+    const activeSkillIds = await skillRegistry.activeIds();
+    if (explicitSkills) await skillRegistry.resolveActiveMany(body.skillIds ?? []);
+    const task = await store.createTask(actor, body, profileNames, {
+      defaultProfile: explicitProfile ? null : defaultVerificationProfile(profileNames),
+      autoSkillIds: body.noAutoLearning || explicitSkills ? [] : activeSkillIds,
+    });
     sendJson(response, 201, { task });
     return;
   }
@@ -412,6 +421,12 @@ async function handleApi(request, response) {
   const expectedVersion = body.expectedVersion;
 
   if (action === 'claim') {
+    let executor;
+    try {
+      executor = sanitizeExecutorInput(body.executor, { actorUserId: actor.id, at: nowIso() });
+    } catch (error) {
+      throw new HttpError(error.statusCode || 400, error.message);
+    }
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_STARTED', async (next) => {
       if (next.status !== 'READY') throw new HttpError(409, 'Only READY tasks can be started.');
       if (next.assigneeUserId && next.assigneeUserId !== actor.id) throw new HttpError(403, 'This task is assigned to another user.');
@@ -420,6 +435,7 @@ async function handleApi(request, response) {
       next.status = 'IN_PROGRESS';
       next.blocked = null;
       next.review = null;
+      if (executor) next.executor = executor;
     });
     sendJson(response, 200, { task });
     return;
@@ -649,6 +665,11 @@ async function validatePeople(assigneeUserId, reviewerUserId) {
   if (assigneeUserId && reviewerUserId && assigneeUserId === reviewerUserId) {
     throw new HttpError(400, 'Reviewer must differ from assignee.');
   }
+}
+
+function defaultVerificationProfile(profileNames) {
+  if (profileNames.includes('repository-basic')) return 'repository-basic';
+  return profileNames[0] ?? null;
 }
 
 function requireAdmin(actor) {

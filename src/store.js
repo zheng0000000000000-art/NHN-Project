@@ -99,13 +99,17 @@ export class Store {
     return db.tasks.find((task) => task.id === taskId) ?? null;
   }
 
-  async createTask(actor, input, profileNames) {
+  async createTask(actor, input, profileNames, { defaultProfile = null, autoSkillIds = [] } = {}) {
     const title = String(input.title ?? '').trim();
     if (title.length < 3 || title.length > 120) throw new HttpError(400, 'Title must be 3-120 characters.');
-    const verificationProfile = String(input.verificationProfile ?? 'repository-basic');
+    const requestedProfile = input.verificationProfile == null || input.verificationProfile === ''
+      ? (defaultProfile ?? 'repository-basic')
+      : input.verificationProfile;
+    const verificationProfile = String(requestedProfile);
     if (!profileNames.includes(verificationProfile)) throw new HttpError(400, 'Unknown verification profile.');
     const allowedPaths = this.#normalizePaths(input.allowedPaths);
     if (allowedPaths.length === 0) throw new HttpError(400, 'At least one allowed path is required. Use ** to allow the whole workspace.');
+    const skillIds = this.#normalizeSkillIds(input.skillIds ?? autoSkillIds);
 
     return this.#withLock(async () => {
       const db = await readJson(this.tasksPath, EMPTY_TASKS);
@@ -121,11 +125,25 @@ export class Store {
         allowedPaths,
         acceptanceCriteria: this.#normalizeList(input.acceptanceCriteria, 10, 1000),
         verificationProfile,
-        skillIds: [],
-        learning: { applications: [] },
+        skillIds,
+        learning: {
+          applications: skillIds.length || defaultProfile
+            ? [{
+              at: nowIso(),
+              appliedByUserId: actor.id,
+              harnessId: input.verificationProfile == null || input.verificationProfile === '' ? verificationProfile : null,
+              harnessVersion: null,
+              skillIds,
+              skillVersions: {},
+              sourceFailureCaseIds: [],
+              automatic: true,
+            }]
+            : [],
+        },
         verification: null,
         review: null,
         blocked: null,
+        executor: null,
         createdAt: nowIso(),
         updatedAt: nowIso(),
         version: 1,
@@ -179,6 +197,11 @@ export class Store {
   #normalizePaths(value) {
     const items = Array.isArray(value) ? value : String(value ?? '').split(/\r?\n|,/);
     return [...new Set(items.map((item) => String(item).trim().replaceAll('\\', '/').replace(/^\.\//, '')).filter(Boolean))];
+  }
+
+  #normalizeSkillIds(value) {
+    const items = Array.isArray(value) ? value : String(value ?? '').split(/\r?\n|,/);
+    return [...new Set(items.map((item) => String(item).trim()).filter(Boolean))].sort();
   }
 
   #publicUser(user) {

@@ -1,4 +1,4 @@
-const REPEATABLE = new Set(['allowed-path', 'criterion', 'arg', 'failure', 'rule', 'skill']);
+const REPEATABLE = new Set(['allowed-path', 'criterion', 'arg', 'failure', 'rule', 'skill', 'default-skill']);
 const BOOLEAN = new Set(['json', 'mine', 'no-save', 'help', 'version']);
 
 export function parseCliArgs(argv) {

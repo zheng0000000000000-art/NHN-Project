@@ -1,6 +1,7 @@
 import { parseCliArgs, option, requireOption, listOption, repeatedOption } from './args.js';
 import { CliClient } from './client.js';
-import { clearSession, loadSession, normalizeServer, saveSession } from './session.js';
+import { clearSession, loadConfig, loadSession, normalizeServer, saveConfig, saveSession } from './session.js';
+import { mergeCliExecutor } from '../executor.js';
 import { printFailures, printHarnesses, printTask, printTasks, printUsers, printValue } from './format.js';
 import { readFile } from 'node:fs/promises';
 import { readPassword } from './password.js';
@@ -88,8 +89,38 @@ export async function runCli(argv) {
   if (command === 'failures') return listFailures(client, options, json);
   if (command === 'failure') return runFailure(client, positionals.slice(1), options, json);
   if (command === 'usage') return runUsage(client, positionals.slice(1), options, json);
+  if (command === 'config') return runConfig(positionals.slice(1), options, json);
 
   throw new Error(`Unknown command: ${command}. Run "team-loop help".`);
+}
+
+async function runConfig(positionals, options, json) {
+  const action = positionals[0] || 'show';
+  const config = (await loadConfig()) || { schemaVersion: 1, executor: {}, defaults: {} };
+  config.schemaVersion = 1;
+  config.executor = config.executor && typeof config.executor === 'object' ? config.executor : {};
+  config.defaults = config.defaults && typeof config.defaults === 'object' ? config.defaults : {};
+
+  if (action === 'show') {
+    printValue(config, { json: true });
+    return 0;
+  }
+  if (action === 'clear') {
+    await saveConfig({ schemaVersion: 1, executor: {}, defaults: {} });
+    printValue('Cleared CLI executor profile.', { json });
+    return 0;
+  }
+  if (action === 'set') {
+    if (option(options, 'tool') !== undefined) config.executor.tool = String(option(options, 'tool'));
+    if (option(options, 'model') !== undefined) config.executor.model = String(option(options, 'model'));
+    if (option(options, 'default-harness') !== undefined) config.defaults.harness = String(option(options, 'default-harness'));
+    const skills = repeatedOption(options, 'default-skill');
+    if (skills.length) config.defaults.skills = skills;
+    await saveConfig(config);
+    printValue(config, { json: true });
+    return 0;
+  }
+  throw new Error(`Unknown config action: ${action}. Use show, set, or clear.`);
 }
 
 async function runUsage(client, positionals, options, json) {
@@ -174,10 +205,12 @@ async function runTask(client, positionals, options, json) {
       priority: numberOption(options, 'priority', 100),
       allowedPaths: allowedPaths.length ? allowedPaths : ['**'],
       acceptanceCriteria: listOption(options, 'criterion'),
-      verificationProfile: stringOption(options, 'profile', 'repository-basic'),
       assigneeUserId: resolveUserId(bootstrap.users, option(options, 'assignee')),
       reviewerUserId: resolveUserId(bootstrap.users, option(options, 'reviewer')),
     };
+    if (option(options, 'profile') !== undefined) body.verificationProfile = stringOption(options, 'profile', 'repository-basic');
+    if (option(options, 'skill') !== undefined) body.skillIds = repeatedOption(options, 'skill');
+    if (options['no-auto-learning']) body.noAutoLearning = true;
     const result = await client.request('/api/tasks', { method: 'POST', body });
     printTask(result.task, bootstrap.users, { json });
     return 0;
@@ -194,6 +227,9 @@ async function runTask(client, positionals, options, json) {
     body.comment = stringOption(options, 'comment', '');
   } else if (action === 'block') {
     body.reason = requireOption(options, 'reason');
+  } else if (action === 'claim') {
+    const executor = mergeCliExecutor(await loadConfig());
+    if (executor) body.executor = executor;
   } else if (!['claim', 'verify', 'request-review', 'unblock'].includes(action)) {
     throw new Error(`Unknown task action: ${action}.`);
   }
@@ -468,5 +504,5 @@ function requirePositional(positionals, index, message) {
 }
 
 function printHelp() {
-  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
+  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
 }
