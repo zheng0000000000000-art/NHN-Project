@@ -524,6 +524,10 @@ board.addEventListener('click', async (event) => {
     if (action === 'unblock') await taskAction(task, 'unblock');
     if (action === 'archive') await taskAction(task, 'archive');
     if (action === 'unarchive') await taskAction(task, 'unarchive');
+    if (action === 'delete') {
+      if (!window.confirm('이 작업을 삭제할까요? 되돌릴 수 없습니다.')) return;
+      await taskAction(task, 'delete');
+    }
     if (action === 'ai-brief') {
       showToast('AI 작업 브리프를 만들고 있습니다…');
       await taskAIAction(task, 'ai-brief');
@@ -1601,13 +1605,14 @@ function renderActions(task) {
   if (!task.archived && task.status !== 'DONE' && participant) actions.push(actionButton(task, 'dispatch-command', 'CLI 명령'));
   if (task.status === 'DONE' && participant && !task.archived) actions.push(actionButton(task, 'archive', '아카이브'));
   if (task.archived && participant) actions.push(actionButton(task, 'unarchive', '복원', 'primary'));
+  if ((task.creatorUserId === state.user.id || admin) && (task.status === 'DONE' || task.archived)) actions.push(actionButton(task, 'delete', '삭제', 'danger'));
   return actions.join('');
 }
 
 async function copyDispatchCommand(task) {
   const executor = task.executor?.tool || 'codex';
   const model = task.executor?.model ? ` --model ${shellArg(task.executor.model)}` : '';
-  const command = `team-loop --server ${shellArg(window.location.origin)} dispatch ${shellArg(task.id)} --executor ${shellArg(executor)}${model} --execute --to review`;
+  const command = `team-loop --server ${shellArg(window.location.origin)} dispatch ${shellArg(task.id)} --executor ${shellArg(executor)}${model} --execute --retry 3 --to review`;
   try {
     await navigator.clipboard.writeText(command);
     showToast('CLI 실행 명령을 복사했습니다.');

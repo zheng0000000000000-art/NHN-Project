@@ -518,7 +518,7 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive|schedule)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive|schedule|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request);
@@ -703,6 +703,11 @@ async function handleApi(request, response) {
       }
     });
     sendJson(response, 200, { task });
+  }
+
+  if (action === 'delete') {
+    const result = await store.deleteTask(taskId, actor, expectedVersion);
+    sendJson(response, 200, result);
   }
 }
 

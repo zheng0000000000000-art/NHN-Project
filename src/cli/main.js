@@ -141,6 +141,45 @@ function buildDispatchPrompt(task, rules, workspace) {
   return lines.join('\n');
 }
 
+function buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts) {
+  const lines = [buildDispatchPrompt(task, rules, workspace)];
+  lines.push('', '# Previous verification failed');
+  lines.push(`This is repair attempt ${attempt} of ${maxAttempts}. Fix the cause, then stop.`);
+  if (verifyResult?.task?.verification) {
+    lines.push('', '## Verification evidence');
+    lines.push(JSON.stringify(compactVerificationForPrompt(verifyResult.task.verification), null, 2));
+  }
+  const cases = verifyResult?.failureCases || [];
+  if (cases.length) {
+    lines.push('', '## Failure cases');
+    for (const failure of cases) {
+      lines.push(`- ${failure.id}: ${failure.kind} / ${failure.title}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function compactVerificationForPrompt(verification) {
+  return {
+    status: verification.status,
+    passed: verification.passed,
+    finishedAt: verification.finishedAt,
+    checks: (verification.checks || []).map((check) => ({
+      file: check.file,
+      args: check.args,
+      cwd: check.cwd,
+      expectedExit: check.expectedExit,
+      actualExit: check.actualExit,
+      timedOut: check.timedOut,
+      spawnError: check.spawnError,
+      passed: check.passed,
+      stdoutTail: String(check.stdoutTail || '').slice(-1200),
+      stderrTail: String(check.stderrTail || '').slice(-1200),
+    })),
+    scope: verification.scope,
+  };
+}
+
 function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inherit }) {
   return new Promise((resolve, reject) => {
     const normalized = String(tool || 'claude-code');
@@ -229,6 +268,8 @@ async function runDispatch(client, positionals, options, json) {
   const model = stringOption(options, 'model', task.executor?.model || '');
   const permission = stringOption(options, 'permission', 'acceptEdits');
   const sandbox = stringOption(options, 'sandbox', 'workspace-write');
+  const maxAttempts = Math.max(1, Math.min(10, numberOption(options, 'retry', 1)));
+  const autoLearn = Boolean(options['auto-learn']);
   const prompt = buildDispatchPrompt(task, rules, workspace);
 
   if (!options.execute) {
@@ -242,15 +283,54 @@ async function runDispatch(client, positionals, options, json) {
     return 0;
   }
 
-  if (!json) process.stdout.write(`Dispatching ${task.id} to ${tool} in ${workspace} ...\n`);
-  const run = await runExecutor(tool, prompt, {
-    workspace, model, permission, sandbox, inherit: !json,
-  });
-  if (!json) process.stdout.write(`Executor exited with code ${run.code}. Verifying ...\n`);
-
-  const verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
-  task = verifyResult.task;
-  const passed = Boolean(task.verification?.passed);
+  let run = null;
+  let verifyResult = null;
+  let passed = false;
+  const attempts = [];
+  const learnedArtifacts = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const attemptPrompt = attempt === 1 ? prompt : buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts);
+    if (!json) process.stdout.write(`Dispatching ${task.id} to ${tool} in ${workspace} (attempt ${attempt}/${maxAttempts}) ...\n`);
+    run = await runExecutor(tool, attemptPrompt, {
+      workspace, model, permission, sandbox, inherit: !json,
+    });
+    if (!json) process.stdout.write(`Executor exited with code ${run.code}. Verifying ...\n`);
+    verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
+    task = verifyResult.task;
+    passed = Boolean(task.verification?.passed);
+    attempts.push({
+      attempt,
+      executorExit: run.code,
+      verification: task.verification?.status,
+      passed,
+      failureCaseIds: (verifyResult.failureCases || []).map((failure) => failure.id),
+    });
+    if (passed) break;
+    if (autoLearn && verifyResult.failureCases?.length) {
+      const learned = await autoLearnFromFailures(client, task.id, verifyResult.failureCases, { json });
+      if (learned) learnedArtifacts.push(learned);
+      const refreshed = findTask((await client.request('/api/bootstrap')).tasks, task.id);
+      if (refreshed) task = refreshed;
+    }
+    if (!json && attempt < maxAttempts) {
+      process.stdout.write(`Verification failed; handing the failure evidence back to ${tool} for repair.\n`);
+    }
+  }
+  if (passed && autoLearn && learnedArtifacts.some((item) => item.type === 'HARNESS' && item.status === 'DRAFT')) {
+    const activation = await activatePassingHarnesses(client, task.id, learnedArtifacts, { json });
+    if (activation.reverified) {
+      verifyResult = activation.verifyResult;
+      task = verifyResult.task;
+      passed = Boolean(task.verification?.passed);
+      attempts.push({
+        attempt: 'auto-learn-harness',
+        executorExit: null,
+        verification: task.verification?.status,
+        passed,
+        failureCaseIds: (verifyResult.failureCases || []).map((failure) => failure.id),
+      });
+    }
+  }
 
   let review = null;
   const to = stringOption(options, 'to', 'verify');
@@ -265,7 +345,7 @@ async function runDispatch(client, positionals, options, json) {
   }
 
   const final = findTask((await client.request('/api/bootstrap')).tasks, task.id);
-  const summary = { taskId: task.id, executorExit: run.code, verification: final.verification?.status, passed, finalStatus: final.status, review };
+  const summary = { taskId: task.id, attempts, learnedArtifacts, executorExit: run?.code, verification: final.verification?.status, passed, finalStatus: final.status, review };
   if (json) printValue({ ...summary, task: final }, { json: true });
   else {
     process.stdout.write(`verify=${final.verification?.status} passed=${passed} status=${final.status}${review ? ` review=${review.action}` : ''}\n`);
@@ -602,6 +682,11 @@ async function runTask(client, positionals, options, json) {
 
   const taskId = requirePositional(positionals, 1, 'Task ID is required.');
   const { task, users } = await currentTask(client, taskId);
+  if (action === 'delete') {
+    await client.request(`/api/tasks/${encodeURIComponent(task.id)}/delete`, { method: 'POST', body: { expectedVersion: task.version } });
+    printValue(`Deleted ${task.id}.`, { json });
+    return 0;
+  }
   let endpoint = action;
   let body = { expectedVersion: task.version };
 
@@ -614,7 +699,7 @@ async function runTask(client, positionals, options, json) {
   } else if (action === 'claim') {
     const executor = mergeCliExecutor(await loadConfig());
     if (executor) body.executor = executor;
-  } else if (!['claim', 'verify', 'request-review', 'unblock', 'archive', 'unarchive'].includes(action)) {
+  } else if (!['claim', 'verify', 'request-review', 'unblock', 'archive', 'unarchive', 'delete'].includes(action)) {
     throw new Error(`Unknown task action: ${action}.`);
   }
 
@@ -888,5 +973,5 @@ function requirePositional(positionals, index, message) {
 }
 
 function printHelp() {
-  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine] [--archived] [--all]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n  team-loop task archive <task-id>\n  team-loop task unarchive <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nDispatch (hand a task to a CLI agent that does the work):\n  team-loop dispatch <task-id> [--executor claude-code|codex|custom]\n      [--execute] [--model NAME] [--permission MODE] [--sandbox workspace-write]\n      [--to verify|review|done] [--reviewer-home DIR]\n  (default is a dry-run that prints the work order; --execute runs the agent\n   headless in WORKSPACE_ROOT, then verifies. claude-code and codex are supported.)\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n  TEAM_LOOP_CODEX_BIN           Codex executable override, defaults to codex.cmd on Windows\n  TEAM_LOOP_CLAUDE_BIN          Claude executable override, defaults to claude\n  TEAM_LOOP_CUSTOM_EXECUTOR_BIN Custom executor that reads the work order from stdin\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
+  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine] [--archived] [--all]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n  team-loop task archive <task-id>\n  team-loop task unarchive <task-id>\n  team-loop task delete <task-id>\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nDispatch (hand a task to a CLI agent that does the work):\n  team-loop dispatch <task-id> [--executor claude-code|codex|custom]\n      [--execute] [--model NAME] [--permission MODE] [--sandbox workspace-write]\n      [--to verify|review|done] [--reviewer-home DIR]\n  (default is a dry-run that prints the work order; --execute runs the agent\n   headless in WORKSPACE_ROOT, then verifies. claude-code and codex are supported.)\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n  TEAM_LOOP_CODEX_BIN           Codex executable override, defaults to codex.cmd on Windows\n  TEAM_LOOP_CLAUDE_BIN          Claude executable override, defaults to claude\n  TEAM_LOOP_CUSTOM_EXECUTOR_BIN Custom executor that reads the work order from stdin\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
 }
