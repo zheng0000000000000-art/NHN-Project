@@ -62,10 +62,12 @@ export class Verifier {
     const startedAt = nowIso();
     const checks = [];
     for (const command of profile.commands ?? []) {
+      const commandCwd = resolveCommandCwd(verifyRoot, command.cwd ?? '.');
+      const sandboxed = sandboxWrap(command.file, command.args ?? [], verifyRoot, commandCwd);
       checks.push(await runProcess({
-        file: command.file,
-        args: command.args ?? [],
-        cwd: resolveCommandCwd(verifyRoot, command.cwd ?? '.'),
+        file: sandboxed.file,
+        args: sandboxed.args,
+        cwd: sandboxed.cwd,
         expectedExit: Number.isInteger(command.expectedExit) ? command.expectedExit : 0,
         timeoutMs: Number.isFinite(command.timeoutMs) ? command.timeoutMs : 120_000,
       }));
@@ -134,6 +136,28 @@ export class Verifier {
   }
 }
 
+
+export function sandboxWrap(file, args, root, cwd) {
+  const mode = process.env.TEAM_LOOP_SANDBOX;
+  if (!mode || mode === 'off') return { file, args, cwd };
+  const relative = path.relative(root, cwd).split(path.sep).join('/');
+  const workdir = relative ? `/work/${relative}` : '/work';
+  if (mode === 'docker') {
+    const image = process.env.TEAM_LOOP_SANDBOX_IMAGE || 'node:20-bookworm';
+    const extra = (process.env.TEAM_LOOP_SANDBOX_DOCKER_ARGS || '').split(' ').map((part) => part.trim()).filter(Boolean);
+    const dockerArgs = [
+      'run', '--rm', '--network', 'none',
+      '--memory', process.env.TEAM_LOOP_SANDBOX_MEMORY || '512m',
+      '--pids-limit', process.env.TEAM_LOOP_SANDBOX_PIDS || '256',
+      '-v', `${root}:/work`, '-w', workdir,
+      ...extra, image, file, ...args,
+    ];
+    return { file: process.env.TEAM_LOOP_DOCKER_BIN || 'docker', args: dockerArgs, cwd: root };
+  }
+  const prefix = (process.env.TEAM_LOOP_SANDBOX_ARGS || '').split(' ').map((part) => part.trim()).filter(Boolean)
+    .map((part) => part.replace('{root}', root).replace('{cwd}', cwd));
+  return { file: mode, args: [...prefix, file, ...args], cwd };
+}
 
 function resolveCommandCwd(root, relative) {
   const value = String(relative ?? '.');

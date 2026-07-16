@@ -76,3 +76,39 @@ items below.
   it so it isn't restarted into a weaker config.
 - Land code only through the board loop (claim → worktree → verify → review → auto-merge),
   which records attribution and keeps the main branch clean.
+
+---
+
+## Sandbox for harness execution (implemented, pluggable)
+
+The verifier can run every harness command inside a sandbox instead of on the host
+(`src/verifier.js` → `sandboxWrap`). It is **off by default** (backward compatible) and
+enabled per-server via env. Wrapping is argv-based, so there is no shell injection.
+
+**Enable Docker isolation (recommended, requires the Docker daemon):**
+```
+TEAM_LOOP_SANDBOX=docker
+TEAM_LOOP_SANDBOX_IMAGE=<image with the tools your profiles need, e.g. git + node>
+# optional: TEAM_LOOP_SANDBOX_MEMORY=512m  TEAM_LOOP_SANDBOX_PIDS=256  TEAM_LOOP_SANDBOX_DOCKER_ARGS="--read-only"
+```
+Each harness command then runs as:
+`docker run --rm --network none --memory 512m --pids-limit 256 -v <verifyRoot>:/work -w /work <image> <file> <args>`
+
+Guarantees (validated): **no network** (`--network none`), **host filesystem hidden**
+(only the task's worktree is mounted at `/work`), memory/pids limits, and hard timeouts.
+So even a malicious `node --test` in a member's worktree cannot reach the network, touch
+host files, fork-bomb, or exhaust memory.
+
+**Image note:** the default profiles use `git diff --check` and `node --test`, so the
+image must contain **both git and node** (plain `node:20` lacks git). Use a combined
+image or add git to your base. `repository-basic` (git only) and code-executing profiles
+can also be split across images if desired.
+
+**Generic (non-Docker) sandbox:** set `TEAM_LOOP_SANDBOX=<wrapper-exe>` and
+`TEAM_LOOP_SANDBOX_ARGS="...{root}...{cwd}..."` (e.g. firejail, bubblewrap, a restricted-user
+runner). The harness `file`+`args` are appended as real argv.
+
+**Status:** mechanism shipped and unit-tested; Docker network/mount isolation verified.
+Still to do before enabling on the shared server: provide a git+node image and smoke-test
+the real profiles in-container, plus the P0 member-profile restriction (server change,
+pending Codex settling).
