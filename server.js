@@ -15,6 +15,7 @@ import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
 import { scopesOverlap } from './src/scope.js';
 import { ProjectContextStore } from './src/project-context.js';
+import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
 import { assertPlainObject, HttpError, nowIso, sha256 } from './src/utils.js';
 
@@ -40,10 +41,11 @@ const failureCases = new FailureCaseStore(dataDirectory);
 const skillRegistry = new SkillRegistry({ dataDirectory });
 const learning = new FailureLearningService({ failureCases, harnessRegistry, skillRegistry });
 const projectContext = new ProjectContextStore(dataDirectory);
+const discussions = new DiscussionStore(dataDirectory);
 const ai = new AIService();
 const usageTracker = new UsageTracker({ dataDirectory, configPath: usageConfigPath });
 const externalUsage = new ExternalUsageStore({ dataDirectory });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), usageTracker.initialize(), externalUsage.initialize()]);
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), externalUsage.initialize()]);
 const sessionSecret = await loadOrCreateSecret(dataDirectory);
 
 const server = http.createServer(async (request, response) => {
@@ -108,20 +110,23 @@ async function handleApi(request, response) {
   const actor = await requireUser(request);
 
   if (method === 'GET' && url.pathname === '/api/bootstrap') {
-    const [users, tasks, profiles, harnesses, skills, failures, failureSummary, context] = await Promise.all([
+    const [users, tasks, audits, profiles, harnesses, skills, failures, failureSummary, context, discussionSnapshot] = await Promise.all([
       store.listUsers(),
       store.listTasks(),
+      store.listAuditEvents(),
       verifier.publicProfiles(),
       harnessRegistry.list(),
       skillRegistry.list(),
-      failureCases.list({ limit: 100 }),
+      failureCases.list({ limit: 500 }),
       failureCases.summary(),
       projectContext.get(),
+      discussions.snapshot(),
     ]);
     sendJson(response, 200, {
       user: actor,
       users,
       tasks,
+      taskTimeline: buildTaskTimeline(tasks, audits),
       profiles,
       ai: ai.status(),
       usage: usageTracker.status(),
@@ -130,6 +135,7 @@ async function handleApi(request, response) {
       failures,
       failureSummary,
       projectContext: context,
+      discussions: discussionSnapshot,
       workspace: { root: workspaceRoot },
     });
     return;
@@ -144,6 +150,60 @@ async function handleApi(request, response) {
       contentSha256: context.content ? sha256(context.content) : null,
     });
     sendJson(response, 200, { projectContext: context });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/discussions/messages') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const message = await discussions.addMessage(actor, body);
+    await store.recordAudit(actor.id, 'DISCUSSION_MESSAGE_CREATED', {
+      messageId: message.id,
+      length: message.content.length,
+    });
+    sendJson(response, 201, { message });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/discussions/ai-save') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const snapshot = await discussions.snapshot({ messageLimit: 200 });
+    const selectedIds = new Set(Array.isArray(body.messageIds) ? body.messageIds.map(String) : []);
+    const selectedMessages = snapshot.messages.filter((message) => selectedIds.size === 0 || selectedIds.has(message.id));
+    const sourceMessageIds = selectedMessages.map((message) => message.id);
+    const existingMemory = await discussions.findMemoryBySourceIds(sourceMessageIds);
+    if (existingMemory) {
+      sendJson(response, 200, { memory: existingMemory, duplicate: true });
+      return;
+    }
+    const users = await store.listUsers();
+    const userMap = new Map(users.map((user) => [user.id, user.name]));
+    const context = await projectContext.get();
+    let memoryDraft;
+    let aiMeta = null;
+    try {
+      memoryDraft = await ai.discussionMemory({
+        messages: selectedMessages.map((message) => ({ ...message, authorName: userMap.get(message.authorUserId) || '' })),
+        projectContext: context,
+      });
+      aiMeta = { provider: memoryDraft._meta?.provider || ai.status().provider, model: memoryDraft._meta?.model || ai.status().model, fallback: false };
+    } catch (error) {
+      if (error instanceof HttpError && ![503, 504].includes(error.status)) throw error;
+      memoryDraft = fallbackDiscussionMemory(selectedMessages);
+      aiMeta = { provider: ai.status().provider, model: ai.status().model, fallback: true, error: error.message };
+    }
+    const memory = await discussions.addMemory(actor, {
+      ...memoryDraft,
+      sourceMessageIds,
+      ai: aiMeta,
+    });
+    await store.recordAudit(actor.id, 'DISCUSSION_MEMORY_SAVED', {
+      memoryId: memory.id,
+      sourceMessageCount: memory.sourceMessageIds.length,
+      aiFallback: Boolean(aiMeta?.fallback),
+    });
+    sendJson(response, 201, { memory, duplicate: false });
     return;
   }
 
@@ -239,6 +299,7 @@ async function handleApi(request, response) {
       }
       const status = harnessAction === 'activate' ? 'ACTIVE' : 'DISABLED';
       const harness = await harnessRegistry.setStatus(harnessId, actor.id, body.expectedVersion, status);
+      if (status === 'ACTIVE') await resolveArtifactCases(actor, harness, 'HARNESS');
       await store.recordAudit(actor.id, status === 'ACTIVE' ? 'HARNESS_ACTIVATED' : 'HARNESS_DISABLED', { harnessId, version: harness.version });
       sendJson(response, 200, { harness });
       return;
@@ -265,6 +326,7 @@ async function handleApi(request, response) {
       assertPlainObject(body);
       const status = skillAction === 'activate' ? 'ACTIVE' : 'DISABLED';
       const skill = await skillRegistry.setStatus(skillId, actor.id, body.expectedVersion, status);
+      if (status === 'ACTIVE') await resolveArtifactCases(actor, skill, 'SKILL');
       await store.recordAudit(actor.id, status === 'ACTIVE' ? 'SKILL_ACTIVATED' : 'SKILL_DISABLED', { skillId, version: skill.version });
       sendJson(response, 200, { skill });
       return;
@@ -283,6 +345,26 @@ async function handleApi(request, response) {
       sourceFailureCaseIds: result.sourceFailureCases.map((item) => item.id),
     });
     sendJson(response, 201, result);
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/learning/auto-craft') {
+    requireAdmin(actor);
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const cases = await selectedFailureCases(body.failureCaseIds);
+    const context = await projectContext.get();
+    const plan = await planLearningArtifact({ cases, context });
+    const result = await learning.craft(actor, { ...plan, failureCaseIds: cases.map((item) => item.id) });
+    await store.recordAudit(actor.id, 'LEARNING_ARTIFACT_AUTO_CRAFTED', {
+      type: result.type,
+      harnessId: result.harness?.id ?? null,
+      skillId: result.skill?.id ?? null,
+      sourceFailureCaseIds: result.sourceFailureCases.map((item) => item.id),
+      planner: plan.planner,
+      rationale: plan.rationale,
+    });
+    sendJson(response, 201, { ...result, plan });
     return;
   }
 
@@ -436,12 +518,21 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive|schedule)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request);
   assertPlainObject(body);
   const expectedVersion = body.expectedVersion;
+
+  if (action === 'schedule') {
+    const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_SCHEDULE_UPDATED', async (next) => {
+      requireTaskParticipantOrAdmin(next, actor);
+      next.schedule = normalizeTaskSchedule(body.schedule ?? body);
+    });
+    sendJson(response, 200, { task });
+    return;
+  }
 
   if (action === 'claim') {
     let executor;
@@ -719,6 +810,93 @@ async function validatePeople(assigneeUserId, reviewerUserId) {
   }
 }
 
+async function selectedFailureCases(ids) {
+  const failureCaseIds = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((item) => String(item).trim()).filter(Boolean))];
+  if (failureCaseIds.length === 0 || failureCaseIds.length > 50) throw new HttpError(400, 'Select 1-50 cases.');
+  const cases = [];
+  for (const id of failureCaseIds) {
+    const item = await failureCases.get(id);
+    if (!item) throw new HttpError(404, `Case not found: ${id}`);
+    cases.push(item);
+  }
+  return cases;
+}
+
+async function resolveArtifactCases(actor, artifact, type) {
+  const ids = [...new Set((artifact.sourceFailureCaseIds || []).map((item) => String(item).trim()).filter(Boolean))];
+  for (const id of ids) {
+    const current = await failureCases.get(id);
+    if (!current || current.status === 'RESOLVED' || current.status === 'IGNORED') continue;
+    await failureCases.setStatus(
+      id,
+      actor.id,
+      'RESOLVED',
+      `${type} ${artifact.id} activated; case archived until the same signature reappears.`,
+    );
+    await store.recordAudit(actor.id, 'CASE_ARCHIVED_BY_ARTIFACT', { failureId: id, type, artifactId: artifact.id });
+  }
+}
+
+async function planLearningArtifact({ cases, context }) {
+  let plan = null;
+  if (ai.status().enabled) {
+    try {
+      plan = await ai.learningArtifactPlan({ failureCases: cases, projectContext: context });
+    } catch (error) {
+      console.error('AI learning artifact planning failed; falling back:', error.message);
+    }
+  }
+  const fallback = fallbackLearningPlan(cases);
+  const source = plan?.type ? plan : fallback;
+  return {
+    type: source.type === 'HARNESS' && casesContainCommands(cases) ? 'HARNESS' : source.type === 'SKILL' ? 'SKILL' : fallback.type,
+    id: stableArtifactId(source.id || fallback.id, cases),
+    label: String(source.label || fallback.label).trim().slice(0, 120),
+    description: String(source.description || fallback.description).trim().slice(0, 2000),
+    rules: Array.isArray(source.rules) ? source.rules : fallback.rules,
+    rationale: source.rationale || fallback.rationale,
+    planner: plan?.type ? 'ai' : 'fallback',
+  };
+}
+
+function fallbackLearningPlan(cases) {
+  const harness = casesContainCommands(cases);
+  const kinds = [...new Set(cases.map((item) => item.kind).filter(Boolean))].join('-').toLowerCase() || 'case';
+  return {
+    type: harness ? 'HARNESS' : 'SKILL',
+    id: harness ? `regression-${kinds}` : `skill-${kinds}`,
+    label: harness ? `Regression check: ${kinds}` : `Rule: ${kinds}`,
+    description: harness
+      ? `Draft regression harness from ${cases.length} selected case(s).`
+      : `Draft skill rules from ${cases.length} selected case(s).`,
+    rules: harness ? [] : cases.map(ruleFromCase).filter(Boolean),
+    rationale: harness
+      ? 'Selected cases include executable command evidence, so a rerunnable harness is appropriate.'
+      : 'Selected cases do not contain rerunnable command evidence, so procedural skill guidance is safer.',
+  };
+}
+
+function casesContainCommands(cases) {
+  return cases.some((item) => String(item?.lastEvidence?.file || '').trim());
+}
+
+function ruleFromCase(item) {
+  if (item.kind === 'SCOPE_VIOLATION') return `allowedPaths 밖의 \`${item.lastEvidence?.path || item.title}\` 경로를 수정하지 않는다.`;
+  return `\`${item.title || item.id}\` 사례가 반복되지 않도록 완료 전에 관련 검증과 변경 범위를 확인한다.`;
+}
+
+function stableArtifactId(value, cases) {
+  const slug = String(value || 'learned-artifact')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    || 'learned-artifact';
+  const suffix = sha256(cases.map((item) => item.id).sort().join('|')).slice(0, 8);
+  return `${slug.slice(0, 55)}-${suffix}`.replace(/^-+/, 'a');
+}
+
 function defaultVerificationProfile(profileNames) {
   if (profileNames.includes('repository-basic')) return 'repository-basic';
   return profileNames[0] ?? null;
@@ -736,6 +914,181 @@ function requireTaskParticipantOrAdmin(task, actor) {
   if (![task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(actor.id) && actor.role !== 'admin') {
     throw new HttpError(403, 'Only a task participant can do this.');
   }
+}
+
+function buildTaskTimeline(tasks = [], audits = []) {
+  const byTask = new Map(tasks.map((task) => [task.id, {
+    taskId: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    assigneeUserId: task.assigneeUserId,
+    reviewerUserId: task.reviewerUserId,
+    archived: Boolean(task.archived),
+    schedule: normalizeExistingSchedule(task.schedule),
+    events: [],
+  }]));
+  const auditByTask = new Map();
+  for (const event of audits) {
+    const taskId = event?.data?.taskId;
+    if (!taskId || !byTask.has(taskId)) continue;
+    if (!auditByTask.has(taskId)) auditByTask.set(taskId, []);
+    auditByTask.get(taskId).push(event);
+  }
+
+  for (const task of tasks) {
+    const taskAudits = auditByTask.get(task.id) || [];
+    addTimelineEvent(byTask, task.id, {
+      type: 'created',
+      label: '생성',
+      at: task.createdAt,
+      actorUserId: task.creatorUserId,
+      source: 'system',
+    });
+    const claimed = firstAudit(taskAudits, 'TASK_STARTED');
+    if (claimed) addTimelineEvent(byTask, task.id, {
+      type: 'claimed',
+      label: '가져감',
+      at: claimed.at,
+      actorUserId: claimed.actorUserId,
+      source: 'system',
+    });
+    const verified = lastAudit(taskAudits, ['VERIFICATION_FINISHED', 'VERIFICATION_FINISHED_AFTER_CONFLICT']);
+    if (verified) addTimelineEvent(byTask, task.id, {
+      type: 'verify-finish',
+      label: '검증 완료',
+      at: verified.at,
+      actorUserId: verified.actorUserId,
+      source: 'system',
+    });
+    if (task.schedule?.plannedStart) addTimelineEvent(byTask, task.id, {
+      type: 'planned-start',
+      label: '계획 시작',
+      at: dateToIso(task.schedule.plannedStart),
+      source: 'manual',
+    });
+    if (task.schedule?.plannedEnd) addTimelineEvent(byTask, task.id, {
+      type: 'planned-end',
+      label: '계획 마감',
+      at: dateToIso(task.schedule.plannedEnd),
+      source: 'manual',
+    });
+    if (task.review?.requestedAt) {
+      const reviewRequested = firstAudit(taskAudits, 'REVIEW_REQUESTED');
+      addTimelineEvent(byTask, task.id, {
+        type: 'review',
+        label: '리뷰 요청',
+        at: reviewRequested?.at || task.review.requestedAt,
+        actorUserId: reviewRequested?.actorUserId || task.review.requestedByUserId,
+        source: 'system',
+      });
+    }
+    if (task.completedAt) addTimelineEvent(byTask, task.id, {
+      type: 'done',
+      label: '완료',
+      at: task.completedAt,
+      actorUserId: task.review?.reviewerUserId,
+      source: 'system',
+    });
+    const blocked = lastAudit(taskAudits, ['TASK_BLOCKED', 'REVIEW_REJECTED']);
+    if (blocked && !task.completedAt && ['BLOCKED', 'IN_PROGRESS'].includes(task.status)) {
+      const mapped = timelineEventFromAudit(blocked);
+      if (mapped) addTimelineEvent(byTask, task.id, mapped);
+    }
+  }
+
+  return [...byTask.values()].map((item) => ({
+    ...item,
+    events: item.events
+      .filter((event) => event.at)
+      .sort((a, b) => String(a.at).localeCompare(String(b.at))),
+  }));
+}
+
+function firstAudit(events, action) {
+  return events.find((event) => event.action === action) || null;
+}
+
+function lastAudit(events, actions) {
+  const actionSet = new Set(Array.isArray(actions) ? actions : [actions]);
+  return events.filter((event) => actionSet.has(event.action)).at(-1) || null;
+}
+
+function addTimelineEvent(byTask, taskId, event) {
+  const item = byTask.get(taskId);
+  if (!item || !event.at) return;
+  item.events.push(event);
+}
+
+function timelineEventFromAudit(event) {
+  const map = {
+    TASK_STARTED: ['claimed', '가져감'],
+    VERIFICATION_FINISHED: ['verify-finish', '검증 완료'],
+    VERIFICATION_FINISHED_AFTER_CONFLICT: ['verify-finish', '검증 완료'],
+    REVIEW_REQUESTED: ['review', '리뷰 요청'],
+    REVIEW_APPROVED: ['done', '완료'],
+    REVIEW_REJECTED: ['rejected', '반려'],
+    TASK_BLOCKED: ['blocked', '막힘'],
+    TASK_UNBLOCKED: ['unblocked', '재개'],
+    TASK_ARCHIVED: ['archived', '아카이브'],
+    TASK_UNARCHIVED: ['unarchived', '복원'],
+    TASK_SCHEDULE_UPDATED: ['schedule', '일정 수정'],
+  };
+  const [type, label] = map[event.action] || [];
+  if (!type) return null;
+  return {
+    type,
+    label,
+    at: event.at,
+    actorUserId: event.actorUserId,
+    source: 'system',
+  };
+}
+
+function fallbackDiscussionMemory(messages = []) {
+  const selected = Array.isArray(messages) ? messages.filter((message) => String(message?.content || '').trim()) : [];
+  if (selected.length === 0) throw new HttpError(400, 'Select at least one discussion message.');
+  const first = selected[0];
+  const compactMessages = selected
+    .slice(-8)
+    .map((message) => String(message.content || '').trim().replace(/\s+/g, ' ').slice(0, 240));
+  return {
+    title: String(first.content || '회의록').trim().replace(/\s+/g, ' ').slice(0, 80) || '회의록',
+    summary: compactMessages.join('\n'),
+    keyPoints: compactMessages.slice(-5),
+    decisions: [],
+    followUps: [],
+    tags: ['meeting-notes'],
+  };
+}
+
+function normalizeTaskSchedule(input = {}) {
+  return {
+    plannedStart: normalizeDateOnly(input.plannedStart),
+    plannedEnd: normalizeDateOnly(input.plannedEnd),
+    note: String(input.note ?? '').trim().slice(0, 1000),
+  };
+}
+
+function normalizeExistingSchedule(input = {}) {
+  return {
+    plannedStart: typeof input?.plannedStart === 'string' ? input.plannedStart : '',
+    plannedEnd: typeof input?.plannedEnd === 'string' ? input.plannedEnd : '',
+    note: typeof input?.note === 'string' ? input.note : '',
+  };
+}
+
+function normalizeDateOnly(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(Date.parse(`${text}T00:00:00.000Z`))) {
+    throw new HttpError(400, 'Schedule dates must use YYYY-MM-DD.');
+  }
+  return text;
+}
+
+function dateToIso(date) {
+  return `${date}T00:00:00.000Z`;
 }
 
 async function requireUser(request) {

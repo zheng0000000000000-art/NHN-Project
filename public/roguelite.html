@@ -1,134 +1,876 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>족보 고스톱 로그라이트 Prototype</title>
-  <link rel="stylesheet" href="/roguelite.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>미지의 경매장</title>
+  <style>
+    :root {
+      --bg: #111319;
+      --panel: #1b1f2a;
+      --panel-2: #242a38;
+      --line: #363e52;
+      --text: #f3f5f7;
+      --muted: #aeb7c7;
+      --gold: #f4c95d;
+      --good: #74d6a2;
+      --bad: #ff7b7b;
+      --accent: #8ba6ff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(139,166,255,.12), transparent 34%),
+        radial-gradient(circle at top right, rgba(244,201,93,.08), transparent 28%),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, Pretendard, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, a { font: inherit; }
+
+    .wrap {
+      width: min(1180px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 24px 0 50px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      margin-bottom: 5px;
+      font-size: clamp(26px, 4vw, 42px);
+      letter-spacing: -.04em;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 0;
+      line-height: 1.55;
+    }
+
+    .top-actions { display: flex; gap: 8px; }
+
+    button, .button-link {
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: var(--panel-2);
+      border-radius: 11px;
+      padding: 10px 14px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform .15s ease, border-color .15s ease, background .15s ease;
+    }
+
+    button:hover:not(:disabled), .button-link:hover {
+      transform: translateY(-1px);
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    .primary {
+      background: linear-gradient(180deg, #6f89ed, #5872d1);
+      border-color: #8198f3;
+      font-weight: 800;
+    }
+
+    .ghost { background: transparent; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.25fr .75fr;
+      gap: 16px;
+    }
+
+    .panel {
+      background: rgba(27,31,42,.95);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 14px 40px rgba(0,0,0,.22);
+    }
+
+    .hud {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .stat {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      padding: 12px;
+    }
+
+    .stat .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .stat .value {
+      font-size: 21px;
+      font-weight: 900;
+    }
+
+    .auction-card {
+      position: relative;
+      overflow: hidden;
+      min-height: 300px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.035), transparent 55%),
+        var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 20px;
+      align-items: center;
+    }
+
+    .artifact {
+      width: 140px;
+      aspect-ratio: 1;
+      border-radius: 22px;
+      display: grid;
+      place-items: center;
+      font-size: 68px;
+      background: linear-gradient(145deg, rgba(244,201,93,.2), rgba(139,166,255,.16));
+      border: 1px solid rgba(255,255,255,.15);
+      box-shadow: inset 0 0 36px rgba(255,255,255,.03), 0 14px 30px rgba(0,0,0,.22);
+    }
+
+    .eyebrow {
+      color: var(--gold);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .item-name {
+      font-size: clamp(25px, 3vw, 36px);
+      margin-bottom: 8px;
+      letter-spacing: -.04em;
+    }
+
+    .tags { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.04);
+      color: #dce2ef;
+      border-radius: 999px;
+      padding: 6px 9px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .clue {
+      color: var(--muted);
+      line-height: 1.55;
+      margin-bottom: 0;
+    }
+
+    .interest-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .interest {
+      border-radius: 12px;
+      background: rgba(0,0,0,.15);
+      border: 1px solid var(--line);
+      padding: 10px;
+      min-height: 74px;
+    }
+
+    .interest strong { display: block; margin-bottom: 4px; font-size: 13px; }
+    .interest span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+
+    .bid-box {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .bid-box input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #0f1218;
+      color: var(--text);
+      border-radius: 11px;
+      padding: 12px 13px;
+      outline: none;
+    }
+
+    .bid-box input:focus { border-color: var(--accent); }
+
+    .quick-bids {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .result {
+      margin-top: 14px;
+      padding: 13px;
+      border-radius: 13px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,.16);
+      min-height: 54px;
+      line-height: 1.5;
+    }
+
+    .result.good { border-color: rgba(116,214,162,.5); }
+    .result.bad { border-color: rgba(255,123,123,.5); }
+
+    .side-stack { display: grid; gap: 16px; }
+
+    .player-list { display: grid; gap: 10px; }
+
+    .player-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel-2);
+    }
+
+    .player-row.me { border-color: rgba(139,166,255,.75); }
+    .player-row .name { font-weight: 900; }
+    .player-row .desc { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.35; }
+    .money { color: var(--gold); font-weight: 900; }
+
+    .collection {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 8px;
+      max-height: 290px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .owned {
+      border-radius: 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      min-height: 88px;
+    }
+
+    .owned .emoji { font-size: 24px; }
+    .owned .owned-name { font-weight: 800; font-size: 13px; margin-top: 5px; }
+    .owned .owned-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+    .sets { display: grid; gap: 8px; }
+
+    .set-row {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255,255,255,.025);
+    }
+
+    .set-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+    .set-head strong { font-weight: 900; }
+    .set-head span { color: var(--gold); }
+    .progress {
+      margin-top: 8px;
+      height: 7px;
+      border-radius: 999px;
+      background: #0f1218;
+      overflow: hidden;
+    }
+
+    .progress > div {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--gold));
+      width: 0;
+      transition: width .25s ease;
+    }
+
+    .log {
+      margin-top: 16px;
+      max-height: 230px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .log div { padding: 5px 0; border-bottom: 1px dashed rgba(255,255,255,.05); }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(4,6,10,.82);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      z-index: 20;
+    }
+
+    .overlay.show { display: flex; }
+
+    .modal {
+      width: min(720px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 22px;
+      box-shadow: 0 28px 80px rgba(0,0,0,.5);
+    }
+
+    .score-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+    }
+
+    .score-table th, .score-table td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+    }
+
+    .score-table th { color: var(--muted); font-size: 12px; }
+
+    .rules {
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .rules strong { color: var(--text); }
+
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+      .hud { grid-template-columns: repeat(2, 1fr); }
+      .auction-card { grid-template-columns: 1fr; text-align: center; }
+      .artifact { margin: 0 auto; }
+      .tags { justify-content: center; }
+      .interest-row { grid-template-columns: 1fr; text-align: left; }
+    }
+
+    @media (max-width: 520px) {
+      .wrap { width: min(100% - 16px, 1180px); padding-top: 14px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .top-actions { width: 100%; }
+      .top-actions button, .top-actions .button-link { flex: 1; text-align: center; }
+      .quick-bids { grid-template-columns: repeat(2, 1fr); }
+      .bid-box { grid-template-columns: 1fr; }
+      .collection { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
-  <main class="game-shell">
-    <header class="game-header">
+  <div class="wrap">
+    <header>
       <div>
-        <p class="eyebrow">JOKBO GHOST ROGUELITE</p>
-        <h1>족보를 덱으로 짜고, 고스톱으로 터뜨려라</h1>
+        <h1>미지의 경매장</h1>
+        <p class="subtitle">숨겨진 가치를 추론하고, AI 경쟁자를 읽고, 세트를 완성하세요.</p>
       </div>
-      <div class="header-actions">
-        <button id="new-run" type="button">새 런</button>
-        <a href="/">대시보드</a>
+      <div class="top-actions">
+        <a class="button-link ghost" href="/">대시보드</a>
+        <button class="ghost" id="rulesBtn">규칙</button>
+        <button id="restartBtn">새 게임</button>
       </div>
     </header>
 
-    <section class="status-strip" aria-live="polite">
-      <div><span>스테이지</span><strong id="stage-label">1 / 3</strong></div>
-      <div><span>목표</span><strong id="target-label">900</strong></div>
-      <div><span>현재 점수</span><strong id="score-label">0</strong></div>
-      <div><span>확정 점수</span><strong id="banked-label">0</strong></div>
-      <div><span>GO</span><strong id="go-label">0</strong></div>
-      <div><span>산패</span><strong id="deck-label">0</strong></div>
-    </section>
+    <div class="hud">
+      <div class="stat"><div class="label">라운드</div><div class="value" id="roundStat">1 / 12</div></div>
+      <div class="stat"><div class="label">내 자금</div><div class="value" id="moneyStat">70</div></div>
+      <div class="stat"><div class="label">추정 점수</div><div class="value" id="scoreStat">0</div></div>
+      <div class="stat"><div class="label">보유품</div><div class="value" id="itemsStat">0</div></div>
+    </div>
 
-    <section class="director-band">
-      <div>
-        <p class="eyebrow">AI DEALER</p>
-        <h2 id="rule-name">첫 판</h2>
-        <p id="rule-description">AI가 아직 당신의 빌드를 읽는 중입니다.</p>
-      </div>
-      <div class="readout">
-        <span id="ai-read">관찰 대기</span>
-        <span id="turn-label">턴 1</span>
-      </div>
-    </section>
-
-    <section class="board-grid">
-      <section class="panel hand-panel">
-        <div class="panel-heading">
+    <main class="grid">
+      <section class="panel">
+        <div class="auction-card">
+          <div class="artifact" id="itemEmoji">👑</div>
           <div>
-            <p class="eyebrow">HAND</p>
-            <h2>손패</h2>
-          </div>
-          <span>낼 패를 선택</span>
-        </div>
-        <div id="hand" class="card-row"></div>
-      </section>
-
-      <section class="panel floor-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">FLOOR</p>
-            <h2>바닥패</h2>
-          </div>
-          <span id="floor-hint">같은 월을 먹습니다</span>
-        </div>
-        <div id="floor" class="card-row floor-row"></div>
-      </section>
-
-      <section class="panel combo-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">JOKBO DECK</p>
-            <h2>장착 족보</h2>
-          </div>
-          <span id="combo-count">0 완성</span>
-        </div>
-        <div id="combos" class="combo-list"></div>
-      </section>
-
-      <section class="panel relic-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">RELICS</p>
-            <h2>유물</h2>
-          </div>
-          <span>한 판당 1회</span>
-        </div>
-        <div id="relics" class="relic-list"></div>
-      </section>
-
-      <section class="panel captured-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">CAPTURED</p>
-            <h2>먹은 패</h2>
-          </div>
-          <span id="captured-count">0장</span>
-        </div>
-        <div id="captured" class="mini-card-row"></div>
-      </section>
-
-      <section class="panel log-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">FLOW</p>
-            <h2>점수 로그</h2>
+            <div class="eyebrow">SEALED AUCTION</div>
+            <h2 class="item-name" id="itemName">금이 간 왕관</h2>
+            <div class="tags" id="itemTags"></div>
+            <p class="clue" id="itemClue"></p>
+            <div class="interest-row" id="interestRow"></div>
           </div>
         </div>
-        <ol id="log" class="log-list"></ol>
+
+        <div class="quick-bids">
+          <button data-bid="5">5</button>
+          <button data-bid="10">10</button>
+          <button data-bid="15">15</button>
+          <button data-bid="20">20</button>
+        </div>
+
+        <div class="bid-box">
+          <input id="bidInput" type="number" min="0" step="1" placeholder="비공개 입찰 금액" />
+          <button class="primary" id="bidBtn">입찰 확정</button>
+        </div>
+
+        <div class="result" id="resultBox">AI의 관심 신호를 읽고 입찰하세요. 0을 입력하면 패스합니다.</div>
+
+        <div class="log" id="logBox"></div>
       </section>
-    </section>
 
-    <section id="decision" class="decision hidden" aria-live="assertive">
-      <div>
-        <p class="eyebrow">GO / STOP</p>
-        <h2 id="decision-title">족보 완성</h2>
-        <p id="decision-copy">지금 멈추면 점수를 확정합니다. GO를 누르면 배수가 오르지만 AI 압박도 커집니다.</p>
-      </div>
-      <div class="decision-actions">
-        <button id="stop-button" type="button">STOP</button>
-        <button id="go-button" type="button">GO</button>
-      </div>
-    </section>
+      <aside class="side-stack">
+        <section class="panel">
+          <h3>경쟁자</h3>
+          <div class="player-list" id="playerList"></div>
+        </section>
 
-    <section id="stage-result" class="stage-result hidden">
-      <div>
-        <p class="eyebrow">STAGE RESULT</p>
-        <h2 id="result-title">스테이지 클리어</h2>
-        <p id="result-copy"></p>
-      </div>
-      <button id="next-stage" type="button">다음 스테이지</button>
-    </section>
-  </main>
+        <section class="panel">
+          <h3>내 컬렉션</h3>
+          <div class="collection" id="collection"></div>
+        </section>
 
-  <script type="module" src="/roguelite.js"></script>
+        <section class="panel">
+          <h3>세트 진행도</h3>
+          <div class="sets" id="sets"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="overlay" id="modalOverlay">
+    <div class="modal" id="modalContent"></div>
+  </div>
+
+  <script>
+    const ROUNDS = 12;
+    const STARTING_MONEY = 70;
+
+    const SETS = [
+      { id: '왕실', name: '왕실의 유산', need: 3, bonus: 28 },
+      { id: '천문', name: '천체 관측단', need: 3, bonus: 26 },
+      { id: '전쟁', name: '전쟁의 기억', need: 3, bonus: 24 },
+      { id: '연금', name: '연금술 비전', need: 3, bonus: 25 },
+      { id: '심연', name: '심연의 계약', need: 3, bonus: 32 },
+      { id: '자연', name: '고대 자연사', need: 3, bonus: 23 }
+    ];
+
+    const ITEMS = [
+      { name:'금이 간 왕관', emoji:'👑', tags:['왕실'], value:15, clue:'왕실 물품은 대체로 고가지만, 파손 상태가 심합니다.' },
+      { name:'황금 옥새', emoji:'🪙', tags:['왕실'], value:20, clue:'진품이라면 가치가 높습니다. 표면의 문양은 선명합니다.' },
+      { name:'왕좌의 나사', emoji:'🔩', tags:['왕실','전쟁'], value:7, clue:'단독 가치는 낮아 보이지만 두 분류에 걸쳐 있습니다.' },
+      { name:'망원 수정체', emoji:'🔭', tags:['천문'], value:13, clue:'빛을 받으면 내부에 별자리 모양이 나타납니다.' },
+      { name:'월식의 원반', emoji:'🌘', tags:['천문','심연'], value:18, clue:'희귀한 천문 유물. 어두운 흔적이 남아 있습니다.' },
+      { name:'혜성의 파편', emoji:'☄️', tags:['천문'], value:10, clue:'작지만 밀도가 높습니다. 수집가들이 선호합니다.' },
+      { name:'부러진 장군검', emoji:'🗡️', tags:['전쟁'], value:12, clue:'날은 망가졌지만 역사적 출처가 분명합니다.' },
+      { name:'승전 북', emoji:'🥁', tags:['전쟁'], value:9, clue:'실전 사용 흔적이 있습니다. 상태는 보통입니다.' },
+      { name:'검은 깃발', emoji:'🏴', tags:['전쟁','심연'], value:16, clue:'전쟁 유물이지만 의식용 흔적도 발견됩니다.' },
+      { name:'현자의 플라스크', emoji:'⚗️', tags:['연금'], value:14, clue:'내용물은 비어 있지만 제작 방식이 정교합니다.' },
+      { name:'수은 나침반', emoji:'🧭', tags:['연금','천문'], value:17, clue:'방향 대신 별의 움직임을 가리킵니다.' },
+      { name:'납으로 만든 장미', emoji:'🌹', tags:['연금'], value:8, clue:'재료는 흔하지만 제작 의도는 불분명합니다.' },
+      { name:'속삭이는 우상', emoji:'🗿', tags:['심연'], value:19, clue:'가까이 가면 낮은 진동음이 들립니다.' },
+      { name:'봉인된 눈', emoji:'👁️', tags:['심연'], value:21, clue:'봉인을 뜯기 전까지 정확한 상태를 알기 어렵습니다.' },
+      { name:'검은 산호', emoji:'🪸', tags:['심연','자연'], value:11, clue:'희귀하지만 손상이 있습니다. 자연사적 가치도 있습니다.' },
+      { name:'고대 씨앗', emoji:'🌰', tags:['자연'], value:9, clue:'발아 가능성은 낮지만 연대는 매우 오래됐습니다.' },
+      { name:'화석화된 잎', emoji:'🍂', tags:['자연'], value:8, clue:'완전한 형태가 보존되어 있습니다.' },
+      { name:'번개 맞은 뿔', emoji:'🦌', tags:['자연','연금'], value:15, clue:'자연 유물이지만 연금술 재료로도 쓰였다고 합니다.' },
+      { name:'무명의 보석함', emoji:'💎', tags:['왕실','연금'], value:22, clue:'외형은 왕실풍이며 내부 장치는 연금술식입니다.' },
+      { name:'별을 새긴 방패', emoji:'🛡️', tags:['전쟁','천문'], value:18, clue:'장식인지 실제 항해 도구인지 의견이 갈립니다.' },
+      { name:'태양을 삼킨 뱀', emoji:'🐍', tags:['자연','심연'], value:17, clue:'생물 표본인지 의식품인지 분류가 어렵습니다.' },
+      { name:'왕의 전투일지', emoji:'📕', tags:['왕실','전쟁'], value:19, clue:'진위 여부에 따라 가치 차이가 큽니다.' },
+      { name:'별가루 약병', emoji:'🧪', tags:['천문','연금'], value:16, clue:'내용물이 실제 운석 성분일 가능성이 있습니다.' },
+      { name:'숲의 심장석', emoji:'🟢', tags:['자연'], value:14, clue:'미세한 온기가 느껴지는 광물입니다.' }
+    ];
+
+    const BOT_TEMPLATES = [
+      {
+        id:'collector', name:'수집가 AI', desc:'한 세트를 정해 집요하게 완성합니다.',
+        favored: null, aggression: 1.08, bluff: .08
+      },
+      {
+        id:'trader', name:'상인 AI', desc:'기본 가치 대비 싼 물건을 노립니다.',
+        favored: null, aggression: .92, bluff: .03
+      },
+      {
+        id:'rival', name:'견제자 AI', desc:'플레이어가 모으는 세트를 방해합니다.',
+        favored: null, aggression: 1.0, bluff: .13
+      }
+    ];
+
+    let state;
+
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function newParticipant(name, money, extra={}) {
+      return { name, money, items: [], history: [], ...extra };
+    }
+
+    function initGame() {
+      const favoredSets = shuffle(SETS.map(s => s.id));
+      state = {
+        round: 1,
+        deck: shuffle(ITEMS).slice(0, ROUNDS),
+        current: null,
+        resolved: false,
+        player: newParticipant('플레이어', STARTING_MONEY, { id:'player' }),
+        bots: BOT_TEMPLATES.map((b, i) => newParticipant(
+          b.name,
+          STARTING_MONEY,
+          { ...b, favored: i === 0 ? favoredSets[0] : null }
+        )),
+        log: [],
+        playerBidRatios: [],
+        winner: null
+      };
+      drawItem();
+      render();
+      closeModal();
+    }
+
+    function drawItem() {
+      state.current = state.deck[state.round - 1];
+      state.resolved = false;
+      document.getElementById('bidInput').value = '';
+      document.getElementById('resultBox').className = 'result';
+      document.getElementById('resultBox').textContent = 'AI의 관심 신호를 읽고 입찰하세요. 0을 입력하면 패스합니다.';
+    }
+
+    function countTags(participant) {
+      const counts = {};
+      participant.items.forEach(item => item.tags.forEach(tag => counts[tag] = (counts[tag] || 0) + 1));
+      return counts;
+    }
+
+    function setBonus(participant) {
+      const counts = countTags(participant);
+      return SETS.reduce((sum, set) => sum + (Math.floor((counts[set.id] || 0) / set.need) * set.bonus), 0);
+    }
+
+    function rawValue(participant) {
+      return participant.items.reduce((sum, item) => sum + item.value, 0);
+    }
+
+    function totalScore(participant) {
+      return rawValue(participant) + setBonus(participant) + Math.floor(participant.money * .2);
+    }
+
+    function estimatedVisibleScore(participant) {
+      return rawValue(participant) + setBonus(participant);
+    }
+
+    function playerFocusTag() {
+      const counts = countTags(state.player);
+      const entries = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+      return entries[0]?.[0] || null;
+    }
+
+    function itemSynergyValue(participant, item) {
+      const counts = countTags(participant);
+      let value = 0;
+      item.tags.forEach(tag => {
+        const set = SETS.find(s => s.id === tag);
+        const count = counts[tag] || 0;
+        if (!set) return;
+        if ((count + 1) % set.need === 0) value += set.bonus * .72;
+        else if (count % set.need === 1) value += set.bonus * .22;
+        else value += set.bonus * .1;
+      });
+      return value;
+    }
+
+    function botPrivateValuation(bot, item) {
+      const noisyKnownValue = item.value * rand(.72, 1.28);
+      const synergy = itemSynergyValue(bot, item);
+      let valuation = noisyKnownValue + synergy;
+
+      if (bot.id === 'collector') {
+        if (item.tags.includes(bot.favored)) valuation += 10 + synergy * .45;
+        else valuation *= .78;
+      }
+
+      if (bot.id === 'trader') {
+        valuation = noisyKnownValue * 1.05 + synergy * .45;
+      }
+
+      if (bot.id === 'rival') {
+        const focus = playerFocusTag();
+        if (focus && item.tags.includes(focus)) valuation += 8 + itemSynergyValue(state.player, item) * .42;
+      }
+
+      const scarcity = bot.money < 20 ? .74 : bot.money < 35 ? .88 : 1;
+      return valuation * bot.aggression * scarcity;
+    }
+
+    function botBid(bot, item) {
+      const valuation = botPrivateValuation(bot, item);
+      const bid = Math.round(clamp(valuation * rand(.78, 1.05), 0, bot.money));
+      return bid;
+    }
+
+    function interestSignal(bot, item) {
+      let valuation = botPrivateValuation(bot, item);
+      if (Math.random() < bot.bluff) valuation += rand(-10, 10);
+      const ratio = valuation / Math.max(1, bot.money);
+
+      if (ratio > .42 || valuation > 22) return { text:'강한 관심', detail:'자금의 상당 부분을 쓸 가능성이 있습니다.' };
+      if (ratio > .25 || valuation > 15) return { text:'관심 있음', detail:'현재 목표와 어느 정도 맞아 보입니다.' };
+      if (valuation > 9) return { text:'관망', detail:'가격이 낮다면 참여할 수 있습니다.' };
+      return { text:'미온적', detail:'우선순위가 낮아 보입니다.' };
+    }
+
+    function resolveAuction() {
+      if (state.resolved) return;
+      const input = Number(document.getElementById('bidInput').value);
+      if (!Number.isFinite(input) || input < 0 || !Number.isInteger(input)) {
+        showResult('0 이상의 정수로 입력하세요.', false);
+        return;
+      }
+      if (input > state.player.money) {
+        showResult('보유 자금보다 많이 입찰할 수 없습니다.', false);
+        return;
+      }
+
+      const item = state.current;
+      const bids = [{ participant: state.player, bid: input, isPlayer: true }];
+      state.bots.forEach(bot => bids.push({ participant: bot, bid: botBid(bot, item), isPlayer: false }));
+
+      // Highest bid wins. Ties favor the participant with more remaining money, then random.
+      bids.sort((a,b) => b.bid - a.bid || b.participant.money - a.participant.money || Math.random() - .5);
+      const winner = bids[0];
+      const allZero = bids.every(x => x.bid === 0);
+
+      let summary;
+      if (allZero) {
+        summary = `모두 패스했습니다. ${item.name}은 유찰되었습니다. 실제 가치는 ${item.value}점이었습니다.`;
+        addLog(`라운드 ${state.round}: ${item.name} 유찰 · 실제 가치 ${item.value}`);
+      } else {
+        winner.participant.money -= winner.bid;
+        winner.participant.items.push(item);
+        winner.participant.history.push({ item, bid: winner.bid });
+        summary = `${winner.participant.name}가 ${winner.bid}에 낙찰. 실제 가치는 ${item.value}점이었습니다.`;
+        addLog(`라운드 ${state.round}: ${winner.participant.name} 낙찰 ${winner.bid} · ${item.name}(${item.value}점)`);
+      }
+
+      const bidLine = bids.map(x => `${x.participant.name} ${x.bid}`).join(' · ');
+      summary += `\n입찰: ${bidLine}`;
+
+      state.playerBidRatios.push(input / Math.max(1, state.player.money + input));
+      state.resolved = true;
+
+      const playerWon = !allZero && winner.isPlayer;
+      showResult(summary, playerWon, !playerWon && !allZero);
+      render();
+
+      if (state.round >= ROUNDS) {
+        setTimeout(endGame, 700);
+      } else {
+        document.getElementById('bidBtn').textContent = '다음 경매';
+      }
+    }
+
+    function nextRound() {
+      if (!state.resolved) return resolveAuction();
+      if (state.round >= ROUNDS) return;
+      state.round += 1;
+      drawItem();
+      document.getElementById('bidBtn').textContent = '입찰 확정';
+      render();
+    }
+
+    function showResult(text, good=false, bad=false) {
+      const box = document.getElementById('resultBox');
+      box.textContent = text;
+      box.className = 'result' + (good ? ' good' : bad ? ' bad' : '');
+      box.style.whiteSpace = 'pre-line';
+    }
+
+    function addLog(text) {
+      state.log.unshift(text);
+      if (state.log.length > 30) state.log.pop();
+    }
+
+    function render() {
+      const item = state.current;
+      document.getElementById('roundStat').textContent = `${state.round} / ${ROUNDS}`;
+      document.getElementById('moneyStat').textContent = state.player.money;
+      document.getElementById('scoreStat').textContent = estimatedVisibleScore(state.player);
+      document.getElementById('itemsStat').textContent = state.player.items.length;
+
+      document.getElementById('itemEmoji').textContent = item.emoji;
+      document.getElementById('itemName').textContent = item.name;
+      document.getElementById('itemClue').textContent = item.clue;
+      document.getElementById('itemTags').innerHTML = item.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
+
+      const interestHTML = state.bots.map(bot => {
+        const s = interestSignal(bot, item);
+        return `<div class="interest"><strong>${bot.name}: ${s.text}</strong><span>${s.detail}</span></div>`;
+      }).join('');
+      document.getElementById('interestRow').innerHTML = interestHTML;
+
+      const participants = [state.player, ...state.bots];
+      document.getElementById('playerList').innerHTML = participants.map((p, i) => `
+        <div class="player-row ${i===0 ? 'me' : ''}">
+          <div>
+            <div class="name">${p.name}</div>
+            <div class="desc">${i===0 ? '당신' : p.desc}<br>물건 ${p.items.length}개 · 공개 점수 ${estimatedVisibleScore(p)}</div>
+          </div>
+          <div class="money">${p.money}G</div>
+        </div>
+      `).join('');
+
+      const collection = document.getElementById('collection');
+      if (!state.player.items.length) {
+        collection.innerHTML = '<div class="clue">아직 낙찰받은 물건이 없습니다.</div>';
+      } else {
+        collection.innerHTML = state.player.items.map(item => `
+          <div class="owned">
+            <div class="emoji">${item.emoji}</div>
+            <div class="owned-name">${item.name}</div>
+            <div class="owned-meta">${item.tags.join(' · ')} · 가치 ${item.value}</div>
+          </div>
+        `).join('');
+      }
+
+      const counts = countTags(state.player);
+      document.getElementById('sets').innerHTML = SETS.map(set => {
+        const count = counts[set.id] || 0;
+        const progress = Math.min(100, (count % set.need) / set.need * 100);
+        const completed = Math.floor(count / set.need);
+        return `
+          <div class="set-row">
+            <div class="set-head"><strong>${set.name}</strong><span>${count}/${set.need} · +${set.bonus}${completed ? ` ×${completed}` : ''}</span></div>
+            <div class="progress"><div style="width:${completed ? 100 : progress}%"></div></div>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('logBox').innerHTML = state.log.length
+        ? state.log.map(x => `<div>${x}</div>`).join('')
+        : '<div>경매 기록이 여기에 표시됩니다.</div>';
+
+      const bidBtn = document.getElementById('bidBtn');
+      bidBtn.disabled = false;
+      document.getElementById('bidInput').disabled = state.resolved;
+      document.querySelectorAll('[data-bid]').forEach(btn => btn.disabled = state.resolved);
+    }
+
+    function endGame() {
+      const participants = [state.player, ...state.bots];
+      const ranking = participants.map(p => ({
+        p,
+        base: rawValue(p),
+        bonus: setBonus(p),
+        moneyScore: Math.floor(p.money * .2),
+        total: totalScore(p)
+      })).sort((a,b) => b.total - a.total);
+
+      state.winner = ranking[0].p;
+      const won = state.winner === state.player;
+      const rows = ranking.map((r, i) => `
+        <tr>
+          <td>${i+1}</td>
+          <td>${r.p.name}</td>
+          <td>${r.base}</td>
+          <td>${r.bonus}</td>
+          <td>${r.moneyScore}</td>
+          <td><strong>${r.total}</strong></td>
+        </tr>
+      `).join('');
+
+      openModal(`
+        <div class="eyebrow">FINAL RESULT</div>
+        <h2>${won ? '당신이 경매장을 지배했습니다.' : `${state.winner.name}의 승리입니다.`}</h2>
+        <p class="rules">최종 점수는 <strong>물건의 실제 가치 + 세트 보너스 + 남은 자금의 20%</strong>입니다.</p>
+        <table class="score-table">
+          <thead><tr><th>순위</th><th>참가자</th><th>물건 가치</th><th>세트</th><th>잔금</th><th>총점</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <button class="primary" onclick="initGame()">다시 플레이</button>
+      `);
+    }
+
+    function openRules() {
+      openModal(`
+        <h2>게임 규칙</h2>
+        <div class="rules">
+          <p><strong>목표:</strong> 12번의 비공개 경매 후 가장 높은 점수를 얻으세요.</p>
+          <p><strong>경매:</strong> 플레이어와 AI는 동시에 가격을 제출합니다. 가장 높은 입찰자가 금액을 지불하고 물건을 가져갑니다.</p>
+          <p><strong>숨겨진 가치:</strong> 경매 전에는 물건의 실제 점수를 알 수 없습니다. 이름, 분류, 설명, AI 관심 신호로 추론해야 합니다.</p>
+          <p><strong>세트:</strong> 같은 분류를 3개 모을 때마다 큰 보너스를 얻습니다. 두 분류를 가진 물건은 양쪽 세트에 모두 계산됩니다.</p>
+          <p><strong>AI:</strong> 수집가는 특정 세트를, 상인은 싼 고가품을, 견제자는 플레이어의 주력 세트를 노립니다. 현재 비공개 입찰액은 보지 않습니다.</p>
+          <p><strong>점수:</strong> 물건 가치 + 세트 보너스 + 남은 자금의 20%.</p>
+        </div>
+        <button onclick="closeModal()">닫기</button>
+      `);
+    }
+
+    function openModal(html) {
+      document.getElementById('modalContent').innerHTML = html;
+      document.getElementById('modalOverlay').classList.add('show');
+    }
+
+    function closeModal() {
+      document.getElementById('modalOverlay').classList.remove('show');
+    }
+
+    document.getElementById('bidBtn').addEventListener('click', nextRound);
+    document.getElementById('restartBtn').addEventListener('click', initGame);
+    document.getElementById('rulesBtn').addEventListener('click', openRules);
+    document.getElementById('modalOverlay').addEventListener('click', e => {
+      if (e.target.id === 'modalOverlay') closeModal();
+    });
+    document.getElementById('bidInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') nextRound();
+    });
+    document.querySelectorAll('[data-bid]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('bidInput').value = Math.min(Number(btn.dataset.bid), state.player.money);
+      });
+    });
+
+    window.initGame = initGame;
+    window.closeModal = closeModal;
+
+    initGame();
+  </script>
 </body>
 </html>

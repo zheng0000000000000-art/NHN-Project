@@ -26,9 +26,17 @@ function responseWith(value) {
 }
 
 test('AI service stays disabled until key and model are configured', () => {
-  const ai = new AIService({ apiKey: '', model: '' });
+  const ai = new AIService({ provider: 'openai-responses', apiKey: '', model: '' });
   assert.equal(ai.status().enabled, false);
   assert.deepEqual(ai.status().missing, ['OPENAI_API_KEY', 'AI_MODEL']);
+});
+
+test('AI service defaults to local Ollama when no OpenAI key is configured', () => {
+  const ai = new AIService({ apiKey: '' });
+  assert.equal(ai.status().enabled, true);
+  assert.equal(ai.status().provider, 'ollama');
+  assert.equal(ai.status().model, 'qwen2.5-coder:14b');
+  assert.equal(ai.status().baseUrl, 'http://127.0.0.1:11434');
 });
 
 test('AI service can use Ollama without an API key', () => {

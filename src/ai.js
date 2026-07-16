@@ -2,17 +2,18 @@ import { HttpError, nowIso, sha256 } from './utils.js';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_BOARD_TASKS = 80;
+const DEFAULT_OLLAMA_MODEL = 'qwen2.5-coder:14b';
 
 export class AIService {
-  constructor({
-    provider = process.env.AI_PROVIDER || 'openai-responses',
-    apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '',
-    model = process.env.AI_MODEL || '',
-    baseUrl = process.env.AI_BASE_URL || defaultBaseUrl(provider),
-    timeoutMs = Number(process.env.AI_TIMEOUT_MS || DEFAULT_TIMEOUT_MS),
-    includeCommandOutput = process.env.AI_INCLUDE_COMMAND_OUTPUT === 'true',
-    fetchImpl = globalThis.fetch,
-  } = {}) {
+  constructor(options = {}) {
+    const apiKey = options.apiKey ?? process.env.AI_API_KEY ?? process.env.OPENAI_API_KEY ?? '';
+    const provider = options.provider ?? defaultProvider(apiKey);
+    const model = options.model ?? process.env.AI_MODEL ?? defaultModel(provider);
+    const baseUrl = options.baseUrl ?? process.env.AI_BASE_URL ?? defaultBaseUrl(provider);
+    const timeoutMs = options.timeoutMs ?? Number(process.env.AI_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+    const includeCommandOutput = options.includeCommandOutput ?? (process.env.AI_INCLUDE_COMMAND_OUTPUT === 'true');
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+
     this.provider = normalizeProvider(provider);
     this.apiKey = String(apiKey).trim();
     this.model = String(model).trim();
@@ -167,6 +168,91 @@ export class AIService {
         verification,
         people: publicPeople(users),
         commandOutputIncluded: this.includeCommandOutput,
+      },
+    });
+    return withMeta(response.value, this.model, response.provider);
+  }
+
+  async learningArtifactPlan({ failureCases, projectContext = null }) {
+    const cases = Array.isArray(failureCases) ? failureCases.slice(0, 20) : [];
+    if (cases.length === 0) throw new HttpError(400, 'Select at least one case.');
+    const schema = {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['HARNESS', 'SKILL'] },
+        id: { type: 'string', minLength: 3, maxLength: 64, pattern: '^[a-z0-9][a-z0-9-]{2,63}$' },
+        label: { type: 'string', minLength: 3, maxLength: 120 },
+        description: { type: 'string', maxLength: 2000 },
+        rules: stringArray(0, 10, 1200),
+        rationale: { type: 'string', maxLength: 1200 },
+      },
+      required: ['type', 'id', 'label', 'description', 'rules', 'rationale'],
+      additionalProperties: false,
+    };
+    const response = await this.#structured({
+      name: 'team_loop_learning_artifact_plan',
+      schema,
+      instructions: [
+        'Choose whether selected verification cases should become a HARNESS or a SKILL.',
+        'Choose HARNESS only when the cases contain executable command evidence that can be rerun as a regression check.',
+        'Choose SKILL for scope violations, process guidance, missing context, or anything that requires human judgment instead of deterministic command execution.',
+        'Use a short lowercase kebab-case id. Do not include markdown.',
+        'For SKILL, include concrete Korean rules. For HARNESS, rules may be empty because commands are derived from evidence.',
+        'The artifact is a DRAFT; humans still activate it after review.',
+      ].join(' '),
+      input: {
+        projectContext: projectContextForAI(projectContext),
+        failureCases: cases.map((failure) => ({
+          id: failure.id,
+          status: failure.status,
+          kind: failure.kind,
+          harnessId: failure.harnessId,
+          title: failure.title,
+          occurrences: failure.occurrences,
+          identity: failure.identity,
+          lastEvidence: summarizeEvidenceForAI(failure.lastEvidence),
+        })),
+      },
+    });
+    return withMeta(response.value, this.model, response.provider);
+  }
+
+  async discussionMemory({ messages, projectContext = null }) {
+    const cleanMessages = (Array.isArray(messages) ? messages : [])
+      .filter((message) => String(message?.content || '').trim())
+      .slice(-80)
+      .map((message) => ({
+        id: message.id,
+        authorName: message.authorName || '',
+        content: String(message.content || '').slice(0, 4000),
+        createdAt: message.createdAt,
+      }));
+    if (cleanMessages.length === 0) throw new HttpError(400, 'Select at least one discussion message.');
+
+    const response = await this.#structured({
+      name: 'team_loop_discussion_memory',
+      schema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', minLength: 2, maxLength: 120 },
+          summary: { type: 'string', minLength: 2, maxLength: 3000 },
+          keyPoints: stringArray(0, 8, 800),
+          decisions: stringArray(0, 8, 800),
+          followUps: stringArray(0, 8, 800),
+          tags: stringArray(0, 8, 40),
+        },
+        required: ['title', 'summary', 'keyPoints', 'decisions', 'followUps', 'tags'],
+        additionalProperties: false,
+      },
+      instructions: [
+        'Turn team discussion into concise meeting notes for the WIKI and future project context.',
+        'Preserve decisions, constraints, useful rationale, and unresolved follow-ups.',
+        'Do not invent facts. If the discussion is casual or uncertain, say that plainly.',
+        'Write in Korean unless the messages are clearly in another language.',
+      ].join(' '),
+      input: {
+        projectContext: projectContextForAI(projectContext),
+        messages: cleanMessages,
       },
     });
     return withMeta(response.value, this.model, response.provider);
@@ -453,6 +539,22 @@ function projectContextForAI(projectContext) {
   };
 }
 
+function summarizeEvidenceForAI(evidence = {}) {
+  return {
+    file: evidence.file,
+    args: evidence.args,
+    cwd: evidence.cwd,
+    expectedExit: evidence.expectedExit,
+    actualExit: evidence.actualExit,
+    timedOut: evidence.timedOut,
+    spawnError: evidence.spawnError,
+    path: evidence.path,
+    changedPaths: Array.isArray(evidence.changedPaths) ? evidence.changedPaths.slice(0, 20) : undefined,
+    stderrTail: typeof evidence.stderrTail === 'string' ? evidence.stderrTail.slice(-1000) : undefined,
+    stdoutTail: typeof evidence.stdoutTail === 'string' ? evidence.stdoutTail.slice(-1000) : undefined,
+  };
+}
+
 function requiredText(value, label, min, max) {
   const text = String(value ?? '').trim();
   if (text.length < min || text.length > max) throw new HttpError(400, `${label} must be ${min}-${max} characters.`);
@@ -545,6 +647,15 @@ function authHeaders(apiKey) {
 
 function defaultBaseUrl(provider) {
   return normalizeProvider(provider) === 'ollama' ? 'http://127.0.0.1:11434' : 'https://api.openai.com/v1';
+}
+
+function defaultProvider(apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '') {
+  if (process.env.AI_PROVIDER) return process.env.AI_PROVIDER;
+  return String(apiKey).trim() ? 'openai-responses' : 'ollama';
+}
+
+function defaultModel(provider) {
+  return normalizeProvider(provider) === 'ollama' ? DEFAULT_OLLAMA_MODEL : '';
 }
 
 function normalizeProvider(provider) {

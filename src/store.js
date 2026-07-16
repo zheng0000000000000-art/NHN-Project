@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { atomicWriteJson, appendJsonLine, HttpError, nowIso, randomId, readJson } from './utils.js';
 import { hashPassword, verifyPassword } from './auth.js';
 
@@ -94,6 +95,27 @@ export class Store {
     return [...db.tasks].sort((a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt));
   }
 
+  async listAuditEvents({ limit = 5000 } = {}) {
+    let text = '';
+    try {
+      text = await readFile(this.auditPath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return [];
+      throw error;
+    }
+    const events = [];
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event?.at && event?.action) events.push(event);
+      } catch {
+        // Ignore malformed audit rows so the dashboard can still render.
+      }
+    }
+    return events.slice(-Math.max(1, Math.min(20_000, Number(limit) || 5000)));
+  }
+
   async getTask(taskId) {
     const db = await readJson(this.tasksPath, EMPTY_TASKS);
     return db.tasks.find((task) => task.id === taskId) ?? null;
@@ -175,6 +197,25 @@ export class Store {
       await atomicWriteJson(this.tasksPath, db);
       await this.#audit(actor.id, mutationName, { taskId, from: current.status, to: next.status, version: next.version });
       return next;
+    });
+  }
+
+  async deleteTask(taskId, actor, expectedVersion) {
+    return this.#withLock(async () => {
+      const db = await readJson(this.tasksPath, EMPTY_TASKS);
+      const index = db.tasks.findIndex((task) => task.id === taskId);
+      if (index === -1) throw new HttpError(404, 'Task not found.');
+      const task = db.tasks[index];
+      if (task.creatorUserId !== actor.id && actor.role !== 'admin') {
+        throw new HttpError(403, 'Only the creator or an admin can delete a task.');
+      }
+      if (expectedVersion != null && Number(expectedVersion) !== task.version) {
+        throw new HttpError(409, 'Task changed in another browser. Refresh and try again.', { currentVersion: task.version });
+      }
+      db.tasks.splice(index, 1);
+      await atomicWriteJson(this.tasksPath, db);
+      await this.#audit(actor.id, 'TASK_DELETED', { taskId, title: task.title });
+      return { id: taskId, deleted: true };
     });
   }
 

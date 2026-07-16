@@ -50,7 +50,9 @@
       <nav class="view-tabs" aria-label="주 화면">
         <button type="button" class="view-tab active" data-view="usage">사용량 대시보드</button>
         <button type="button" class="view-tab" data-view="board">작업 보드</button>
-        <button type="button" class="view-tab" data-view="harnesses">실패 학습</button>
+        <button type="button" class="view-tab" data-view="harnesses">하네스 & 스킬</button>
+        <button type="button" class="view-tab" data-view="case-wiki">WIKI</button>
+        <button type="button" class="view-tab" data-view="discussion">대화</button>
       </nav>
 
       <section id="usage-view" class="view-section">
@@ -126,8 +128,34 @@
 
       <section id="board-view" class="view-section hidden">
         <section class="toolbar">
-          <div class="toolbar-actions"><button id="new-task-button" class="primary" type="button">새 작업</button><button id="ai-assistant-button" class="ghost" type="button">AI 도우미</button><span id="ai-status" class="badge"></span></div>
+          <div class="toolbar-actions"><button id="new-task-button" class="primary" type="button">새 작업</button><button id="ai-assistant-button" class="ghost" type="button">AI 도우미</button><button id="milestone-toggle" class="ghost" type="button">마일스톤</button><span id="ai-status" class="badge"></span></div>
           <div id="summary" class="summary"></div>
+        </section>
+
+        <section id="milestone-panel" class="panel milestone-panel hidden">
+          <div class="panel-heading">
+            <div><p class="eyebrow">MILESTONE CALENDAR</p><h2>작업 일정과 완료 흐름</h2><p class="muted">작업을 언제 가져갔고, 검증·리뷰·완료가 언제 일어났는지 달력처럼 봅니다. 계획 시작/마감/메모는 사람이 직접 수정할 수 있습니다.</p></div>
+            <div class="milestone-controls">
+              <button id="milestone-prev" class="ghost compact" type="button">이전</button>
+              <span id="milestone-month" class="badge"></span>
+              <button id="milestone-next" class="ghost compact" type="button">다음</button>
+            </div>
+          </div>
+          <div class="milestone-filters">
+            <label>보기<select id="milestone-event-filter"><option value="">전체 이벤트</option><option value="planned">계획</option><option value="claimed">가져감</option><option value="verify">검증</option><option value="review">리뷰</option><option value="done">완료</option><option value="blocked">막힘/반려</option></select></label>
+            <label>담당자<select id="milestone-user-filter"><option value="">전체 담당자</option></select></label>
+            <label>검색<input id="milestone-search" placeholder="작업 제목"></label>
+            <button id="milestone-clear-filter" class="ghost compact" type="button">필터 초기화</button>
+          </div>
+          <form id="schedule-form" class="schedule-form">
+            <label>작업<select name="taskId"></select></label>
+            <label>계획 시작<input name="plannedStart" type="date"></label>
+            <label>계획 마감<input name="plannedEnd" type="date"></label>
+            <label class="wide">메모<input name="note" maxlength="1000" placeholder="예: v0.8 전에 리뷰까지 끝내기"></label>
+            <button class="ghost" type="submit">일정 저장</button>
+          </form>
+          <div id="milestone-calendar" class="milestone-calendar"></div>
+          <div id="milestone-stream" class="milestone-stream"></div>
         </section>
 
         <section id="ai-panel" class="panel ai-panel hidden">
@@ -180,11 +208,11 @@
         <div class="dashboard-heading">
           <div>
             <p class="eyebrow">PROGRAM VERIFICATION</p>
-            <h2>실패에서 하네스·스킬 만들기</h2>
-            <p class="muted">기록된 실패 여러 건을 회귀 하네스 또는 재발 방지 스킬로 만들고, 활성화한 뒤 작업에 적용합니다.</p>
+            <h2>하네스 & 스킬</h2>
+            <p class="muted">검증 사례를 묶어 회귀 하네스 또는 작업 규칙 스킬로 만들고, 활성화한 뒤 작업에 적용합니다.</p>
           </div>
           <div class="dashboard-controls">
-            <label>실패 상태
+            <label>사례 상태
               <select id="failure-status-filter">
                 <option value="">전체</option>
                 <option value="OPEN" selected>OPEN</option>
@@ -193,22 +221,24 @@
                 <option value="IGNORED">IGNORED</option>
               </select>
             </label>
+            <button id="learning-create-toggle" class="ghost" type="button">수동 제작</button>
+            <button id="harness-create-toggle" class="ghost" type="button">새 하네스</button>
             <button id="harness-refresh" class="ghost" type="button">갱신</button>
           </div>
         </div>
 
         <section id="harness-summary" class="kpi-grid harness-kpis"></section>
 
-        <section id="learning-create-panel" class="dashboard-card harness-create-card">
+        <section id="learning-create-panel" class="dashboard-card harness-create-card hidden">
           <div class="card-heading">
-            <div><p class="eyebrow">FAILURE → LEARNING</p><h3>실패 묶음으로 제작</h3></div>
+            <div><p class="eyebrow">CASE → HARNESS/SKILL</p><h3>사례 묶음으로 제작</h3></div>
             <span class="badge">관리자 전용</span>
           </div>
           <form id="learning-form" class="task-form">
             <label>종류<select name="type"><option value="SKILL">스킬 규칙</option><option value="HARNESS">회귀 하네스</option></select></label>
             <label>ID<input name="id" pattern="[a-z0-9][a-z0-9-]{2,63}" placeholder="known-build-regression" required></label>
             <label>표시 이름<input name="label" minlength="3" maxlength="120" placeholder="Known build regression" required></label>
-            <label class="wide">실패 Case ID <span class="muted">(한 줄에 하나)</span><textarea name="failureCaseIds" rows="4" required placeholder="fail_..."></textarea></label>
+            <label class="wide">사례 ID <span class="muted">(한 줄에 하나)</span><textarea name="failureCaseIds" rows="4" required placeholder="fail_..."></textarea></label>
             <label class="wide">설명<textarea name="description" rows="2"></textarea></label>
             <label class="wide">추가 스킬 규칙 <span class="muted">(선택, 한 줄에 하나 · HARNESS에서는 무시)</span><textarea name="rules" rows="3"></textarea></label>
             <div class="wide form-actions"><button class="primary" type="submit">DRAFT 제작</button></div>
@@ -217,12 +247,12 @@
         </section>
 
         <section class="dashboard-card">
-          <div class="card-heading"><div><p class="eyebrow">SKILL REGISTRY</p><h3>실패 유래 스킬</h3></div><span id="skill-count" class="badge"></span></div>
+          <div class="card-heading"><div><p class="eyebrow">SKILL REGISTRY</p><h3>스킬</h3></div><span id="skill-count" class="badge"></span></div>
           <div id="skill-list" class="harness-grid"></div>
         </section>
 
         <section class="dashboard-card harness-create-card">
-          <div class="card-heading"><div><p class="eyebrow">APPLY TO TASK</p><h3>활성 학습 적용</h3></div></div>
+          <div class="card-heading"><div><p class="eyebrow">APPLY TO TASK</p><h3>하네스·스킬 적용</h3></div></div>
           <form id="learning-apply-form" class="task-form">
             <label>작업<select name="taskId" required></select></label>
             <label>하네스<select name="harnessId"><option value="">변경 없음</option></select></label>
@@ -232,7 +262,7 @@
           <p id="learning-apply-error" class="error" role="alert"></p>
         </section>
 
-        <section id="harness-create-panel" class="dashboard-card harness-create-card">
+        <section id="harness-create-panel" class="dashboard-card harness-create-card hidden">
           <div class="card-heading">
             <div><p class="eyebrow">CREATE HARNESS</p><h3>새 하네스</h3></div>
             <span class="badge">관리자 전용</span>
@@ -263,8 +293,66 @@
         </section>
 
         <section class="dashboard-card recent-card failure-card">
-          <div class="card-heading"><div><p class="eyebrow">FAILURE CORPUS</p><h3>실패사례</h3></div><span id="failure-count" class="badge"></span></div>
+          <div class="card-heading"><div><p class="eyebrow">CASE CORPUS</p><h3>사례 묶음</h3></div><span id="failure-count" class="badge"></span></div>
           <div id="failure-list" class="table-wrap"></div>
+        </section>
+      </section>
+
+      <section id="case-wiki-view" class="view-section hidden">
+        <div class="dashboard-heading">
+          <div>
+            <p class="eyebrow">ARCHIVE WIKI</p>
+            <h2>WIKI</h2>
+            <p class="muted">지금은 하네스나 스킬로 정리된 사례 아카이브를 모아봅니다. 나중에 운영 노트, 검증 패턴, 팀 규칙까지 함께 쌓을 수 있는 공간입니다.</p>
+          </div>
+          <div class="dashboard-controls">
+            <span id="case-archive-count" class="badge"></span>
+            <button id="case-wiki-refresh" class="ghost" type="button">갱신</button>
+          </div>
+        </div>
+        <div class="dashboard-grid wiki-overview">
+          <section class="dashboard-card">
+            <div class="card-heading"><div><p class="eyebrow">CONTEXT PACK</p><h3>프로젝트 컨텍스트</h3><p class="muted">AI 도우미가 참고하는 안정적인 프로젝트 규칙과 배경입니다.</p></div></div>
+            <div id="wiki-context-pack" class="wiki-text-card"></div>
+          </section>
+          <section class="dashboard-card">
+            <div class="card-heading"><div><p class="eyebrow">PROJECT HISTORY</p><h3>최근 흐름</h3><p class="muted">작업을 가져가고, 검증하고, 완료한 흔적을 시간순으로 봅니다.</p></div></div>
+            <div id="wiki-project-history" class="wiki-history-list"></div>
+          </section>
+          <section class="dashboard-card">
+            <div class="card-heading"><div><p class="eyebrow">MEETING NOTES</p><h3>회의록</h3><p class="muted">대화창에서 AI 저장한 요약입니다.</p></div></div>
+            <div id="wiki-discussion-memories" class="wiki-history-list"></div>
+          </section>
+          <section class="dashboard-card">
+            <div class="card-heading"><div><p class="eyebrow">JUDGING CRITERIA</p><h3>심사 기준</h3><p class="muted">자동 하네스와 사람 리뷰로 나눠 볼 기준입니다.</p></div></div>
+            <div id="wiki-judging-criteria" class="wiki-criteria-list"></div>
+          </section>
+        </div>
+        <section class="dashboard-card recent-card case-archive-card">
+          <div class="card-heading"><div><p class="eyebrow">ARCHIVED ENTRIES</p><h3>아카이브 항목</h3><p class="muted">한 줄 요약을 누르면 연결된 하네스/스킬과 대표 증거를 펼쳐봅니다.</p></div></div>
+          <div id="case-archive" class="case-archive-grid"></div>
+        </section>
+      </section>
+
+      <section id="discussion-view" class="view-section hidden">
+        <div class="dashboard-heading">
+          <div>
+            <p class="eyebrow">TEAM CHAT</p>
+            <h2>대화</h2>
+            <p class="muted">팀원이 짧게 이야기하는 창입니다. 필요한 내용은 AI가 회의록으로 정리해 WIKI에 저장합니다.</p>
+          </div>
+          <div class="dashboard-controls">
+            <span id="discussion-count" class="badge"></span>
+            <button id="discussion-ai-save" class="ghost" type="button">회의록 저장</button>
+          </div>
+        </div>
+        <section class="dashboard-card chat-card">
+          <div id="discussion-messages" class="discussion-messages"></div>
+          <form id="discussion-form" class="discussion-form">
+            <label class="wide">메시지<textarea name="content" rows="3" maxlength="4000" required placeholder="짧게 이야기해도 됩니다. 필요하면 위의 회의록 저장으로 WIKI에 남깁니다."></textarea></label>
+            <div class="wide form-actions"><button class="primary" type="submit">보내기</button></div>
+          </form>
+          <p id="discussion-error" class="error" role="alert"></p>
         </section>
       </section>
     </section>

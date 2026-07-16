@@ -2,6 +2,7 @@ const state = {
   user: null,
   users: [],
   tasks: [],
+  taskTimeline: [],
   profiles: {},
   ai: { enabled: false, missing: [] },
   projectContext: { content: '', updatedAt: null, updatedByUserId: null },
@@ -10,11 +11,16 @@ const state = {
   aiResults: null,
   usage: null,
   usageDays: 30,
+  milestoneMonth: new Date().toISOString().slice(0, 7),
+  milestoneFilter: { type: '', userId: '', query: '', date: '' },
+  showLearningCreate: false,
+  showHarnessCreate: false,
   activeView: 'usage',
   harnesses: [],
   skills: [],
   failures: [],
   failureSummary: { total: 0, open: 0, fixtureCandidates: 0, resolved: 0, ignored: 0, occurrences: 0 },
+  discussions: { messages: [], memories: [] },
 };
 
 const columns = [
@@ -25,6 +31,16 @@ const columns = [
   ['DONE', '완료'],
 ];
 
+const judgingCriteria = [
+  { no: 0, title: '제출 자격·실행 무결성', grade: 'T1', lane: '자동 하네스', summary: '제출물, 실행 링크, 금지 형식, 실행 오류처럼 심사 전에 탈락을 가르는 필수 조건입니다.', artifact: 'judging-submission-integrity' },
+  { no: 1, title: '60초 영상 전달력', grade: 'T2', lane: '사람 리뷰', summary: '무음으로 봐도 30초 안에 게임과 AI 차별점이 보이고 계속 보고 싶어야 합니다.', artifact: 'judging-video-clarity' },
+  { no: 2, title: 'AI 네이티브성', grade: 'T2', lane: '혼합 평가', summary: 'AI가 제작 보조가 아니라 런타임 재미, 선택, 상황 변화를 만들어야 합니다.', artifact: 'judging-ai-native-gameplay' },
+  { no: 3, title: '기술 문서 품질', grade: 'T2', lane: '혼합 평가', summary: '프롬프트 목록이 아니라 구조, 검증, 실패 대응, 비용, 보안까지 설명해야 합니다.', artifact: 'judging-technical-documentation' },
+  { no: 4, title: '저장소와 개발 이력', grade: 'T1~T2', lane: '자동 하네스', summary: '커밋, 코드, 문서가 실제 반복 개발과 역할 분담을 증명해야 합니다.', artifact: 'judging-repository-history' },
+  { no: 5, title: '비용·운영 안정성', grade: 'T1~T2', lane: '자동 하네스', summary: 'API 비용을 통제하고 장애나 제한 상황에서도 게임이 최소 동작해야 합니다.', artifact: 'judging-ops-stability' },
+  { no: 6, title: 'NHN 정합성', grade: 'T3', lane: '사람 리뷰', summary: 'NHN 장르, 서비스, 채용 방향과 어울리는지는 AI 참고 의견만 사용합니다.', artifact: 'judging-nhn-fit-human-review' },
+];
+
 const authView = document.querySelector('#auth-view');
 const workspaceView = document.querySelector('#workspace-view');
 const authError = document.querySelector('#auth-error');
@@ -33,16 +49,28 @@ const taskFormError = document.querySelector('#task-form-error');
 const aiPanel = document.querySelector('#ai-panel');
 const aiError = document.querySelector('#ai-error');
 const aiResults = document.querySelector('#ai-results');
+const milestonePanel = document.querySelector('#milestone-panel');
 const board = document.querySelector('#board');
+const milestoneCalendar = document.querySelector('#milestone-calendar');
+const milestoneStream = document.querySelector('#milestone-stream');
 const usageView = document.querySelector('#usage-view');
 const boardView = document.querySelector('#board-view');
 const harnessView = document.querySelector('#harness-view');
+const caseWikiView = document.querySelector('#case-wiki-view');
+const discussionView = document.querySelector('#discussion-view');
 const harnessFormError = document.querySelector('#harness-form-error');
 const harnessList = document.querySelector('#harness-list');
 const skillList = document.querySelector('#skill-list');
 const learningFormError = document.querySelector('#learning-form-error');
 const learningApplyError = document.querySelector('#learning-apply-error');
 const failureList = document.querySelector('#failure-list');
+const caseArchive = document.querySelector('#case-archive');
+const wikiContextPack = document.querySelector('#wiki-context-pack');
+const wikiProjectHistory = document.querySelector('#wiki-project-history');
+const wikiDiscussionMemories = document.querySelector('#wiki-discussion-memories');
+const wikiJudgingCriteria = document.querySelector('#wiki-judging-criteria');
+const discussionMessages = document.querySelector('#discussion-messages');
+const discussionError = document.querySelector('#discussion-error');
 const toast = document.querySelector('#toast');
 
 for (const tab of document.querySelectorAll('[data-auth-tab]')) {
@@ -91,19 +119,132 @@ document.querySelector('#new-task-button').addEventListener('click', () => taskF
 document.querySelector('#close-task-form').addEventListener('click', () => taskFormPanel.classList.add('hidden'));
 document.querySelector('#ai-assistant-button').addEventListener('click', () => aiPanel.classList.remove('hidden'));
 document.querySelector('#close-ai-panel').addEventListener('click', () => aiPanel.classList.add('hidden'));
+document.querySelector('#milestone-toggle').addEventListener('click', () => {
+  milestonePanel.classList.toggle('hidden');
+  document.querySelector('#milestone-toggle').classList.toggle('active', !milestonePanel.classList.contains('hidden'));
+  if (!milestonePanel.classList.contains('hidden')) renderMilestonePlanner();
+});
 
 for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', async () => {
     switchView(button.dataset.view);
     if (state.activeView === 'usage') await loadUsage({ quiet: false });
     if (state.activeView === 'harnesses') renderHarnessDashboard();
+    if (state.activeView === 'case-wiki') renderCaseArchive();
+    if (state.activeView === 'discussion') renderDiscussionBoard();
   });
 }
 
 document.querySelector('#usage-refresh').addEventListener('click', () => loadUsage({ quiet: false }));
+document.querySelector('#case-wiki-refresh').addEventListener('click', async () => {
+  await bootstrap({ quiet: true });
+  renderCaseArchive();
+  showToast('WIKI를 갱신했습니다.');
+});
 document.querySelector('#usage-days').addEventListener('change', async (event) => {
   state.usageDays = Number(event.target.value) || 30;
   await loadUsage({ quiet: false });
+});
+
+document.querySelector('#discussion-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  discussionError.textContent = '';
+  const form = event.currentTarget;
+  try {
+    await api('/api/discussions/messages', {
+      method: 'POST',
+      body: { content: form.elements.content.value },
+    });
+    form.reset();
+    await bootstrap({ quiet: true });
+    renderDiscussionBoard();
+    showToast('대화에 보냈습니다.');
+  } catch (error) {
+    discussionError.textContent = error.message;
+  }
+});
+
+document.querySelector('#discussion-ai-save').addEventListener('click', async () => {
+  discussionError.textContent = '';
+  const button = document.querySelector('#discussion-ai-save');
+  if (!(state.discussions?.messages || []).length) {
+    discussionError.textContent = '회의록으로 저장할 대화가 아직 없습니다.';
+    return;
+  }
+  try {
+    button.disabled = true;
+    const result = await api('/api/discussions/ai-save', { method: 'POST', body: {} });
+    await bootstrap({ quiet: true });
+    renderDiscussionBoard();
+    renderCaseArchive();
+    showToast(result.duplicate ? '이미 저장된 회의록입니다.' : '대화를 회의록으로 저장했습니다.');
+  } catch (error) {
+    discussionError.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector('#milestone-prev').addEventListener('click', () => shiftMilestoneMonth(-1));
+document.querySelector('#milestone-next').addEventListener('click', () => shiftMilestoneMonth(1));
+document.querySelector('#milestone-event-filter').addEventListener('change', (event) => {
+  state.milestoneFilter.type = event.target.value;
+  renderMilestonePlanner();
+});
+document.querySelector('#milestone-user-filter').addEventListener('change', (event) => {
+  state.milestoneFilter.userId = event.target.value;
+  renderMilestonePlanner();
+});
+document.querySelector('#milestone-search').addEventListener('input', (event) => {
+  state.milestoneFilter.query = event.target.value;
+  renderMilestonePlanner();
+});
+document.querySelector('#milestone-clear-filter').addEventListener('click', () => {
+  state.milestoneFilter = { type: '', userId: '', query: '', date: '' };
+  renderMilestonePlanner();
+});
+document.querySelector('#schedule-form').addEventListener('change', (event) => {
+  if (event.target.name === 'taskId') populateScheduleForm(event.target.value);
+});
+document.querySelector('#schedule-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const taskId = form.elements.taskId.value;
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!task) return;
+  try {
+    const payload = await api(`/api/tasks/${encodeURIComponent(taskId)}/schedule`, {
+      method: 'POST',
+      body: {
+        expectedVersion: task.version,
+        schedule: {
+          plannedStart: form.elements.plannedStart.value,
+          plannedEnd: form.elements.plannedEnd.value,
+          note: form.elements.note.value,
+        },
+      },
+    });
+    replaceTask(payload.task);
+    await bootstrap({ quiet: true });
+    showToast('일정을 저장했습니다.');
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+document.querySelector('#milestone-panel').addEventListener('click', (event) => {
+  const day = event.target.closest('[data-milestone-date]');
+  if (day) {
+    state.milestoneFilter.date = state.milestoneFilter.date === day.dataset.milestoneDate ? '' : day.dataset.milestoneDate;
+    renderMilestonePlanner();
+    return;
+  }
+  const button = event.target.closest('[data-schedule-task]');
+  if (!button) return;
+  const taskId = button.dataset.scheduleTask;
+  const form = document.querySelector('#schedule-form');
+  form.elements.taskId.value = taskId;
+  populateScheduleForm(taskId);
+  form.elements.plannedStart.focus();
 });
 
 document.querySelector('#harness-refresh').addEventListener('click', async () => {
@@ -113,6 +254,14 @@ document.querySelector('#harness-refresh').addEventListener('click', async () =>
 });
 
 document.querySelector('#failure-status-filter').addEventListener('change', renderHarnessDashboard);
+document.querySelector('#learning-create-toggle').addEventListener('click', () => {
+  state.showLearningCreate = !state.showLearningCreate;
+  renderHarnessDashboard();
+});
+document.querySelector('#harness-create-toggle').addEventListener('click', () => {
+  state.showHarnessCreate = !state.showHarnessCreate;
+  renderHarnessDashboard();
+});
 
 document.querySelector('#learning-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -240,6 +389,24 @@ harnessList.addEventListener('click', async (event) => {
 });
 
 failureList.addEventListener('click', async (event) => {
+  const autoButton = event.target.closest('button[data-failure-auto-ids]');
+  if (autoButton) {
+    try {
+      autoButton.disabled = true;
+      const payload = await api('/api/learning/auto-craft', {
+        method: 'POST',
+        body: { failureCaseIds: autoButton.dataset.failureAutoIds.split(',').filter(Boolean) },
+      });
+      await bootstrap({ quiet: true });
+      renderHarnessDashboard();
+      showToast(`${payload.plan?.type || payload.type} DRAFT를 만들었습니다.`);
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      autoButton.disabled = false;
+    }
+    return;
+  }
   const button = event.target.closest('button[data-failure-action]');
   if (!button) return;
   const failure = state.failures.find((item) => item.id === button.dataset.failureId);
@@ -330,6 +497,10 @@ board.addEventListener('click', async (event) => {
   const action = button.dataset.action;
   button.disabled = true;
   try {
+    if (action === 'dispatch-command') {
+      await copyDispatchCommand(task);
+      return;
+    }
     if (action === 'claim') await taskAction(task, 'claim');
     if (action === 'verify') {
       showToast('검증을 실행하고 있습니다…');
@@ -403,6 +574,12 @@ async function taskAction(task, action, extra = {}) {
   });
 }
 
+function replaceTask(task) {
+  const index = state.tasks.findIndex((item) => item.id === task.id);
+  if (index === -1) state.tasks.push(task);
+  else state.tasks[index] = task;
+}
+
 async function taskAIAction(task, action) {
   return api(`/api/tasks/${encodeURIComponent(task.id)}/${action}`, {
     method: 'POST',
@@ -425,6 +602,8 @@ async function bootstrap({ quiet = true } = {}) {
     renderHarnessDashboard();
     switchView(state.activeView);
     if (state.activeView === 'usage') await loadUsage({ quiet: true });
+    if (state.activeView === 'case-wiki') renderCaseArchive();
+    if (state.activeView === 'discussion') renderDiscussionBoard();
     startPolling();
     if (!quiet) showToast('최신 상태를 불러왔습니다.');
   } catch (error) {
@@ -539,14 +718,16 @@ function applyDraftToForm(draft) {
 
 async function refreshCurrentView(quiet = true) {
   await bootstrap({ quiet: true });
-  if (!quiet) showToast(state.activeView === 'usage' ? '사용량을 갱신했습니다.' : state.activeView === 'harnesses' ? '하네스를 갱신했습니다.' : '최신 상태를 불러왔습니다.');
+  if (!quiet) showToast(state.activeView === 'usage' ? '사용량을 갱신했습니다.' : state.activeView === 'harnesses' ? '하네스를 갱신했습니다.' : state.activeView === 'case-wiki' ? 'WIKI를 갱신했습니다.' : state.activeView === 'discussion' ? '대화를 갱신했습니다.' : '최신 상태를 불러왔습니다.');
 }
 
 function switchView(view) {
-  state.activeView = ['usage', 'board', 'harnesses'].includes(view) ? view : 'usage';
+  state.activeView = ['usage', 'board', 'harnesses', 'case-wiki', 'discussion'].includes(view) ? view : 'usage';
   usageView.classList.toggle('hidden', state.activeView !== 'usage');
   boardView.classList.toggle('hidden', state.activeView !== 'board');
   harnessView.classList.toggle('hidden', state.activeView !== 'harnesses');
+  caseWikiView.classList.toggle('hidden', state.activeView !== 'case-wiki');
+  discussionView.classList.toggle('hidden', state.activeView !== 'discussion');
   for (const button of document.querySelectorAll('[data-view]')) {
     button.classList.toggle('active', button.dataset.view === state.activeView);
   }
@@ -596,6 +777,7 @@ function renderServerPrimaryUsage(usage) {
     budgetCard('월간 비용', usage.budget.costUsd, (value) => `$${Number(value || 0).toFixed(2)}`),
   ].join('');
 
+  document.querySelector('#usage-budgets').insertAdjacentHTML('beforeend', weeklyQuotaCards(usage.external).join(''));
   renderUsageAlert(usage);
   renderUsageChart(usage.daily);
   renderRankList('#usage-sources', usage.bySource, 'source', sourceLabel);
@@ -612,8 +794,9 @@ function renderExternalPrimaryUsage(usage) {
   document.querySelector('#usage-kpis').innerHTML = [
     kpiCard('CLI 캐시 제외', formatTokens(totals.totalTokens), `${formatNumber(totals.windows)}개 수집 창`, 'token'),
     kpiCard('CLI 입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatTokens(totals.inputCachedTokens)}`, 'input'),
+    kpiCard('CLI 캐시 절약', formatTokens(totals.inputCachedTokens), `${formatPercent(cacheRate(totals))} 입력 캐시`, 'ok'),
     kpiCard('CLI 출력 토큰', formatTokens(totals.outputTokens), `추론 ${formatTokens(totals.reasoningTokens)}`, 'output'),
-    kpiCard('잔여 한도', quota ? `${externalQuotaPercent(quota)}%` : '없음', quota ? `${quota.label}` : 'usage push 필요', quota ? 'ok' : 'latency'),
+    kpiCard('주간 할당량', quota ? `${externalQuotaPercent(quota)}%` : '없음', quota ? `${quota.toolLabel} · ${quota.label}` : 'usage push 필요', quota ? quotaTone(quota) : 'latency'),
     kpiCard('연결 도구', formatNumber(external.byTool.length), external.byTool.map((item) => externalToolLabel(item.tool)).join(', ') || '없음', 'latency'),
     kpiCard('API 비용', '미사용', 'OpenAI API 키 없음', 'cost'),
   ].join('');
@@ -624,6 +807,11 @@ function renderExternalPrimaryUsage(usage) {
     `<article class="budget-card unconfigured"><div><p>수집 범위</p><strong>외부 도구</strong></div><p class="muted">서버 예산에는 합산하지 않는 참고 집계입니다.</p></article>`,
   ].join('');
 
+  document.querySelector('#usage-budgets').innerHTML = [
+    `<article class="budget-card unconfigured"><div><p>서버 API 모드</p><strong>꺼짐</strong></div><p class="muted">현재 화면은 로컬 CLI 사용량과 할당량을 보여줍니다.</p></article>`,
+    ...weeklyQuotaCards(external),
+    `<article class="budget-card unconfigured"><div><p>집계 범위</p><strong>외부 도구</strong></div><p class="muted">서버 예산에는 합산하지 않는 참고 지표입니다.</p></article>`,
+  ].join('');
   renderUsageAlert({ ...usage, budget: { tokens: { status: 'UNCONFIGURED' }, requests: { status: 'UNCONFIGURED' }, costUsd: { status: 'UNCONFIGURED' } } });
   renderUsageChart(external.daily || []);
   renderExternalRankList('#usage-sources', external.byTool, 'tool', externalToolLabel);
@@ -634,11 +822,65 @@ function renderExternalPrimaryUsage(usage) {
 }
 
 function firstExternalQuota(external) {
-  return external?.quota?.flatMap((entry) => entry.windows || [])[0] || null;
+  return primaryExternalQuota(external);
+}
+
+function primaryExternalQuota(external) {
+  const weekly = weeklyQuotaWindows(external);
+  return weekly.find((quota) => quota.tool === 'codex')
+    || weekly.find((quota) => quota.tool === 'claude-code')
+    || externalQuotaWindows(external)[0]
+    || null;
+}
+
+function externalQuotaWindows(external) {
+  return (external?.quota || []).flatMap((entry) => (entry.windows || []).map((window) => ({
+    ...window,
+    tool: entry.tool,
+    toolLabel: externalToolLabel(entry.tool),
+    actorName: entry.actorName,
+    source: entry.source,
+  })));
+}
+
+function weeklyQuotaWindows(external) {
+  return externalQuotaWindows(external)
+    .filter((window) => Number(window.windowDurationMinutes) >= 7 * 24 * 60 || /week|7|seven/i.test(`${window.windowId} ${window.label}`))
+    .sort((a, b) => (a.tool === 'codex' ? -1 : b.tool === 'codex' ? 1 : a.toolLabel.localeCompare(b.toolLabel)));
+}
+
+function weeklyQuotaCards(external) {
+  const weekly = weeklyQuotaWindows(external);
+  if (!weekly.length) {
+    return [`<article class="budget-card unconfigured"><div><p>주간 할당량</p><strong>없음</strong></div><p class="muted">team-loop usage push를 실행하면 Codex/Claude 주간 한도가 표시됩니다.</p></article>`];
+  }
+  return weekly.map((quota) => {
+    const used = Number(quota.effectiveUsedPercent ?? quota.usedPercent) || 0;
+    const remaining = Math.max(0, 100 - used);
+    const reset = quota.resetsAt ? `리셋 ${formatDateTime(quota.resetsAt)}` : '리셋 시각 없음';
+    return `<article class="budget-card status-${quotaStatus(quota)}">
+      <div class="budget-top"><div><p>${escapeHtml(`${quota.toolLabel} 주간 할당량`)}</p><strong>${escapeHtml(`${used.toFixed(1)}% 사용`)}</strong></div><span>${escapeHtml(`${remaining.toFixed(1)}% 남음`)}</span></div>
+      <div class="progress"><i style="width:${Math.min(100, Math.max(0, used))}%"></i></div>
+      <p class="muted">${escapeHtml(`${quota.label} · ${reset}`)}</p>
+    </article>`;
+  });
 }
 
 function externalQuotaPercent(quota) {
   return Number(quota.effectiveUsedPercent ?? quota.usedPercent ?? 0).toFixed(1);
+}
+
+function quotaStatus(quota) {
+  const used = Number(quota.effectiveUsedPercent ?? quota.usedPercent) || 0;
+  if (used >= 100) return 'exceeded';
+  if (used >= 85) return 'critical';
+  if (used >= 65) return 'warning';
+  return 'ok';
+}
+
+function quotaTone(quota) {
+  const status = quotaStatus(quota);
+  return ['exceeded', 'critical'].includes(status) ? 'danger' : 'ok';
 }
 
 function renderExternalPrimaryUsers(users) {
@@ -647,7 +889,7 @@ function renderExternalPrimaryUsers(users) {
     target.innerHTML = '<div class="empty">아직 사용자별 CLI 사용량 기록이 없습니다.</div>';
     return;
   }
-  target.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${users.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
+  target.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>캐시</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${users.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.inputCachedTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
 }
 
 function renderExternalUsage(external) {
@@ -671,7 +913,7 @@ function renderExternalUsage(external) {
   if (!external.byUser.length) {
     userTarget.innerHTML = '<div class="empty">외부 토큰 기록이 없습니다.</div>';
   } else {
-    userTarget.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${external.byUser.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
+    userTarget.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>캐시</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${external.byUser.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.inputCachedTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
   }
 }
 
@@ -683,9 +925,19 @@ function renderExternalRankList(selector, values, key, labeler) {
   }
   const max = Math.max(1, ...values.map((item) => item.totalTokens));
   target.innerHTML = values.slice(0, 10).map((item) => `<div class="rank-item">
-    <div class="rank-copy"><strong>${escapeHtml(labeler(item[key]))}</strong><span>${formatNumber(item.windows)}개 창 · ${formatTokens(item.totalTokens)}</span></div>
+    <div class="rank-copy"><strong>${escapeHtml(labeler(item[key]))}</strong><span>${escapeHtml(externalRankCaption(item))}</span></div>
     <div class="mini-progress"><i style="width:${Math.round(item.totalTokens / max * 100)}%"></i></div>
   </div>`).join('');
+}
+
+function externalRankCaption(item) {
+  const parts = [`${formatNumber(item.windows)}개 창`, formatTokens(item.totalTokens)];
+  if (item.inputCachedTokens) parts.push(`캐시 ${formatTokens(item.inputCachedTokens)}`);
+  return parts.join(' · ');
+}
+
+function cacheRate(item) {
+  return item.inputTokens ? item.inputCachedTokens / item.inputTokens : 0;
 }
 
 function quotaWindow(entry, window) {
@@ -851,28 +1103,158 @@ function renderHarnessDashboard() {
   document.querySelector('#harness-summary').innerHTML = [
     kpiCard('활성 하네스', formatNumber(active), `${formatNumber(state.harnesses.length)}개 등록`, 'ok'),
     kpiCard('DRAFT', formatNumber(draft), '시험 후 활성화', draft ? 'input' : 'ok'),
-    kpiCard('열린 실패', formatNumber(summary.open), `${formatNumber(summary.occurrences)}회 관찰`, summary.open ? 'danger' : 'ok'),
+    kpiCard('열린 사례', formatNumber(summary.open), `${formatNumber(summary.occurrences)}회 관찰`, summary.open ? 'danger' : 'ok'),
     kpiCard('Fixture 후보', formatNumber(summary.fixtureCandidates), '재현 setup 필요', 'output'),
     kpiCard('활성 스킬', formatNumber(activeSkills), `${formatNumber(state.skills.length)}개 등록`, 'ok'),
   ].join('');
-  document.querySelector('#harness-create-panel').classList.toggle('hidden', state.user?.role !== 'admin');
-  document.querySelector('#learning-create-panel').classList.toggle('hidden', state.user?.role !== 'admin');
+  const admin = state.user?.role === 'admin';
+  document.querySelector('#learning-create-toggle').classList.toggle('hidden', !admin);
+  document.querySelector('#harness-create-toggle').classList.toggle('hidden', !admin);
+  document.querySelector('#learning-create-toggle').classList.toggle('active', state.showLearningCreate);
+  document.querySelector('#harness-create-toggle').classList.toggle('active', state.showHarnessCreate);
+  document.querySelector('#harness-create-panel').classList.toggle('hidden', !admin || !state.showHarnessCreate);
+  document.querySelector('#learning-create-panel').classList.toggle('hidden', !admin || !state.showLearningCreate);
   document.querySelector('#harness-count').textContent = `${state.harnesses.length}개`;
   document.querySelector('#skill-count').textContent = `${state.skills.length}개`;
-  document.querySelector('#failure-count').textContent = `${summary.total || 0}건 · ${summary.occurrences || 0}회`;
-  harnessList.innerHTML = state.harnesses.length ? state.harnesses.map(renderHarnessCard).join('') : '<div class="empty">등록된 하네스가 없습니다.</div>';
-  skillList.innerHTML = state.skills.length ? state.skills.map(renderSkillCard).join('') : '<div class="empty">실패에서 제작한 스킬이 없습니다.</div>';
+  document.querySelector('#failure-count').textContent = `${summary.total || 0}사례 · ${summary.occurrences || 0}회`;
+  const harnesses = [...state.harnesses].sort(artifactSort);
+  const skills = [...state.skills].sort(artifactSort);
+  harnessList.innerHTML = harnesses.length ? harnesses.map(renderHarnessCard).join('') : '<div class="empty">등록된 하네스가 없습니다.</div>';
+  skillList.innerHTML = skills.length ? skills.map(renderSkillCard).join('') : '<div class="empty">등록된 스킬이 없습니다.</div>';
   populateLearningApplyForm();
 
   const selectedStatus = document.querySelector('#failure-status-filter').value;
   const failures = state.failures.filter((item) => !selectedStatus || item.status === selectedStatus);
-  failureList.innerHTML = failures.length ? `<table><thead><tr><th>상태</th><th>종류</th><th>하네스</th><th>횟수</th><th>마지막</th><th>대상</th><th>행동</th></tr></thead><tbody>${failures.map(renderFailureRow).join('')}</tbody></table>` : '<div class="empty">조건에 맞는 실패사례가 없습니다.</div>';
+  const groups = groupFailureCases(failures);
+  failureList.innerHTML = groups.length ? `<table><thead><tr><th>상태</th><th>종류</th><th>하네스</th><th>사례</th><th>관찰</th><th>마지막</th><th>대상</th><th>행동</th></tr></thead><tbody>${groups.map(renderFailureGroupRow).join('')}</tbody></table>` : '<div class="empty">조건에 맞는 사례가 없습니다.</div>';
+}
+
+function renderCaseArchive() {
+  renderWikiContextPack();
+  renderWikiProjectHistory();
+  renderWikiDiscussionMemories();
+  renderWikiJudgingCriteria();
+  if (!caseArchive) return;
+  const archived = state.failures.filter((item) => ['RESOLVED', 'IGNORED'].includes(item.status));
+  const groups = groupFailureCases(archived);
+  const wikiEntries = groups.length
+    + (String(state.projectContext?.content || '').trim() ? 1 : 0)
+    + (timelineEvents().length ? 1 : 0)
+    + (state.discussions?.memories?.length || 0)
+    + judgingCriteria.length;
+  document.querySelector('#case-archive-count').textContent = `${formatNumber(wikiEntries)}개 항목`;
+  caseArchive.innerHTML = groups.length
+    ? groups.map(renderCaseArchiveCard).join('')
+    : '<div class="empty">아직 아카이브된 사례가 없습니다.</div>';
+}
+
+function renderCaseArchiveCard(group) {
+  const failure = group.representative;
+  const artifacts = group.cases.flatMap((item) => item.learningArtifacts || []);
+  const artifactBadges = artifacts.length
+    ? [...new Map(artifacts.map((item) => [`${item.type}:${item.id}`, item])).values()]
+      .map((item) => `<span class="badge">${escapeHtml(item.type)} ${escapeHtml(item.id)}</span>`).join('')
+    : '<span class="badge">연결 아티팩트 없음</span>';
+  return `<details class="case-archive-item">
+    <summary class="case-archive-summary">
+      <span class="badge ${group.status === 'RESOLVED' ? 'pass' : ''}">${escapeHtml(group.status)}</span>
+      <strong>${escapeHtml(failure.title || group.kind)}</strong>
+      <span class="muted">${escapeHtml(group.kind)}</span>
+      <span class="badge">사례 ${formatNumber(group.cases.length)}</span>
+      <span class="badge">관찰 ${formatNumber(group.occurrences)}</span>
+      <span class="badge">마지막 ${escapeHtml(formatDateTime(group.lastSeenAt))}</span>
+    </summary>
+    <div class="case-archive-body">
+      <div class="case-archive-head"><span class="mono muted">${escapeHtml(group.harnessId)}</span></div>
+      <div class="task-meta">${artifactBadges}</div>
+      <details class="details"><summary>대표 증거</summary><pre>${escapeHtml(JSON.stringify(failure.lastEvidence, null, 2))}</pre></details>
+    </div>
+  </details>`;
+}
+
+function renderWikiContextPack() {
+  if (!wikiContextPack) return;
+  const content = String(state.projectContext?.content || '').trim();
+  const updated = state.projectContext?.updatedAt ? formatDateTime(state.projectContext.updatedAt) : '아직 저장 없음';
+  if (!content) {
+    wikiContextPack.innerHTML = '<div class="empty">아직 저장된 프로젝트 컨텍스트가 없습니다. 작업 보드의 AI 도우미에서 먼저 컨텍스트를 저장할 수 있습니다.</div>';
+    return;
+  }
+  const preview = content.length > 900 ? `${content.slice(0, 900)}...` : content;
+  wikiContextPack.innerHTML = `<details class="wiki-entry">
+    <summary><strong>현재 컨텍스트 팩</strong><span class="badge">${escapeHtml(updated)}</span></summary>
+    <pre>${escapeHtml(preview)}</pre>
+  </details>`;
+}
+
+function renderWikiProjectHistory() {
+  if (!wikiProjectHistory) return;
+  const events = timelineEvents()
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    .slice(0, 12);
+  wikiProjectHistory.innerHTML = events.length
+    ? events.map(renderWikiHistoryItem).join('')
+    : '<div class="empty">아직 보여줄 프로젝트 히스토리가 없습니다.</div>';
+}
+
+function renderWikiHistoryItem(event) {
+  const task = state.tasks.find((item) => item.id === event.taskId);
+  return `<details class="wiki-entry">
+    <summary><strong>${escapeHtml(event.title)}</strong><span class="badge">${escapeHtml(categoryLabel(event.category))}</span><span class="muted">${escapeHtml(formatDateTime(event.at))}</span></summary>
+    <p>${escapeHtml(task?.description || event.note || '설명 없음')}</p>
+    <div class="task-meta"><span class="badge">${escapeHtml(task?.status || 'TASK')}</span>${event.actorUserId ? `<span class="badge">${escapeHtml(userName(event.actorUserId))}</span>` : ''}</div>
+  </details>`;
+}
+
+function renderWikiDiscussionMemories() {
+  if (!wikiDiscussionMemories) return;
+  const memories = [...(state.discussions?.memories || [])].reverse().slice(0, 8);
+  wikiDiscussionMemories.innerHTML = memories.length
+    ? memories.map(renderDiscussionMemory).join('')
+    : '<div class="empty">아직 대화창에서 저장한 회의록이 없습니다.</div>';
+}
+
+function renderWikiJudgingCriteria() {
+  if (!wikiJudgingCriteria) return;
+  wikiJudgingCriteria.innerHTML = judgingCriteria.map((item) => `<details class="wiki-entry judging-entry">
+    <summary><strong>${item.no}. ${escapeHtml(item.title)}</strong><span class="badge">${escapeHtml(item.grade)}</span><span class="badge">${escapeHtml(item.lane)}</span></summary>
+    <p>${escapeHtml(item.summary)}</p>
+    <div class="task-meta"><span class="badge mono">${escapeHtml(item.artifact)}</span></div>
+  </details>`).join('');
+}
+
+function renderDiscussionBoard() {
+  if (!discussionMessages) return;
+  const messages = state.discussions?.messages || [];
+  document.querySelector('#discussion-count').textContent = `${formatNumber(messages.length)}개 메시지`;
+  discussionMessages.innerHTML = messages.length
+    ? messages.map(renderDiscussionMessage).join('')
+    : '<div class="empty">아직 대화가 없습니다.</div>';
+}
+
+function renderDiscussionMessage(message) {
+  return `<article class="discussion-message">
+    <div class="discussion-message-head"><strong>${escapeHtml(userName(message.authorUserId) || '알 수 없음')}</strong><span class="muted">${escapeHtml(formatDateTime(message.createdAt))}</span></div>
+    <p>${escapeHtml(message.content)}</p>
+  </article>`;
+}
+
+function renderDiscussionMemory(memory) {
+  const aiBadge = memory.ai?.fallback ? '<span class="badge">fallback</span>' : memory.ai?.model ? `<span class="badge">${escapeHtml(memory.ai.model)}</span>` : '';
+  return `<details class="wiki-entry">
+    <summary><strong>${escapeHtml(memory.title)}</strong><span class="badge">${escapeHtml(formatDateTime(memory.createdAt))}</span>${aiBadge}</summary>
+    <p>${escapeHtml(memory.summary)}</p>
+    ${memory.keyPoints?.length ? `<div class="task-meta">${memory.keyPoints.map((item) => `<span class="badge">${escapeHtml(item)}</span>`).join('')}</div>` : ''}
+    ${memory.decisions?.length ? `<h4>결정</h4><ul class="case-id-list">${memory.decisions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+    ${memory.followUps?.length ? `<h4>후속</h4><ul class="case-id-list">${memory.followUps.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+  </details>`;
 }
 
 function renderHarnessCard(harness) {
   const admin = state.user?.role === 'admin';
   const test = harness.lastTest ? `<span class="badge ${harness.lastTest.passed ? 'pass' : 'fail'}">최근 시험 ${harness.lastTest.passed ? 'PASS' : 'FAIL'}</span>` : '<span class="badge">미시험</span>';
-  const commands = harness.commands.map((command, index) => `<li><span class="mono">${escapeHtml(command.file)} ${escapeHtml((command.args || []).join(' '))}</span><small>cwd=${escapeHtml(command.cwd || '.')} · exit=${command.expectedExit} · ${command.timeoutMs}ms</small></li>`).join('');
+  const commands = harness.commands.map((command) => `<li><span class="mono">${escapeHtml(command.file)} ${escapeHtml((command.args || []).join(' '))}</span><small>cwd=${escapeHtml(command.cwd || '.')} · exit=${command.expectedExit} · ${command.timeoutMs}ms</small></li>`).join('');
+  const commandSummary = harness.commands.slice(0, 2).map((command) => `${command.file} ${(command.args || []).join(' ')}`.trim()).join(' · ');
   const fixtures = (harness.fixtureCandidates || []).length;
   const actions = admin ? [
     `<button class="ghost" data-harness-action="test" data-harness-id="${escapeHtml(harness.id)}">시험</button>`,
@@ -881,10 +1263,10 @@ function renderHarnessCard(harness) {
   ].join('') : '';
   return `<article class="harness-card">
     <div class="harness-card-head"><div><p class="eyebrow">${escapeHtml(harness.source)} · v${harness.version}</p><h3>${escapeHtml(harness.label)}</h3><p class="mono muted">${escapeHtml(harness.id)}</p></div><span class="badge ${harness.status === 'ACTIVE' ? 'pass' : harness.status === 'DISABLED' ? 'fail' : ''}">${escapeHtml(harness.status)}</span></div>
-    <p>${escapeHtml(harness.description || '설명 없음')}</p>
-    <ul class="command-list">${commands}</ul>
+    <p>${escapeHtml(harness.description || commandSummary || '설명 없음')}</p>
     <div class="task-meta">${test}<span class="badge">fixture 후보 ${fixtures}</span><span class="badge mono">${escapeHtml(harness.definitionSha256.slice(0, 12))}</span></div>
     <div class="task-actions">${actions}</div>
+    <details class="details"><summary>명령 ${formatNumber(harness.commands.length)}개</summary><ul class="command-list">${commands}</ul></details>
     ${(harness.fixtureCandidates || []).length ? `<details class="details"><summary>Fixture 후보</summary><pre>${escapeHtml(JSON.stringify(harness.fixtureCandidates, null, 2))}</pre></details>` : ''}
   </article>`;
 }
@@ -898,10 +1280,17 @@ function renderSkillCard(skill) {
   return `<article class="harness-card">
     <div class="harness-card-head"><div><p class="eyebrow">${escapeHtml(skill.source)} · v${skill.version}</p><h3>${escapeHtml(skill.label)}</h3><p class="mono muted">${escapeHtml(skill.id)}</p></div><span class="badge ${skill.status === 'ACTIVE' ? 'pass' : skill.status === 'DISABLED' ? 'fail' : ''}">${escapeHtml(skill.status)}</span></div>
     <p>${escapeHtml(skill.description || '설명 없음')}</p>
-    <ol class="command-list">${(skill.rules || []).map((rule) => `<li>${escapeHtml(rule)}</li>`).join('')}</ol>
-    <div class="task-meta"><span class="badge">실패 ${skill.sourceFailureCaseIds?.length || 0}건</span><span class="badge mono">${escapeHtml(skill.definitionSha256.slice(0, 12))}</span></div>
+    ${(skill.rules || []).slice(0, 2).map((rule) => `<p class="compact-rule">${escapeHtml(rule)}</p>`).join('')}
+    <div class="task-meta"><span class="badge">사례 ${skill.sourceFailureCaseIds?.length || 0}건</span><span class="badge mono">${escapeHtml(skill.definitionSha256.slice(0, 12))}</span></div>
     <div class="task-actions">${actions}</div>
+    ${(skill.rules || []).length > 2 ? `<details class="details"><summary>규칙 ${formatNumber(skill.rules.length)}개 전체</summary><ol class="command-list">${(skill.rules || []).map((rule) => `<li>${escapeHtml(rule)}</li>`).join('')}</ol></details>` : ''}
   </article>`;
+}
+
+function artifactSort(a, b) {
+  const rank = { ACTIVE: 0, DRAFT: 1, DISABLED: 2 };
+  return (rank[a.status] ?? 9) - (rank[b.status] ?? 9)
+    || String(a.label || a.id).localeCompare(String(b.label || b.id));
 }
 
 function populateLearningApplyForm() {
@@ -919,24 +1308,56 @@ function populateLearningApplyForm() {
   for (const option of form.elements.skillIds.options) option.selected = selectedSkills.has(option.value);
 }
 
-function renderFailureRow(failure) {
+function groupFailureCases(failures) {
+  const groups = new Map();
+  for (const failure of failures) {
+    const key = [failure.status, failure.harnessId, failure.kind].join('|');
+    const group = groups.get(key) ?? {
+      key,
+      status: failure.status,
+      kind: failure.kind,
+      harnessId: failure.harnessId,
+      cases: [],
+      occurrences: 0,
+      lastSeenAt: '',
+      representative: failure,
+    };
+    group.cases.push(failure);
+    group.occurrences += Number(failure.occurrences) || 0;
+    if (!group.lastSeenAt || String(failure.lastSeenAt).localeCompare(group.lastSeenAt) > 0) {
+      group.lastSeenAt = failure.lastSeenAt;
+      group.representative = failure;
+    }
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
+}
+
+function renderFailureGroupRow(group) {
+  const failure = group.representative;
   const admin = state.user?.role === 'admin';
   const canPromote = admin && failure.status !== 'FIXTURE_CANDIDATE';
+  const groupIds = group.cases.map((item) => item.id).join(',');
   const actions = [
+    admin ? `<button class="primary compact" data-failure-auto-ids="${escapeHtml(groupIds)}">AI 제작</button>` : '',
     canPromote ? `<button class="ghost compact" data-failure-action="promote" data-failure-id="${escapeHtml(failure.id)}">fixture 후보</button>` : '',
     failure.status !== 'RESOLVED' ? `<button class="ghost compact" data-failure-action="resolve" data-failure-id="${escapeHtml(failure.id)}">해결</button>` : `<button class="ghost compact" data-failure-action="reopen" data-failure-id="${escapeHtml(failure.id)}">재열기</button>`,
     failure.status !== 'IGNORED' ? `<button class="ghost compact" data-failure-action="ignore" data-failure-id="${escapeHtml(failure.id)}">무시</button>` : '',
   ].join('');
+  const caseDetails = group.cases.length > 1
+    ? `<details class="details"><summary>포함 사례 ${group.cases.length}건</summary><ul class="case-id-list">${group.cases.map((item) => `<li><span class="mono">${escapeHtml(item.id)}</span> · ${escapeHtml(item.title)} · ${formatNumber(item.occurrences)}회</li>`).join('')}</ul></details>`
+    : `<small class="mono">${escapeHtml(failure.id)}</small>`;
   return `<tr>
     <td><span class="badge ${failure.status === 'OPEN' ? 'fail' : failure.status === 'RESOLVED' ? 'pass' : ''}">${escapeHtml(failure.status)}</span></td>
-    <td>${escapeHtml(failure.kind)}</td><td class="mono">${escapeHtml(failure.harnessId)}</td><td>${formatNumber(failure.occurrences)}</td><td>${escapeHtml(formatDateTime(failure.lastSeenAt))}</td>
-    <td><strong>${escapeHtml(failure.title)}</strong><small class="mono">${escapeHtml(failure.id)}</small><details class="details"><summary>마지막 증거</summary><pre>${escapeHtml(JSON.stringify(failure.lastEvidence, null, 2))}</pre></details></td>
+    <td>${escapeHtml(group.kind)}</td><td class="mono">${escapeHtml(group.harnessId)}</td><td>${formatNumber(group.cases.length)}</td><td>${formatNumber(group.occurrences)}</td><td>${escapeHtml(formatDateTime(group.lastSeenAt))}</td>
+    <td><strong>${escapeHtml(failure.title)}</strong>${caseDetails}<details class="details"><summary>대표 증거</summary><pre>${escapeHtml(JSON.stringify(failure.lastEvidence, null, 2))}</pre></details></td>
     <td><div class="inline-actions">${actions}</div></td>
   </tr>`;
 }
 
 function render() {
   renderSummary();
+  renderMilestonePlanner();
   board.innerHTML = columns.map(([status, label]) => {
     const tasks = state.tasks.filter((task) => task.status === status && !task.archived);
     return `
@@ -945,6 +1366,139 @@ function render() {
         <div class="card-list">${tasks.length ? tasks.map(renderTask).join('') : '<div class="empty">작업 없음</div>'}</div>
       </section>`;
   }).join('') + renderArchivedSection();
+}
+
+function renderMilestonePlanner() {
+  if (!milestoneCalendar || !milestoneStream || milestonePanel.classList.contains('hidden')) return;
+  const month = state.milestoneMonth || new Date().toISOString().slice(0, 7);
+  document.querySelector('#milestone-month').textContent = month;
+  populateScheduleTaskOptions();
+  populateMilestoneFilters();
+  const monthEvents = timelineEvents().filter((event) => event.date.startsWith(month));
+  const events = filterMilestoneEvents(monthEvents);
+  const days = daysInMonth(month);
+  const first = new Date(`${month}-01T00:00:00`).getDay();
+  const cells = [];
+  for (let index = 0; index < first; index += 1) cells.push('<div class="milestone-day muted-day"></div>');
+  for (const day of days) {
+    const allDayEvents = monthEvents.filter((event) => event.date === day);
+    const visibleDayEvents = events.filter((event) => event.date === day);
+    cells.push(`<div class="milestone-day ${state.milestoneFilter.date === day ? 'selected-day' : ''}" data-milestone-date="${escapeHtml(day)}">
+      <div class="milestone-date"><span>${escapeHtml(day.slice(8))}</span>${allDayEvents.length ? `<strong>${allDayEvents.length}</strong>` : ''}</div>
+      ${renderMilestoneDaySummary(visibleDayEvents)}
+    </div>`);
+  }
+  milestoneCalendar.innerHTML = `<div class="milestone-weekdays">${['일', '월', '화', '수', '목', '금', '토'].map((day) => `<span>${day}</span>`).join('')}</div><div class="milestone-grid">${cells.join('')}</div>`;
+  milestoneStream.innerHTML = events.length
+    ? `<div class="milestone-stream-head"><strong>${formatNumber(events.length)}개 이벤트</strong><span class="muted">${state.milestoneFilter.date || month}</span></div>${events.sort((a, b) => a.at.localeCompare(b.at)).map(renderMilestoneRow).join('')}`
+    : '<div class="empty">이 달에 표시할 작업 이벤트가 없습니다.</div>';
+}
+
+function timelineEvents() {
+  const taskMap = new Map(state.tasks.map((task) => [task.id, task]));
+  return (state.taskTimeline || []).flatMap((item) => (item.events || []).map((event) => {
+    const task = taskMap.get(item.taskId) || item;
+    const at = String(event.at || '');
+    return {
+      ...event,
+      at,
+      date: at.slice(0, 10),
+      taskId: item.taskId,
+      title: item.title,
+      status: item.status,
+      assigneeUserId: task.assigneeUserId,
+      category: milestoneCategory(event.type),
+      scheduleNote: item.schedule?.note || '',
+    };
+  })).filter((event) => /^\d{4}-\d{2}-\d{2}/.test(event.date));
+}
+
+function renderMilestoneDaySummary(events) {
+  if (!events.length) return '<div class="milestone-empty-day"></div>';
+  const counts = new Map();
+  for (const event of events) counts.set(event.category, (counts.get(event.category) || 0) + 1);
+  return `<div class="milestone-counts">${[...counts.entries()].map(([category, count]) => `<span class="milestone-count type-${escapeHtml(category)}">${escapeHtml(categoryLabel(category))} ${formatNumber(count)}</span>`).join('')}</div>`;
+}
+
+function renderMilestoneRow(event) {
+  const actor = event.actorUserId ? userName(event.actorUserId) : '';
+  const note = event.scheduleNote && event.type.startsWith('planned') ? `<small>${escapeHtml(event.scheduleNote)}</small>` : '';
+  return `<button class="milestone-row" type="button" data-schedule-task="${escapeHtml(event.taskId)}">
+    <span class="milestone-row-date">${escapeHtml(event.date)}</span>
+    <span class="badge">${escapeHtml(event.label)}</span>
+    <strong>${escapeHtml(event.title)}</strong>
+    <span class="muted">${escapeHtml([userName(event.assigneeUserId), actor].filter(Boolean).join(' · '))}</span>
+    ${note}
+  </button>`;
+}
+
+function filterMilestoneEvents(events) {
+  const { type, userId, query, date } = state.milestoneFilter;
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  return events.filter((event) => {
+    if (type && event.category !== type) return false;
+    if (userId && event.assigneeUserId !== userId && event.actorUserId !== userId) return false;
+    if (date && event.date !== date) return false;
+    if (normalizedQuery && !event.title.toLowerCase().includes(normalizedQuery)) return false;
+    return true;
+  });
+}
+
+function populateMilestoneFilters() {
+  document.querySelector('#milestone-event-filter').value = state.milestoneFilter.type;
+  document.querySelector('#milestone-search').value = state.milestoneFilter.query;
+  const userFilter = document.querySelector('#milestone-user-filter');
+  const current = state.milestoneFilter.userId;
+  userFilter.innerHTML = '<option value="">전체 담당자</option>' + state.users.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)}</option>`).join('');
+  if (state.users.some((user) => user.id === current)) userFilter.value = current;
+  else state.milestoneFilter.userId = '';
+}
+
+function milestoneCategory(type) {
+  if (String(type).startsWith('planned')) return 'planned';
+  if (String(type).startsWith('verify')) return 'verify';
+  if (['review'].includes(type)) return 'review';
+  if (['done', 'archived'].includes(type)) return 'done';
+  if (['blocked', 'rejected'].includes(type)) return 'blocked';
+  return type === 'claimed' ? 'claimed' : 'other';
+}
+
+function categoryLabel(category) {
+  return ({ planned: '계획', claimed: '가져감', verify: '검증', review: '리뷰', done: '완료', blocked: '막힘', other: '기타' })[category] || category;
+}
+
+function daysInMonth(month) {
+  const [year, rawMonth] = month.split('-').map(Number);
+  const last = new Date(year, rawMonth, 0).getDate();
+  return Array.from({ length: last }, (_item, index) => `${month}-${String(index + 1).padStart(2, '0')}`);
+}
+
+function shiftMilestoneMonth(delta) {
+  const [year, month] = state.milestoneMonth.split('-').map(Number);
+  const next = new Date(year, month - 1 + delta, 1);
+  state.milestoneMonth = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+  renderMilestonePlanner();
+}
+
+function populateScheduleTaskOptions() {
+  const form = document.querySelector('#schedule-form');
+  if (!form) return;
+  if (form.contains(document.activeElement) && form.elements.taskId.options.length) return;
+  const current = form.elements.taskId.value;
+  const tasks = [...state.tasks].sort((a, b) => Number(a.archived) - Number(b.archived) || String(a.title).localeCompare(String(b.title)));
+  form.elements.taskId.innerHTML = tasks.map((task) => `<option value="${escapeHtml(task.id)}">${escapeHtml(task.title)} · ${escapeHtml(task.status)}</option>`).join('');
+  const selected = tasks.some((task) => task.id === current) ? current : tasks[0]?.id;
+  if (selected) form.elements.taskId.value = selected;
+  populateScheduleForm(selected);
+}
+
+function populateScheduleForm(taskId) {
+  const form = document.querySelector('#schedule-form');
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!form || !task) return;
+  form.elements.plannedStart.value = task.schedule?.plannedStart || '';
+  form.elements.plannedEnd.value = task.schedule?.plannedEnd || '';
+  form.elements.note.value = task.schedule?.note || '';
 }
 
 function renderArchivedSection() {
@@ -1044,9 +1598,27 @@ function renderActions(task) {
   if (task.status === 'BLOCKED' && participant) actions.push(actionButton(task, 'unblock', '다시 준비'));
   if (state.ai.enabled && participant && task.status !== 'DONE') actions.push(actionButton(task, 'ai-brief', 'AI 브리프'));
   if (state.ai.enabled && participant && task.verification) actions.push(actionButton(task, 'ai-verification-summary', 'AI 검증 요약'));
+  if (!task.archived && task.status !== 'DONE' && participant) actions.push(actionButton(task, 'dispatch-command', 'CLI 명령'));
   if (task.status === 'DONE' && participant && !task.archived) actions.push(actionButton(task, 'archive', '아카이브'));
   if (task.archived && participant) actions.push(actionButton(task, 'unarchive', '복원', 'primary'));
   return actions.join('');
+}
+
+async function copyDispatchCommand(task) {
+  const executor = task.executor?.tool || 'codex';
+  const model = task.executor?.model ? ` --model ${shellArg(task.executor.model)}` : '';
+  const command = `team-loop --server ${shellArg(window.location.origin)} dispatch ${shellArg(task.id)} --executor ${shellArg(executor)}${model} --execute --to review`;
+  try {
+    await navigator.clipboard.writeText(command);
+    showToast('CLI 실행 명령을 복사했습니다.');
+  } catch {
+    window.prompt('터미널에서 실행할 명령', command);
+  }
+}
+
+function shellArg(value) {
+  const text = String(value || '');
+  return /^[A-Za-z0-9_./:-]+$/.test(text) ? text : `"${text.replaceAll('"', '\\"')}"`;
 }
 
 function actionButton(task, action, label, className = 'ghost') {
