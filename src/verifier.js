@@ -140,6 +140,8 @@ export class Verifier {
 export function sandboxWrap(file, args, root, cwd) {
   const mode = process.env.TEAM_LOOP_SANDBOX;
   if (!mode || mode === 'off') return { file, args, cwd };
+  const skip = (process.env.TEAM_LOOP_SANDBOX_SKIP || 'git').split(',').map((s) => s.trim()).filter(Boolean);
+  if (skip.includes(file)) return { file, args, cwd };
   const relative = path.relative(root, cwd).split(path.sep).join('/');
   const workdir = relative ? `/work/${relative}` : '/work';
   if (mode === 'docker') {

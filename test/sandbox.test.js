@@ -47,3 +47,15 @@ test('sandboxWrap generic mode prefixes a wrapper executable with templated args
     delete process.env.TEAM_LOOP_SANDBOX_ARGS;
   }
 });
+
+test('sandboxWrap runs trusted tools (git) on the host even when the sandbox is on', () => {
+  // git worktrees reference the parent repo's .git, which a container mount cannot see,
+  // so git (a trusted, fixed-operation tool) runs on the host; code interpreters are sandboxed.
+  process.env.TEAM_LOOP_SANDBOX = 'docker';
+  try {
+    const r = sandboxWrap('git', ['diff', '--check'], '/repo/wt', '/repo/wt');
+    assert.deepEqual(r, { file: 'git', args: ['diff', '--check'], cwd: '/repo/wt' });
+  } finally {
+    delete process.env.TEAM_LOOP_SANDBOX;
+  }
+});

@@ -372,6 +372,11 @@ async function runDispatch(client, positionals, options, json) {
   const model = stringOption(options, 'model', task.executor?.model || '');
   const permission = stringOption(options, 'permission', 'acceptEdits');
   const sandbox = stringOption(options, 'sandbox', 'workspace-write');
+  const dangerousPermission = ['bypassPermissions', 'dangerously-skip-permissions'].includes(permission);
+  const dangerousSandbox = ['danger-full-access'].includes(sandbox);
+  if (options.execute && (dangerousPermission || dangerousSandbox) && !options.trust) {
+    throw new Error(`Refusing to run the agent with ${dangerousPermission ? `permission "${permission}"` : `sandbox "${sandbox}"`} and no safeguards. Pass --trust to confirm you trust this task, or use a safer mode.`);
+  }
   const maxAttempts = Math.max(1, Math.min(10, numberOption(options, 'retry', 1)));
   const autoLearn = Boolean(options['auto-learn']);
   const prompt = buildDispatchPrompt(task, rules, workspace);
