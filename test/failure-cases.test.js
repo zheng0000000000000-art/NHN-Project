@@ -31,6 +31,33 @@ test('failure cases deduplicate recurring command failures', async (t) => {
   assert.deepEqual(item.taskIds.sort(), ['tsk_1', 'tsk_2']);
 });
 
+test('command failure identity ignores actual exit but keeps cwd separate', async (t) => {
+  const store = await storeFixture(t);
+  const base = {
+    task: { id: 'tsk_1', verificationProfile: 'node-tests' },
+    verification: {
+      profile: 'node-tests', status: 'FAILED', passed: false, changedPaths: [], scopeViolations: [],
+      checks: [{ file: 'node', args: ['--test'], cwd: 'app', expectedExit: 0, actualExit: 1, timedOut: false, passed: false, stdout: '', stderr: 'failed' }],
+    },
+    actorUserId: 'usr_1',
+  };
+  const first = await store.recordVerification(base);
+  const second = await store.recordVerification({
+    ...base,
+    task: { ...base.task, id: 'tsk_2' },
+    verification: { ...base.verification, checks: [{ ...base.verification.checks[0], actualExit: 2 }] },
+  });
+  const third = await store.recordVerification({
+    ...base,
+    task: { ...base.task, id: 'tsk_3' },
+    verification: { ...base.verification, checks: [{ ...base.verification.checks[0], cwd: 'tools', actualExit: 2 }] },
+  });
+
+  assert.equal(first[0].id, second[0].id);
+  assert.notEqual(first[0].id, third[0].id);
+  assert.equal((await store.get(first[0].id)).occurrences, 2);
+});
+
 test('scope violations are independent failure cases and can be resolved', async (t) => {
   const store = await storeFixture(t);
   const recorded = await store.recordVerification({
@@ -47,4 +74,25 @@ test('scope violations are independent failure cases and can be resolved', async
     actorUserId: 'usr_1',
   });
   assert.equal(repeated[0].status, 'OPEN');
+});
+
+test('multiple scope violations from one verification are recorded as one event', async (t) => {
+  const store = await storeFixture(t);
+  const recorded = await store.recordVerification({
+    task: { id: 'tsk_scope_many', verificationProfile: 'repo' },
+    verification: {
+      profile: 'repo',
+      status: 'FAILED',
+      passed: false,
+      checks: [],
+      changedPaths: ['public/app.js', 'server.js', 'README.md'],
+      scopeViolations: ['server.js', 'public/app.js'],
+    },
+    actorUserId: 'usr_1',
+  });
+
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].kind, 'SCOPE_VIOLATION');
+  assert.deepEqual(recorded[0].identity.paths, ['public/app.js', 'server.js']);
+  assert.match(recorded[0].title, /2 paths/);
 });

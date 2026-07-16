@@ -18,6 +18,7 @@ const state = {
   activeView: 'usage',
   harnesses: [],
   skills: [],
+  learningAudit: null,
   failures: [],
   failureSummary: { total: 0, open: 0, fixtureCandidates: 0, resolved: 0, ignored: 0, occurrences: 0 },
   discussions: { messages: [], memories: [] },
@@ -51,6 +52,8 @@ const aiError = document.querySelector('#ai-error');
 const aiResults = document.querySelector('#ai-results');
 const milestonePanel = document.querySelector('#milestone-panel');
 const board = document.querySelector('#board');
+const agentActivityPanel = document.querySelector('#agent-activity-panel');
+const milestoneRanges = document.querySelector('#milestone-ranges');
 const milestoneCalendar = document.querySelector('#milestone-calendar');
 const milestoneStream = document.querySelector('#milestone-stream');
 const usageView = document.querySelector('#usage-view');
@@ -61,6 +64,7 @@ const discussionView = document.querySelector('#discussion-view');
 const harnessFormError = document.querySelector('#harness-form-error');
 const harnessList = document.querySelector('#harness-list');
 const skillList = document.querySelector('#skill-list');
+const learningAuditPanel = document.querySelector('#learning-audit-panel');
 const learningFormError = document.querySelector('#learning-form-error');
 const learningApplyError = document.querySelector('#learning-apply-error');
 const failureList = document.querySelector('#failure-list');
@@ -129,7 +133,10 @@ for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', async () => {
     switchView(button.dataset.view);
     if (state.activeView === 'usage') await loadUsage({ quiet: false });
-    if (state.activeView === 'harnesses') renderHarnessDashboard();
+    if (state.activeView === 'harnesses') {
+      await loadLearningAudit({ quiet: true });
+      renderHarnessDashboard();
+    }
     if (state.activeView === 'case-wiki') renderCaseArchive();
     if (state.activeView === 'discussion') renderDiscussionBoard();
   });
@@ -246,11 +253,48 @@ document.querySelector('#milestone-panel').addEventListener('click', (event) => 
   populateScheduleForm(taskId);
   form.elements.plannedStart.focus();
 });
+agentActivityPanel?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-agent-task]');
+  if (!button) return;
+  const card = document.querySelector(`[data-task-card="${cssEscape(button.dataset.agentTask)}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('task-card-focus');
+    setTimeout(() => card.classList.remove('task-card-focus'), 1400);
+  }
+});
 
 document.querySelector('#harness-refresh').addEventListener('click', async () => {
   await bootstrap({ quiet: true });
+  await loadLearningAudit({ quiet: true });
   renderHarnessDashboard();
   showToast('하네스와 실패사례를 갱신했습니다.');
+});
+
+learningAuditPanel?.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-learning-audit-action]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const action = button.dataset.learningAuditAction;
+    if (action === 'refresh') {
+      await loadLearningAudit({ quiet: false });
+    } else if (action === 'apply-cleanup') {
+      const planned = state.learningAudit?.actions?.length || 0;
+      if (!planned) return;
+      if (!window.confirm(`${planned} cleanup action(s) will archive duplicate or draft artifacts. Continue?`)) return;
+      const payload = await api('/api/learning/audit/apply-cleanup', { method: 'POST', body: {} });
+      state.learningAudit = payload.audit;
+      await bootstrap({ quiet: true });
+      await loadLearningAudit({ quiet: true });
+      showToast(`Archived ${payload.applied.length} cleanup item(s).`);
+    }
+    renderHarnessDashboard();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.querySelector('#failure-status-filter').addEventListener('change', renderHarnessDashboard);
@@ -733,6 +777,7 @@ function applyDraftToForm(draft) {
 
 async function refreshCurrentView(quiet = true) {
   await bootstrap({ quiet: true });
+  if (state.activeView === 'harnesses') await loadLearningAudit({ quiet: true });
   if (!quiet) showToast(state.activeView === 'usage' ? '사용량을 갱신했습니다.' : state.activeView === 'harnesses' ? '하네스를 갱신했습니다.' : state.activeView === 'case-wiki' ? 'WIKI를 갱신했습니다.' : state.activeView === 'discussion' ? '대화를 갱신했습니다.' : '최신 상태를 불러왔습니다.');
 }
 
@@ -754,6 +799,16 @@ async function loadUsage({ quiet = true } = {}) {
     state.usage = payload.usage;
     renderUsage();
     if (!quiet) showToast('사용량을 갱신했습니다.');
+  } catch (error) {
+    if (!quiet) showToast(error.message, true);
+  }
+}
+
+async function loadLearningAudit({ quiet = true } = {}) {
+  try {
+    const payload = await api('/api/learning/audit');
+    state.learningAudit = payload.audit;
+    if (!quiet) showToast('Learning audit refreshed.');
   } catch (error) {
     if (!quiet) showToast(error.message, true);
   }
@@ -1099,6 +1154,18 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
 }
 
+function relativeTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return '방금';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return formatDateTime(value);
+}
+
 function formatCost(totals) {
   if (!totals.pricedRequests) return '가격 미설정';
   return `$${Number(totals.estimatedCostUsd || 0).toFixed(4)}`;
@@ -1122,6 +1189,7 @@ function renderHarnessDashboard() {
     kpiCard('Fixture 후보', formatNumber(summary.fixtureCandidates), '재현 setup 필요', 'output'),
     kpiCard('활성 스킬', formatNumber(activeSkills), `${formatNumber(state.skills.length)}개 등록`, 'ok'),
   ].join('');
+  renderLearningArchivePanel();
   const admin = state.user?.role === 'admin';
   document.querySelector('#learning-create-toggle').classList.toggle('hidden', !admin);
   document.querySelector('#harness-create-toggle').classList.toggle('hidden', !admin);
@@ -1142,6 +1210,88 @@ function renderHarnessDashboard() {
   const failures = state.failures.filter((item) => !selectedStatus || item.status === selectedStatus);
   const groups = groupFailureCases(failures);
   failureList.innerHTML = groups.length ? `<table><thead><tr><th>상태</th><th>종류</th><th>하네스</th><th>사례</th><th>관찰</th><th>마지막</th><th>대상</th><th>행동</th></tr></thead><tbody>${groups.map(renderFailureGroupRow).join('')}</tbody></table>` : '<div class="empty">조건에 맞는 사례가 없습니다.</div>';
+}
+
+function renderLearningAuditPanel() {
+  if (!learningAuditPanel) return;
+  const audit = state.learningAudit;
+  if (!audit) {
+    learningAuditPanel.innerHTML = '<div class="card-heading"><div><p class="eyebrow">LEARNING AUDIT</p><h3>정리 제안</h3><p class="muted">현재 하네스와 스킬을 분석합니다. 이 단계에서는 아무것도 변경하지 않습니다.</p></div><button class="ghost compact" data-learning-audit-action="refresh" type="button">다시 분석</button></div>';
+    return;
+  }
+  const admin = state.user?.role === 'admin';
+  const findings = [...(audit.harnesses || []), ...(audit.skills || [])].filter((item) => item.category !== 'KEEP');
+  const actions = audit.actions || [];
+  learningAuditPanel.innerHTML = `
+    <div class="card-heading">
+      <div>
+        <p class="eyebrow">LEARNING AUDIT</p>
+        <h3>정리 제안</h3>
+        <p class="muted">분석 결과만 표시 중입니다. 정리 적용을 누르기 전에는 하네스나 스킬 상태가 바뀌지 않습니다.</p>
+      </div>
+      <div class="inline-actions">
+        <button class="ghost compact" data-learning-audit-action="refresh" type="button">다시 분석</button>
+        ${admin ? `<button class="warning compact" data-learning-audit-action="apply-cleanup" type="button" ${actions.length ? '' : 'disabled'}>정리 적용 ${formatNumber(actions.length)}</button>` : ''}
+      </div>
+    </div>
+    <div class="audit-summary-grid">
+      <div><strong>${formatNumber(audit.summary.keep)}</strong><span>계속 표시</span></div>
+      <div><strong>${formatNumber(audit.summary.conditional)}</strong><span>상황별 사용</span></div>
+      <div><strong>${formatNumber(audit.summary.cleanup)}</strong><span>정리 후보</span></div>
+      <div><strong>${formatNumber(actions.length)}</strong><span>적용 예정</span></div>
+    </div>
+    ${actions.length ? `<div class="notice audit-apply-note">정리 적용 시 아래 적용 예정 항목만 DISABLED 상태가 됩니다. CONDITIONAL 항목은 숨김 제안일 뿐 자동 비활성화하지 않습니다.</div>` : '<div class="notice audit-apply-note">자동 비활성화할 항목은 없습니다.</div>'}
+    ${findings.length ? `<div class="audit-list">${findings.slice(0, 10).map(renderLearningAuditFinding).join('')}</div>` : '<div class="empty">정리 신호가 없습니다.</div>'}
+  `;
+}
+
+function renderLearningAuditFinding(item) {
+  const scheduled = item.action === 'DISABLE' ? '적용 예정' : item.action === 'HIDE_BY_DEFAULT' ? '숨김 제안' : item.action;
+  return `<div class="audit-finding audit-${escapeHtml(String(item.category).toLowerCase())}">
+    <span class="badge">${escapeHtml(item.category)}</span>
+    <strong>${escapeHtml(item.label)}</strong>
+    <span class="mono muted">${escapeHtml(item.id)}</span>
+    <small>${escapeHtml(scheduled)} · ${escapeHtml(item.reasons?.[0] || '')}</small>
+  </div>`;
+}
+
+function renderLearningArchivePanel() {
+  if (!learningAuditPanel) return;
+  const audit = state.learningAudit;
+  if (!audit) {
+    learningAuditPanel.innerHTML = '<div class="card-heading"><div><p class="eyebrow">LEARNING AUDIT</p><h3>Archive suggestions</h3><p class="muted">Analyze harnesses and skills. Nothing changes until archive is applied.</p></div><button class="ghost compact" data-learning-audit-action="refresh" type="button">Analyze</button></div>';
+    return;
+  }
+  const admin = state.user?.role === 'admin';
+  const findings = [...(audit.harnesses || []), ...(audit.skills || [])].filter((item) => item.category !== 'KEEP');
+  const actions = audit.actions || [];
+  learningAuditPanel.innerHTML = `
+    <div class="card-heading">
+      <div><p class="eyebrow">LEARNING AUDIT</p><h3>Archive suggestions</h3><p class="muted">Analysis only. Cleanup items move to ARCHIVED, not delete. Conditional items stay available.</p></div>
+      <div class="inline-actions">
+        <button class="ghost compact" data-learning-audit-action="refresh" type="button">Analyze</button>
+        ${admin ? `<button class="warning compact" data-learning-audit-action="apply-cleanup" type="button" ${actions.length ? '' : 'disabled'}>Archive cleanup ${formatNumber(actions.length)}</button>` : ''}
+      </div>
+    </div>
+    <div class="audit-summary-grid">
+      <div><strong>${formatNumber(audit.summary.keep)}</strong><span>keep</span></div>
+      <div><strong>${formatNumber(audit.summary.conditional)}</strong><span>conditional</span></div>
+      <div><strong>${formatNumber(audit.summary.cleanup)}</strong><span>cleanup</span></div>
+      <div><strong>${formatNumber(actions.length)}</strong><span>archive ready</span></div>
+    </div>
+    ${actions.length ? '<div class="notice audit-apply-note">Archive cleanup moves only listed cleanup items to ARCHIVED. You can still inspect them in WIKI.</div>' : '<div class="notice audit-apply-note">No cleanup items are waiting for archive.</div>'}
+    ${findings.length ? `<div class="audit-list">${findings.slice(0, 10).map(renderLearningArchiveFinding).join('')}</div>` : '<div class="empty">No cleanup signals.</div>'}
+  `;
+}
+
+function renderLearningArchiveFinding(item) {
+  const scheduled = item.action === 'ARCHIVE' ? 'archive ready' : item.action === 'HIDE_BY_DEFAULT' ? 'hide suggestion' : item.action;
+  return `<div class="audit-finding audit-${escapeHtml(String(item.category).toLowerCase())}">
+    <span class="badge">${escapeHtml(item.category)}</span>
+    <strong>${escapeHtml(item.label)}</strong>
+    <span class="mono muted">${escapeHtml(item.id)}</span>
+    <small>${escapeHtml(scheduled)} · ${escapeHtml(item.reasons?.[0] || '')}</small>
+  </div>`;
 }
 
 function renderCaseArchive() {
@@ -1267,6 +1417,7 @@ function renderDiscussionMemory(memory) {
 
 function renderHarnessCard(harness) {
   const admin = state.user?.role === 'admin';
+  const auditNote = renderArtifactAuditNote('HARNESS', harness.id);
   const test = harness.lastTest ? `<span class="badge ${harness.lastTest.passed ? 'pass' : 'fail'}">최근 시험 ${harness.lastTest.passed ? 'PASS' : 'FAIL'}</span>` : '<span class="badge">미시험</span>';
   const commands = harness.commands.map((command) => `<li><span class="mono">${escapeHtml(command.file)} ${escapeHtml((command.args || []).join(' '))}</span><small>cwd=${escapeHtml(command.cwd || '.')} · exit=${command.expectedExit} · ${command.timeoutMs}ms</small></li>`).join('');
   const commandSummary = harness.commands.slice(0, 2).map((command) => `${command.file} ${(command.args || []).join(' ')}`.trim()).join(' · ');
@@ -1277,9 +1428,10 @@ function renderHarnessCard(harness) {
     harness.status === 'ACTIVE' ? `<button class="warning" data-harness-action="disable" data-harness-id="${escapeHtml(harness.id)}">비활성화</button>` : '',
   ].join('') : '';
   return `<article class="harness-card">
-    <div class="harness-card-head"><div><p class="eyebrow">${escapeHtml(harness.source)} · v${harness.version}</p><h3>${escapeHtml(harness.label)}</h3><p class="mono muted">${escapeHtml(harness.id)}</p></div><span class="badge ${harness.status === 'ACTIVE' ? 'pass' : harness.status === 'DISABLED' ? 'fail' : ''}">${escapeHtml(harness.status)}</span></div>
+    <div class="harness-card-head"><div><p class="eyebrow">${escapeHtml(harness.source)} · v${harness.version}</p><h3>${escapeHtml(harness.label)}</h3><p class="mono muted">${escapeHtml(harness.id)}</p></div><span class="badge ${harness.status === 'ACTIVE' ? 'pass' : ['DISABLED', 'ARCHIVED'].includes(harness.status) ? 'fail' : ''}">${escapeHtml(harness.status)}</span></div>
     <p>${escapeHtml(harness.description || commandSummary || '설명 없음')}</p>
     <div class="task-meta">${test}<span class="badge">fixture 후보 ${fixtures}</span><span class="badge mono">${escapeHtml(harness.definitionSha256.slice(0, 12))}</span></div>
+    ${auditNote}
     <div class="task-actions">${actions}</div>
     <details class="details"><summary>명령 ${formatNumber(harness.commands.length)}개</summary><ul class="command-list">${commands}</ul></details>
     ${(harness.fixtureCandidates || []).length ? `<details class="details"><summary>Fixture 후보</summary><pre>${escapeHtml(JSON.stringify(harness.fixtureCandidates, null, 2))}</pre></details>` : ''}
@@ -1288,22 +1440,37 @@ function renderHarnessCard(harness) {
 
 function renderSkillCard(skill) {
   const admin = state.user?.role === 'admin';
+  const auditNote = renderArtifactAuditNote('SKILL', skill.id);
   const actions = admin ? [
     skill.status !== 'ACTIVE' ? `<button class="primary" data-skill-action="activate" data-skill-id="${escapeHtml(skill.id)}">활성화</button>` : '',
     skill.status === 'ACTIVE' ? `<button class="warning" data-skill-action="disable" data-skill-id="${escapeHtml(skill.id)}">비활성화</button>` : '',
   ].join('') : '';
   return `<article class="harness-card">
-    <div class="harness-card-head"><div><p class="eyebrow">${escapeHtml(skill.source)} · v${skill.version}</p><h3>${escapeHtml(skill.label)}</h3><p class="mono muted">${escapeHtml(skill.id)}</p></div><span class="badge ${skill.status === 'ACTIVE' ? 'pass' : skill.status === 'DISABLED' ? 'fail' : ''}">${escapeHtml(skill.status)}</span></div>
+    <div class="harness-card-head"><div><p class="eyebrow">${escapeHtml(skill.source)} · v${skill.version}</p><h3>${escapeHtml(skill.label)}</h3><p class="mono muted">${escapeHtml(skill.id)}</p></div><span class="badge ${skill.status === 'ACTIVE' ? 'pass' : ['DISABLED', 'ARCHIVED'].includes(skill.status) ? 'fail' : ''}">${escapeHtml(skill.status)}</span></div>
     <p>${escapeHtml(skill.description || '설명 없음')}</p>
     ${(skill.rules || []).slice(0, 2).map((rule) => `<p class="compact-rule">${escapeHtml(rule)}</p>`).join('')}
     <div class="task-meta"><span class="badge">사례 ${skill.sourceFailureCaseIds?.length || 0}건</span><span class="badge mono">${escapeHtml(skill.definitionSha256.slice(0, 12))}</span></div>
+    ${auditNote}
     <div class="task-actions">${actions}</div>
     ${(skill.rules || []).length > 2 ? `<details class="details"><summary>규칙 ${formatNumber(skill.rules.length)}개 전체</summary><ol class="command-list">${(skill.rules || []).map((rule) => `<li>${escapeHtml(rule)}</li>`).join('')}</ol></details>` : ''}
   </article>`;
 }
 
+function renderArtifactAuditNote(type, id) {
+  const finding = learningAuditFinding(type, id);
+  if (!finding) return '';
+  const badgeClass = finding.category === 'KEEP' ? 'pass' : finding.category === 'CLEANUP' ? 'fail' : '';
+  const reason = finding.reasons?.[0] || '';
+  return `<div class="task-meta"><span class="badge ${badgeClass}">${escapeHtml(finding.category)}</span><span class="badge">${escapeHtml(finding.action)}</span></div>${finding.category !== 'KEEP' ? `<p class="compact-rule">${escapeHtml(reason)}</p>` : ''}`;
+}
+
+function learningAuditFinding(type, id) {
+  const list = type === 'HARNESS' ? state.learningAudit?.harnesses : state.learningAudit?.skills;
+  return (list || []).find((item) => item.id === id) || null;
+}
+
 function artifactSort(a, b) {
-  const rank = { ACTIVE: 0, DRAFT: 1, DISABLED: 2 };
+  const rank = { ACTIVE: 0, DRAFT: 1, DISABLED: 2, ARCHIVED: 3 };
   return (rank[a.status] ?? 9) - (rank[b.status] ?? 9)
     || String(a.label || a.id).localeCompare(String(b.label || b.id));
 }
@@ -1326,17 +1493,18 @@ function populateLearningApplyForm() {
 function groupFailureCases(failures) {
   const groups = new Map();
   for (const failure of failures) {
-    const key = [failure.status, failure.harnessId, failure.kind].join('|');
+    const key = failureGroupKey(failure);
     const group = groups.get(key) ?? {
       key,
       status: failure.status,
       kind: failure.kind,
-      harnessId: failure.harnessId,
+      harnessIds: new Set(),
       cases: [],
       occurrences: 0,
       lastSeenAt: '',
       representative: failure,
     };
+    if (failure.harnessId) group.harnessIds.add(failure.harnessId);
     group.cases.push(failure);
     group.occurrences += Number(failure.occurrences) || 0;
     if (!group.lastSeenAt || String(failure.lastSeenAt).localeCompare(group.lastSeenAt) > 0) {
@@ -1345,7 +1513,34 @@ function groupFailureCases(failures) {
     }
     groups.set(key, group);
   }
-  return [...groups.values()].sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
+  return [...groups.values()].map((group) => ({
+    ...group,
+    harnessIds: [...group.harnessIds].sort(),
+    harnessId: [...group.harnessIds].sort().join(', '),
+  })).sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
+}
+
+function failureGroupKey(failure) {
+  const identity = failure.identity || {};
+  const evidence = failure.lastEvidence || {};
+  if (failure.kind === 'SCOPE_VIOLATION') {
+    const paths = (identity.paths || evidence.paths || evidence.changedPaths || [identity.path || evidence.path || failure.title])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .sort();
+    return [failure.status, failure.kind, failure.harnessId || '', JSON.stringify(paths)].join('|');
+  }
+  return [
+    failure.status,
+    failure.kind,
+    failure.title || '',
+    identity.file || evidence.file || '',
+    JSON.stringify(identity.args || evidence.args || []),
+    identity.cwd || evidence.cwd || '',
+    identity.expectedExit ?? evidence.expectedExit ?? '',
+    identity.path || evidence.path || '',
+    identity.error || evidence.error || '',
+  ].join('|');
 }
 
 function renderFailureGroupRow(group) {
@@ -1364,7 +1559,7 @@ function renderFailureGroupRow(group) {
     : `<small class="mono">${escapeHtml(failure.id)}</small>`;
   return `<tr>
     <td><span class="badge ${failure.status === 'OPEN' ? 'fail' : failure.status === 'RESOLVED' ? 'pass' : ''}">${escapeHtml(failure.status)}</span></td>
-    <td>${escapeHtml(group.kind)}</td><td class="mono">${escapeHtml(group.harnessId)}</td><td>${formatNumber(group.cases.length)}</td><td>${formatNumber(group.occurrences)}</td><td>${escapeHtml(formatDateTime(group.lastSeenAt))}</td>
+    <td>${escapeHtml(group.kind)}</td><td class="mono">${escapeHtml(group.harnessId || '-')}</td><td>${formatNumber(group.cases.length)}</td><td>${formatNumber(group.occurrences)}</td><td>${escapeHtml(formatDateTime(group.lastSeenAt))}</td>
     <td><strong>${escapeHtml(failure.title)}</strong>${caseDetails}<details class="details"><summary>대표 증거</summary><pre>${escapeHtml(JSON.stringify(failure.lastEvidence, null, 2))}</pre></details></td>
     <td><div class="inline-actions">${actions}</div></td>
   </tr>`;
@@ -1373,6 +1568,7 @@ function renderFailureGroupRow(group) {
 function render() {
   renderSummary();
   renderMilestonePlanner();
+  renderAgentActivityPanel();
   board.innerHTML = columns.map(([status, label]) => {
     const tasks = state.tasks.filter((task) => task.status === status && !task.archived);
     return `
@@ -1391,6 +1587,7 @@ function renderMilestonePlanner() {
   populateMilestoneFilters();
   const monthEvents = timelineEvents().filter((event) => event.date.startsWith(month));
   const events = filterMilestoneEvents(monthEvents);
+  if (milestoneRanges) milestoneRanges.innerHTML = renderMilestoneRanges(month);
   const days = daysInMonth(month);
   const first = new Date(`${month}-01T00:00:00`).getDay();
   const cells = [];
@@ -1407,6 +1604,86 @@ function renderMilestonePlanner() {
   milestoneStream.innerHTML = events.length
     ? `<div class="milestone-stream-head"><strong>${formatNumber(events.length)}개 이벤트</strong><span class="muted">${state.milestoneFilter.date || month}</span></div>${events.sort((a, b) => a.at.localeCompare(b.at)).map(renderMilestoneRow).join('')}`
     : '<div class="empty">이 달에 표시할 작업 이벤트가 없습니다.</div>';
+}
+
+function renderMilestoneRanges(month) {
+  if (state.milestoneFilter.type && state.milestoneFilter.type !== 'planned') {
+    return '<div class="milestone-range-empty">기간표는 계획 보기에서 표시됩니다. 필터를 전체 또는 계획으로 바꾸면 시작-마감 범위를 볼 수 있습니다.</div>';
+  }
+  const monthDays = daysInMonth(month);
+  const tasks = filterMilestoneTasks(state.tasks)
+    .filter((task) => task.schedule?.plannedStart || task.schedule?.plannedEnd)
+    .map((task) => milestoneRangeForTask(task, month))
+    .filter(Boolean)
+    .sort((a, b) => a.start.localeCompare(b.start) || a.task.title.localeCompare(b.task.title));
+  if (!tasks.length) return '<div class="milestone-range-empty">이 달에 계획 시작/마감이 잡힌 작업이 없습니다.</div>';
+  return `<section class="milestone-range-board" style="--month-days:${monthDays.length}" aria-label="작업 기간표">
+    <div class="milestone-range-head">
+      <strong>작업 기간표</strong>
+      <span class="muted">${escapeHtml(month)} · ${formatNumber(tasks.length)}개 작업</span>
+    </div>
+    <div class="milestone-range-scale" style="grid-template-columns:repeat(${monthDays.length}, minmax(26px, 1fr))">${monthDays.map((day) => `<span>${escapeHtml(day.slice(8))}</span>`).join('')}</div>
+    <div class="milestone-range-list">${tasks.map(renderMilestoneRangeRow).join('')}</div>
+  </section>`;
+}
+
+function filterMilestoneTasks(tasks) {
+  const { userId, query, date } = state.milestoneFilter;
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  return tasks.filter((task) => {
+    if (task.archived) return false;
+    if (userId && task.assigneeUserId !== userId) return false;
+    if (normalizedQuery && !String(task.title || '').toLowerCase().includes(normalizedQuery)) return false;
+    if (date) {
+      const start = task.schedule?.plannedStart || task.schedule?.plannedEnd || '';
+      const end = task.schedule?.plannedEnd || task.schedule?.plannedStart || '';
+      if (!start || !end || date < start || date > end) return false;
+    }
+    return true;
+  });
+}
+
+function milestoneRangeForTask(task, month) {
+  const monthDays = daysInMonth(month);
+  const monthStart = monthDays[0];
+  const monthEnd = monthDays[monthDays.length - 1];
+  const rawStart = task.schedule?.plannedStart || task.schedule?.plannedEnd || '';
+  const rawEnd = task.schedule?.plannedEnd || task.schedule?.plannedStart || '';
+  if (!rawStart || !rawEnd) return null;
+  if (rawEnd < monthStart || rawStart > monthEnd) return null;
+  const start = rawStart < monthStart ? monthStart : rawStart;
+  const end = rawEnd > monthEnd ? monthEnd : rawEnd;
+  const startDay = Number(start.slice(8));
+  const endDay = Number(end.slice(8));
+  const total = monthDays.length;
+  return {
+    task,
+    start,
+    end,
+    startsBeforeMonth: rawStart < monthStart,
+    endsAfterMonth: rawEnd > monthEnd,
+    left: ((startDay - 1) / total) * 100,
+    width: ((endDay - startDay + 1) / total) * 100,
+  };
+}
+
+function renderMilestoneRangeRow(range) {
+  const task = range.task;
+  const statusClass = `status-${String(task.status || '').toLowerCase().replace(/_/g, '-')}`;
+  const startLabel = task.schedule?.plannedStart || '시작 미정';
+  const endLabel = task.schedule?.plannedEnd || '마감 미정';
+  const edges = `${range.startsBeforeMonth ? '이전부터 · ' : ''}${range.endsAfterMonth ? '다음달까지' : ''}`.trim();
+  return `<button class="milestone-range-row" type="button" data-schedule-task="${escapeHtml(task.id)}">
+    <span class="milestone-range-title">
+      <strong>${escapeHtml(task.title)}</strong>
+      <small>${escapeHtml([userName(task.assigneeUserId) || '미지정', statusLabel(task.status), edges].filter(Boolean).join(' · '))}</small>
+    </span>
+    <span class="milestone-range-track">
+      <span class="milestone-range-bar ${escapeHtml(statusClass)}" style="left:${range.left.toFixed(3)}%;width:${Math.max(range.width, 3).toFixed(3)}%">
+        <span>${escapeHtml(startLabel)} → ${escapeHtml(endLabel)}</span>
+      </span>
+    </span>
+  </button>`;
 }
 
 function timelineEvents() {
@@ -1482,6 +1759,16 @@ function categoryLabel(category) {
   return ({ planned: '계획', claimed: '가져감', verify: '검증', review: '리뷰', done: '완료', blocked: '막힘', other: '기타' })[category] || category;
 }
 
+function statusLabel(status) {
+  return ({
+    READY: '준비',
+    IN_PROGRESS: '진행 중',
+    REVIEW: '리뷰',
+    BLOCKED: '막힘',
+    DONE: '완료',
+  })[status] || status || '';
+}
+
 function daysInMonth(month) {
   const [year, rawMonth] = month.split('-').map(Number);
   const last = new Date(year, rawMonth, 0).getDate();
@@ -1528,6 +1815,42 @@ function renderSummary() {
   ).join('');
 }
 
+function renderAgentActivityPanel() {
+  if (!agentActivityPanel) return;
+  const active = state.tasks
+    .filter((task) => !task.archived && task.agentActivity && !task.agentActivity.finishedAt)
+    .sort((a, b) => String(b.agentActivity.updatedAt || '').localeCompare(String(a.agentActivity.updatedAt || '')));
+  const recent = active.length ? active : state.tasks
+    .filter((task) => !task.archived && task.agentActivity)
+    .sort((a, b) => String(b.agentActivity.updatedAt || '').localeCompare(String(a.agentActivity.updatedAt || '')))
+    .slice(0, 3);
+  if (!recent.length) {
+    agentActivityPanel.innerHTML = '<div class="agent-activity-empty">아직 보드에 표시할 AI/CLI 작업 현황이 없습니다.</div>';
+    return;
+  }
+  agentActivityPanel.innerHTML = `
+    <div class="agent-activity-head">
+      <strong>AI/CLI 작업 현황</strong>
+      <span class="muted">${active.length ? `${formatNumber(active.length)}개 실행 중` : '최근 작업'}</span>
+    </div>
+    <div class="agent-activity-list">${recent.map(renderAgentActivityItem).join('')}</div>`;
+}
+
+function renderAgentActivityItem(task) {
+  const activity = task.agentActivity || {};
+  const attempt = activity.attempt && activity.maxAttempts ? `${activity.attempt}/${activity.maxAttempts}` : '';
+  const tool = [activity.tool, activity.model].filter(Boolean).join('/');
+  const stateClass = activity.finishedAt ? (activity.passed ? 'done' : 'failed') : 'active';
+  return `<button class="agent-activity-item ${stateClass}" type="button" data-agent-task="${escapeHtml(task.id)}">
+    <span class="agent-activity-pulse"></span>
+    <span>
+      <strong>${escapeHtml(task.title)}</strong>
+      <small>${escapeHtml([activity.label || activity.phase || '작업 중', tool, attempt ? `시도 ${attempt}` : '', userName(task.assigneeUserId)].filter(Boolean).join(' · '))}</small>
+    </span>
+    <span class="muted">${escapeHtml(relativeTime(activity.updatedAt))}</span>
+  </button>`;
+}
+
 function renderTask(task) {
   const assignee = userName(task.assigneeUserId) || '미지정';
   const reviewer = userName(task.reviewerUserId) || '누구나';
@@ -1545,9 +1868,10 @@ function renderTask(task) {
     ? (task.executor.model ? `${task.executor.tool}/${task.executor.model}` : task.executor.tool)
     : '';
   const executorBadge = executorText ? `<span class="badge">CLI ${escapeHtml(executorText)}</span>` : '';
+  const agentActivity = renderTaskAgentActivity(task);
 
   return `
-    <article class="task-card">
+    <article class="task-card" data-task-card="${escapeHtml(task.id)}">
       <p class="eyebrow">P${task.priority} · v${task.version}</p>
       <h3>${escapeHtml(task.title)}</h3>
       <p class="task-description">${escapeHtml(task.description || '설명 없음')}</p>
@@ -1561,10 +1885,24 @@ function renderTask(task) {
         ${executorBadge}
       </div>
       <div class="task-meta">${scope}</div>
+      ${agentActivity}
       ${blocked}${review}
       <div class="task-actions">${renderActions(task)}</div>
       ${aiDetails}${details}
     </article>`;
+}
+
+function renderTaskAgentActivity(task) {
+  const activity = task.agentActivity;
+  if (!activity) return '';
+  const attempt = activity.attempt && activity.maxAttempts ? ` · 시도 ${activity.attempt}/${activity.maxAttempts}` : '';
+  const tool = [activity.tool, activity.model].filter(Boolean).join('/');
+  const stateClass = activity.finishedAt ? (activity.passed ? 'done' : 'failed') : 'active';
+  return `<section class="task-agent-activity ${stateClass}">
+    <div><strong>${escapeHtml(activity.label || activity.phase || 'AI/CLI 작업')}</strong><span>${escapeHtml([tool, relativeTime(activity.updatedAt)].filter(Boolean).join(' · '))}${escapeHtml(attempt)}</span></div>
+    ${activity.detail ? `<p>${escapeHtml(activity.detail)}</p>` : ''}
+    ${activity.failureCaseIds?.length ? `<small>실패사례 ${activity.failureCaseIds.map((id) => escapeHtml(id)).join(', ')}</small>` : ''}
+  </section>`;
 }
 
 function renderTaskAI(ai) {
@@ -1693,6 +2031,52 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function cssEscape(value) {
+  if (window.CSS?.escape) return window.CSS.escape(String(value ?? ''));
+  return String(value ?? '').replace(/["\\]/g, '\\$&');
+}
+
+const renderFailureCaseArchive = renderCaseArchive;
+renderCaseArchive = function renderCaseArchiveWithLearningArtifacts() {
+  renderFailureCaseArchive();
+  if (!caseArchive) return;
+  const artifacts = archivedLearningArtifacts();
+  if (!artifacts.length) return;
+  const count = document.querySelector('#case-archive-count');
+  if (count) {
+    const base = Number(String(count.textContent || '').match(/\d+/)?.[0] || 0);
+    count.textContent = `${formatNumber(base + artifacts.length)} entries`;
+  }
+  caseArchive.innerHTML = `${artifacts.map(renderArchivedArtifactCard).join('')}${caseArchive.innerHTML}`;
+};
+
+function archivedLearningArtifacts() {
+  return [
+    ...state.harnesses.filter((item) => item.status === 'ARCHIVED').map((item) => ({ ...item, artifactType: 'HARNESS' })),
+    ...state.skills.filter((item) => item.status === 'ARCHIVED').map((item) => ({ ...item, artifactType: 'SKILL' })),
+  ].sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id)));
+}
+
+function renderArchivedArtifactCard(item) {
+  const details = item.artifactType === 'HARNESS'
+    ? `<details class="details"><summary>Commands</summary><pre>${escapeHtml(JSON.stringify(item.commands || [], null, 2))}</pre></details>`
+    : `<details class="details"><summary>Rules</summary><ol class="command-list">${(item.rules || []).map((rule) => `<li>${escapeHtml(rule)}</li>`).join('')}</ol></details>`;
+  return `<details class="case-archive-item">
+    <summary class="case-archive-summary">
+      <span class="badge">ARCHIVED</span>
+      <strong>${escapeHtml(item.label || item.id)}</strong>
+      <span class="muted">${escapeHtml(item.artifactType)}</span>
+      <span class="badge">${escapeHtml(item.source || '-')}</span>
+      <span class="badge">v${escapeHtml(item.version || 1)}</span>
+      <span class="badge mono">${escapeHtml(item.id)}</span>
+    </summary>
+    <div class="case-archive-body">
+      <p>${escapeHtml(item.description || 'No description')}</p>
+      ${details}
+    </div>
+  </details>`;
 }
 
 bootstrap();

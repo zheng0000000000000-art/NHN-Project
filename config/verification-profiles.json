@@ -30,6 +30,18 @@
           "timeoutMs": 60000
         }
       ]
+    },
+    "failure-dedupe-regression": {
+      "label": "Failure dedupe regression",
+      "description": "Ensures repeated failure events do not explode into duplicate file-level cases.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["tools/learning/check-failure-dedupe.mjs"],
+          "expectedExit": 0,
+          "timeoutMs": 120000
+        }
+      ]
     }
   }
 }

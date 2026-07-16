@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "skills": {
+    "failure-corpus-discipline": {
+      "label": "Failure corpus discipline",
+      "description": "Keep failure learning at the event level so the corpus stays useful instead of filling with duplicate rows.",
+      "rules": [
+        "When recording verification failures, model one logical failure event as one Failure Case; do not split one scope-violation run into one case per changed file.",
+        "Do not include volatile outcomes such as actual exit code, timestamps, or workspace fingerprint in the stable failure identity unless they change the root cause.",
+        "In the Harness & Skill dashboard, group failures by the human-actionable event before showing counts, and use occurrences for repetition instead of duplicating rows."
+      ]
+    }
+  }
+}

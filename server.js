@@ -19,6 +19,8 @@ import { mergeTaskWorktree, worktreePath } from './src/worktree.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
+import { selectLearningForTask } from './src/learning-selector.js';
+import { auditLearningArtifacts } from './src/learning-audit.js';
 import { assertPlainObject, HttpError, nowIso, sha256 } from './src/utils.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +28,7 @@ const publicRoot = path.join(projectRoot, 'public');
 const dataDirectory = path.resolve(process.env.DATA_DIR || path.join(projectRoot, 'data'));
 const workspaceRoot = path.resolve(process.env.WORKSPACE_ROOT || projectRoot);
 const profilePath = path.resolve(process.env.VERIFICATION_PROFILES || path.join(projectRoot, 'config', 'verification-profiles.json'));
+const learningSeedPath = path.resolve(process.env.LEARNING_SEEDS || path.join(projectRoot, 'config', 'learning-seeds.json'));
 const usageConfigPath = path.resolve(process.env.USAGE_CONFIG || path.join(projectRoot, 'config', 'usage-dashboard.json'));
 const host = process.env.HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 4173);
@@ -40,7 +43,7 @@ const store = new Store(dataDirectory, { signupCode, serverStartedAt });
 const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
 const verifier = new Verifier({ workspaceRoot, harnessRegistry });
 const failureCases = new FailureCaseStore(dataDirectory);
-const skillRegistry = new SkillRegistry({ dataDirectory });
+const skillRegistry = new SkillRegistry({ dataDirectory, seedSkillPath: learningSeedPath });
 const learning = new FailureLearningService({ failureCases, harnessRegistry, skillRegistry });
 const projectContext = new ProjectContextStore(dataDirectory);
 const discussions = new DiscussionStore(dataDirectory);
@@ -139,6 +142,7 @@ async function handleApi(request, response) {
       projectContext: context,
       discussions: discussionSnapshot,
       workspace: { root: workspaceRoot },
+      learningAudit: auditLearningArtifacts({ harnesses, skills }),
     });
     return;
   }
@@ -172,8 +176,16 @@ async function handleApi(request, response) {
     assertPlainObject(body);
     const snapshot = await discussions.snapshot({ messageLimit: 200 });
     const selectedIds = new Set(Array.isArray(body.messageIds) ? body.messageIds.map(String) : []);
-    const selectedMessages = snapshot.messages.filter((message) => selectedIds.size === 0 || selectedIds.has(message.id));
+    const explicitSelection = selectedIds.size > 0;
+    const memorizedMessageIds = new Set((snapshot.memories || []).flatMap((memory) => memory.sourceMessageIds || []));
+    const selectedMessages = snapshot.messages.filter((message) =>
+      explicitSelection ? selectedIds.has(message.id) : !memorizedMessageIds.has(message.id));
     const sourceMessageIds = selectedMessages.map((message) => message.id);
+    if (!sourceMessageIds.length && !explicitSelection) {
+      const latestMemory = [...(snapshot.memories || [])].reverse()[0] || null;
+      sendJson(response, 200, { memory: latestMemory, duplicate: true });
+      return;
+    }
     const existingMemory = await discussions.findMemoryBySourceIds(sourceMessageIds);
     if (existingMemory) {
       sendJson(response, 200, { memory: existingMemory, duplicate: true });
@@ -273,7 +285,7 @@ async function handleApi(request, response) {
     return;
   }
 
-  const harnessMatch = url.pathname.match(/^\/api\/harnesses\/([^/]+)(?:\/(update|test|activate|disable))?$/);
+  const harnessMatch = url.pathname.match(/^\/api\/harnesses\/([^/]+)(?:\/(update|test|activate|disable|archive))?$/);
   if (harnessMatch) {
     const [, harnessId, harnessAction] = harnessMatch;
     if (method === 'GET' && !harnessAction) {
@@ -305,10 +317,10 @@ async function handleApi(request, response) {
         sendJson(response, 200, { ...result, failureCases: recorded });
         return;
       }
-      const status = harnessAction === 'activate' ? 'ACTIVE' : 'DISABLED';
+      const status = harnessAction === 'activate' ? 'ACTIVE' : harnessAction === 'archive' ? 'ARCHIVED' : 'DISABLED';
       const harness = await harnessRegistry.setStatus(harnessId, actor.id, body.expectedVersion, status);
       if (status === 'ACTIVE') await resolveArtifactCases(actor, harness, 'HARNESS');
-      await store.recordAudit(actor.id, status === 'ACTIVE' ? 'HARNESS_ACTIVATED' : 'HARNESS_DISABLED', { harnessId, version: harness.version });
+      await store.recordAudit(actor.id, status === 'ACTIVE' ? 'HARNESS_ACTIVATED' : status === 'ARCHIVED' ? 'HARNESS_ARCHIVED' : 'HARNESS_DISABLED', { harnessId, version: harness.version });
       sendJson(response, 200, { harness });
       return;
     }
@@ -319,7 +331,38 @@ async function handleApi(request, response) {
     return;
   }
 
-  const skillMatch = url.pathname.match(/^\/api\/skills\/([^/]+)(?:\/(activate|disable))?$/);
+  if (method === 'GET' && url.pathname === '/api/learning/audit') {
+    const [harnesses, skills] = await Promise.all([harnessRegistry.list(), skillRegistry.list()]);
+    sendJson(response, 200, { audit: auditLearningArtifacts({ harnesses, skills }) });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/learning/audit/apply-cleanup') {
+    requireAdmin(actor);
+    const [harnesses, skills] = await Promise.all([harnessRegistry.list(), skillRegistry.list()]);
+    const audit = auditLearningArtifacts({ harnesses, skills });
+    const applied = [];
+    for (const action of audit.actions) {
+      if (action.type === 'HARNESS') {
+        const current = await harnessRegistry.get(action.id);
+        if (!current || current.status === 'ARCHIVED') continue;
+        const harness = await harnessRegistry.setStatus(current.id, actor.id, current.version, 'ARCHIVED');
+        applied.push({ ...action, status: harness.status });
+        await store.recordAudit(actor.id, 'LEARNING_AUDIT_CLEANUP_APPLIED', action);
+      } else if (action.type === 'SKILL') {
+        const current = await skillRegistry.get(action.id);
+        if (!current || current.status === 'ARCHIVED') continue;
+        const skill = await skillRegistry.setStatus(current.id, actor.id, current.version, 'ARCHIVED');
+        applied.push({ ...action, status: skill.status });
+        await store.recordAudit(actor.id, 'LEARNING_AUDIT_CLEANUP_APPLIED', action);
+      }
+    }
+    const [updatedHarnesses, updatedSkills] = await Promise.all([harnessRegistry.list(), skillRegistry.list()]);
+    sendJson(response, 200, { applied, audit: auditLearningArtifacts({ harnesses: updatedHarnesses, skills: updatedSkills }) });
+    return;
+  }
+
+  const skillMatch = url.pathname.match(/^\/api\/skills\/([^/]+)(?:\/(activate|disable|archive))?$/);
   if (skillMatch) {
     const [, skillId, skillAction] = skillMatch;
     if (method === 'GET' && !skillAction) {
@@ -335,10 +378,10 @@ async function handleApi(request, response) {
       if (!current) throw new HttpError(404, 'Skill not found.');
       if (skillAction === 'activate') requireAdminOrFailureDerivedOwner(actor, current);
       else requireAdmin(actor);
-      const status = skillAction === 'activate' ? 'ACTIVE' : 'DISABLED';
+      const status = skillAction === 'activate' ? 'ACTIVE' : skillAction === 'archive' ? 'ARCHIVED' : 'DISABLED';
       const skill = await skillRegistry.setStatus(skillId, actor.id, body.expectedVersion, status);
       if (status === 'ACTIVE') await resolveArtifactCases(actor, skill, 'SKILL');
-      await store.recordAudit(actor.id, status === 'ACTIVE' ? 'SKILL_ACTIVATED' : 'SKILL_DISABLED', { skillId, version: skill.version });
+      await store.recordAudit(actor.id, status === 'ACTIVE' ? 'SKILL_ACTIVATED' : status === 'ARCHIVED' ? 'SKILL_ARCHIVED' : 'SKILL_DISABLED', { skillId, version: skill.version });
       sendJson(response, 200, { skill });
       return;
     }
@@ -519,17 +562,25 @@ async function handleApi(request, response) {
     const profileNames = await verifier.profileNames();
     const explicitProfile = body.verificationProfile != null && String(body.verificationProfile).trim() !== '';
     const explicitSkills = Object.hasOwn(body, 'skillIds');
-    const activeSkillIds = await skillRegistry.activeIds();
+    const [activeHarnesses, activeSkills] = await Promise.all([
+      harnessRegistry.list({ includeDisabled: false }),
+      skillRegistry.list({ includeDisabled: false }),
+    ]);
+    const selectedLearning = selectLearningForTask(body, {
+      activeHarnesses,
+      activeSkills,
+      defaultProfile: defaultVerificationProfile(profileNames),
+    });
     if (explicitSkills) await skillRegistry.resolveActiveMany(body.skillIds ?? []);
     const task = await store.createTask(actor, body, profileNames, {
-      defaultProfile: explicitProfile ? null : defaultVerificationProfile(profileNames),
-      autoSkillIds: body.noAutoLearning || explicitSkills ? [] : activeSkillIds,
+      defaultProfile: explicitProfile ? null : selectedLearning.verificationProfile,
+      autoSkillIds: body.noAutoLearning || explicitSkills ? [] : selectedLearning.skillIds,
     });
     sendJson(response, 201, { task });
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive|schedule|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request);
@@ -540,6 +591,15 @@ async function handleApi(request, response) {
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_SCHEDULE_UPDATED', async (next) => {
       requireTaskParticipantOrAdmin(next, actor);
       next.schedule = normalizeTaskSchedule(body.schedule ?? body);
+    });
+    sendJson(response, 200, { task });
+    return;
+  }
+
+  if (action === 'activity') {
+    const task = await store.mutateTask(taskId, actor, null, 'TASK_AGENT_ACTIVITY_UPDATED', async (next) => {
+      requireTaskParticipantOrAdmin(next, actor);
+      next.agentActivity = normalizeAgentActivity(body.activity ?? body, actor);
     });
     sendJson(response, 200, { task });
     return;
@@ -1128,6 +1188,36 @@ function normalizeTaskSchedule(input = {}) {
     plannedEnd,
     note: String(input.note ?? '').trim().slice(0, 1000),
   };
+}
+
+function normalizeAgentActivity(input = {}, actor) {
+  const phase = clipActivity(input.phase, 40) || 'working';
+  const now = nowIso();
+  const previousStartedAt = typeof input.startedAt === 'string' && input.startedAt ? input.startedAt : null;
+  return {
+    phase,
+    label: clipActivity(input.label, 80) || phase,
+    detail: clipActivity(input.detail, 240) || '',
+    tool: clipActivity(input.tool, 40) || '',
+    model: clipActivity(input.model, 80) || '',
+    workspace: clipActivity(input.workspace, 300) || '',
+    worktreeBranch: clipActivity(input.worktreeBranch, 160) || '',
+    attempt: Number.isFinite(Number(input.attempt)) ? Number(input.attempt) : null,
+    maxAttempts: Number.isFinite(Number(input.maxAttempts)) ? Number(input.maxAttempts) : null,
+    exitCode: Number.isFinite(Number(input.exitCode)) ? Number(input.exitCode) : null,
+    passed: typeof input.passed === 'boolean' ? input.passed : null,
+    failureCaseIds: Array.isArray(input.failureCaseIds) ? input.failureCaseIds.map((item) => String(item).trim()).filter(Boolean).slice(0, 20) : [],
+    learnedArtifacts: Array.isArray(input.learnedArtifacts) ? input.learnedArtifacts.slice(0, 20) : [],
+    startedAt: previousStartedAt || now,
+    updatedAt: now,
+    finishedAt: input.finished ? now : null,
+    actorUserId: actor.id,
+  };
+}
+
+function clipActivity(value, max) {
+  const text = String(value ?? '').trim();
+  return text ? text.slice(0, max) : '';
 }
 
 function normalizeExistingSchedule(input = {}) {

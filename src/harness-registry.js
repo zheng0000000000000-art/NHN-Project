@@ -4,7 +4,7 @@ import { atomicWriteJson, HttpError, normalizeRelativePath, nowIso, randomId, re
 import { runProcess } from './verifier.js';
 
 const EMPTY_DB = { schemaVersion: 1, harnesses: [] };
-const STATUS = new Set(['DRAFT', 'ACTIVE', 'DISABLED']);
+const STATUS = new Set(['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED']);
 
 export class HarnessRegistry {
   constructor({ dataDirectory, seedProfilePath, workspaceRoot }) {
@@ -19,26 +19,8 @@ export class HarnessRegistry {
       const db = await readJson(this.path, EMPTY_DB);
       if (!Array.isArray(db.harnesses)) throw new Error('Invalid harness registry.');
       const seeds = await readJson(this.seedProfilePath, { schemaVersion: 1, profiles: {} });
-      const existing = new Set(db.harnesses.map((item) => item.id));
       for (const [id, profile] of Object.entries(seeds.profiles ?? {})) {
-        if (existing.has(id)) continue;
-        const createdAt = nowIso();
-        const harness = {
-          id,
-          label: String(profile.label ?? id),
-          description: String(profile.description ?? ''),
-          status: 'ACTIVE',
-          source: 'BUILTIN',
-          version: 1,
-          commands: normalizeCommands(profile.commands ?? []),
-          fixtureCandidates: [],
-          createdByUserId: null,
-          createdAt,
-          updatedAt: createdAt,
-          lastTest: null,
-        };
-        harness.definitionSha256 = definitionHash(harness);
-        db.harnesses.push(harness);
+        upsertBuiltinHarness(db, id, profile);
       }
       db.harnesses.sort((a, b) => a.id.localeCompare(b.id));
       await atomicWriteJson(this.path, db);
@@ -232,6 +214,33 @@ export class HarnessRegistry {
     this.lock = result.catch(() => {});
     return result;
   }
+}
+
+function upsertBuiltinHarness(db, id, profile) {
+  const index = db.harnesses.findIndex((item) => item.id === id);
+  const current = index === -1 ? null : db.harnesses[index];
+  if (current && !['BUILTIN', 'IMPORTED_LOCAL_SKILL'].includes(current.source)) return;
+
+  const createdAt = current?.createdAt ?? nowIso();
+  const harness = {
+    id,
+    label: String(profile.label ?? id),
+    description: String(profile.description ?? ''),
+    status: 'ACTIVE',
+    source: 'BUILTIN',
+    version: current?.version ?? 1,
+    commands: normalizeCommands(profile.commands ?? []),
+    fixtureCandidates: current?.fixtureCandidates ?? [],
+    createdByUserId: current?.createdByUserId ?? null,
+    createdAt,
+    updatedAt: current?.updatedAt ?? createdAt,
+    lastTest: null,
+    sourceFailureCaseIds: [],
+  };
+  harness.definitionSha256 = definitionHash(harness);
+  harness.lastTest = current?.lastTest?.definitionSha256 === harness.definitionSha256 ? current.lastTest : null;
+  if (index === -1) db.harnesses.push(harness);
+  else db.harnesses[index] = harness;
 }
 
 function normalizeDefinition(input, actorUserId, createdAt = nowIso()) {

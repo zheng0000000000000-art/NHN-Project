@@ -131,6 +131,7 @@
           <div class="toolbar-actions"><button id="new-task-button" class="primary" type="button">새 작업</button><button id="ai-assistant-button" class="ghost" type="button">AI 도우미</button><button id="milestone-toggle" class="ghost" type="button">마일스톤</button><span id="ai-status" class="badge"></span></div>
           <div id="summary" class="summary"></div>
         </section>
+        <section id="agent-activity-panel" class="agent-activity-panel"></section>
 
         <section id="milestone-panel" class="panel milestone-panel hidden">
           <div class="panel-heading">
@@ -154,6 +155,7 @@
             <label class="wide">메모<input name="note" maxlength="1000" placeholder="예: v0.8 전에 리뷰까지 끝내기"></label>
             <button class="ghost" type="submit">일정 저장</button>
           </form>
+          <div id="milestone-ranges" class="milestone-ranges"></div>
           <div id="milestone-calendar" class="milestone-calendar"></div>
           <div id="milestone-stream" class="milestone-stream"></div>
         </section>
@@ -231,6 +233,8 @@
         </div>
 
         <section id="harness-summary" class="kpi-grid harness-kpis"></section>
+
+        <section id="learning-audit-panel" class="dashboard-card learning-audit-card"></section>
 
         <section id="learning-create-panel" class="dashboard-card harness-create-card hidden">
           <div class="card-heading">

@@ -2,11 +2,12 @@ import path from 'node:path';
 import { atomicWriteJson, HttpError, nowIso, readJson, sha256 } from './utils.js';
 
 const EMPTY_DB = { schemaVersion: 1, skills: [] };
-const STATUSES = new Set(['DRAFT', 'ACTIVE', 'DISABLED']);
+const STATUSES = new Set(['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED']);
 
 export class SkillRegistry {
-  constructor({ dataDirectory }) {
+  constructor({ dataDirectory, seedSkillPath = null }) {
     this.path = path.join(dataDirectory, 'skills.json');
+    this.seedSkillPath = seedSkillPath;
     this.lock = Promise.resolve();
   }
 
@@ -14,6 +15,13 @@ export class SkillRegistry {
     await this.#withLock(async () => {
       const db = await readJson(this.path, EMPTY_DB);
       if (!Array.isArray(db.skills)) throw new Error('Invalid skill registry.');
+      if (this.seedSkillPath) {
+        const seeds = await readJson(this.seedSkillPath, { schemaVersion: 1, skills: {} });
+        for (const [id, seed] of Object.entries(seeds.skills ?? {})) {
+          upsertBuiltinSkill(db, id, seed);
+        }
+        db.skills.sort((a, b) => a.id.localeCompare(b.id));
+      }
       await atomicWriteJson(this.path, db);
     });
   }
@@ -88,6 +96,33 @@ export class SkillRegistry {
   }
 }
 
+function upsertBuiltinSkill(db, id, seed) {
+  const at = nowIso();
+  const index = db.skills.findIndex((item) => item.id === id);
+  const current = index === -1 ? null : db.skills[index];
+  if (current && !['BUILTIN', 'IMPORTED_LOCAL_SKILL'].includes(current.source)) return;
+
+  const skill = {
+    id,
+    label: String(seed.label ?? id).trim(),
+    description: String(seed.description ?? '').trim(),
+    status: 'ACTIVE',
+    source: 'BUILTIN',
+    version: current?.version ?? 1,
+    rules: Array.isArray(seed.rules)
+      ? [...new Set(seed.rules.map((item) => String(item).trim()).filter(Boolean))].slice(0, 40)
+      : [],
+    sourceFailureCaseIds: [],
+    createdByUserId: current?.createdByUserId ?? null,
+    createdAt: current?.createdAt ?? at,
+    updatedAt: current?.updatedAt ?? at,
+    statusChangedByUserId: current?.statusChangedByUserId ?? null,
+  };
+  skill.definitionSha256 = skillDefinitionHash(skill);
+  if (index === -1) db.skills.push(skill);
+  else db.skills[index] = skill;
+}
+
 function normalizeSkill(input, actorUserId, failureCases) {
   const id = String(input.id ?? '').trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(id)) throw new HttpError(400, 'Skill ID must be 3-64 lowercase letters, numbers, or hyphens.');
@@ -116,14 +151,18 @@ function normalizeSkill(input, actorUserId, failureCases) {
     createdAt: at,
     updatedAt: at,
   };
-  skill.definitionSha256 = sha256(JSON.stringify({
+  skill.definitionSha256 = skillDefinitionHash(skill);
+  return skill;
+}
+
+function skillDefinitionHash(skill) {
+  return sha256(JSON.stringify({
     id: skill.id,
     label: skill.label,
     description: skill.description,
     rules: skill.rules,
     sourceFailureCaseIds: skill.sourceFailureCaseIds,
   }));
-  return skill;
 }
 
 export function ruleFromFailure(failure) {

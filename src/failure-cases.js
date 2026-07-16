@@ -178,21 +178,23 @@ function buildVerificationFailures(task, verification) {
         commandIndex: index,
         file: check.file,
         args: check.args ?? [],
+        cwd: check.cwd ?? '.',
         expectedExit: check.expectedExit,
-        actualExit: check.actualExit,
       },
       evidence: compactEvidence(check, verification),
     }));
   }
-  for (const violation of verification.scopeViolations ?? []) {
+  const scopeViolations = [...new Set((verification.scopeViolations ?? []).map((item) => String(item).trim()).filter(Boolean))].sort();
+  if (scopeViolations.length) {
     output.push(makeCase({
       harnessId,
       kind: 'SCOPE_VIOLATION',
-      title: violation,
+      title: scopeViolations.length === 1 ? scopeViolations[0] : `${scopeViolations.length} paths outside allowed scope`,
       taskIds,
-      identity: { harnessId, kind: 'SCOPE_VIOLATION', path: violation },
+      identity: { harnessId, kind: 'SCOPE_VIOLATION', paths: scopeViolations },
       evidence: {
-        path: violation,
+        path: scopeViolations[0],
+        paths: scopeViolations,
         changedPaths: verification.changedPaths ?? [],
         workspaceFingerprint: verification.workspaceFingerprint,
       },

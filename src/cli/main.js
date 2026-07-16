@@ -318,6 +318,19 @@ async function activatePassingHarnesses(client, taskId, learnedArtifacts, { json
   return { reverified: false, verifyResult: null };
 }
 
+async function reportTaskActivity(client, task, activity) {
+  const result = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/activity`, {
+    method: 'POST',
+    body: {
+      activity: {
+        startedAt: task.agentActivity?.startedAt,
+        ...activity,
+      },
+    },
+  });
+  return result.task;
+}
+
 // Dispatch: hand an existing board task to a CLI executor that actually does the work,
 // then verify. Dry-run by default; --execute really runs the agent in WORKSPACE_ROOT.
 async function runWorktree(client, positionals, options, json) {
@@ -379,13 +392,47 @@ async function runDispatch(client, positionals, options, json) {
   let passed = false;
   const attempts = [];
   const learnedArtifacts = [];
+  task = await reportTaskActivity(client, task, {
+    phase: 'dispatch-started',
+    label: 'CLI 작업 시작',
+    detail: `${tool} executor가 작업 지시서를 받고 있습니다.`,
+    tool,
+    model,
+    workspace,
+    worktreeBranch: worktree?.branch || '',
+    attempt: 0,
+    maxAttempts,
+  });
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptPrompt = attempt === 1 ? prompt : buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts);
     if (!json) process.stdout.write(`Dispatching ${task.id} to ${tool} in ${workspace} (attempt ${attempt}/${maxAttempts}) ...\n`);
+    task = await reportTaskActivity(client, task, {
+      phase: 'executor-running',
+      label: 'AI/CLI 작업 중',
+      detail: `${tool} 실행 중 · 시도 ${attempt}/${maxAttempts}`,
+      tool,
+      model,
+      workspace,
+      worktreeBranch: worktree?.branch || '',
+      attempt,
+      maxAttempts,
+    });
     run = await runExecutor(tool, attemptPrompt, {
       workspace, model, permission, sandbox, inherit: !json,
     });
     if (!json) process.stdout.write(`Executor exited with code ${run.code}. Verifying ...\n`);
+    task = await reportTaskActivity(client, task, {
+      phase: 'verifying',
+      label: '검증 중',
+      detail: `executor exit ${run.code}; 프로그램 검증 실행 중`,
+      tool,
+      model,
+      workspace,
+      worktreeBranch: worktree?.branch || '',
+      attempt,
+      maxAttempts,
+      exitCode: run.code,
+    });
     verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
     task = verifyResult.task;
     passed = Boolean(task.verification?.passed);
@@ -398,16 +445,57 @@ async function runDispatch(client, positionals, options, json) {
     });
     if (passed) break;
     if (autoLearn && verifyResult.failureCases?.length) {
+      task = await reportTaskActivity(client, task, {
+        phase: 'auto-learning',
+        label: '실패 학습 중',
+        detail: '검증 실패 사례로 하네스/스킬 후보를 만들고 있습니다.',
+        tool,
+        model,
+        workspace,
+        worktreeBranch: worktree?.branch || '',
+        attempt,
+        maxAttempts,
+        exitCode: run.code,
+        passed,
+        failureCaseIds: (verifyResult.failureCases || []).map((failure) => failure.id),
+      });
       const learned = await autoLearnFromFailures(client, task.id, verifyResult.failureCases, { json });
       if (learned) learnedArtifacts.push(learned);
       const refreshed = findTask((await client.request('/api/bootstrap')).tasks, task.id);
       if (refreshed) task = refreshed;
     }
+    task = await reportTaskActivity(client, task, {
+      phase: attempt < maxAttempts ? 'repair-needed' : 'failed',
+      label: attempt < maxAttempts ? '수정 재시도 대기' : '검증 실패',
+      detail: attempt < maxAttempts ? '검증 실패 증거를 다시 executor에게 넘길 예정입니다.' : '재시도 한도 안에서 검증을 통과하지 못했습니다.',
+      tool,
+      model,
+      workspace,
+      worktreeBranch: worktree?.branch || '',
+      attempt,
+      maxAttempts,
+      exitCode: run.code,
+      passed,
+      failureCaseIds: (verifyResult.failureCases || []).map((failure) => failure.id),
+      learnedArtifacts,
+    });
     if (!json && attempt < maxAttempts) {
       process.stdout.write(`Verification failed; handing the failure evidence back to ${tool} for repair.\n`);
     }
   }
   if (passed && autoLearn && learnedArtifacts.some((item) => item.type === 'HARNESS' && item.status === 'DRAFT')) {
+    task = await reportTaskActivity(client, task, {
+      phase: 'activating-harness',
+      label: '하네스 활성화 중',
+      detail: '통과 후 DRAFT 하네스를 시험하고 작업에 적용합니다.',
+      tool,
+      model,
+      workspace,
+      worktreeBranch: worktree?.branch || '',
+      maxAttempts,
+      passed,
+      learnedArtifacts,
+    });
     const activation = await activatePassingHarnesses(client, task.id, learnedArtifacts, { json });
     if (activation.reverified) {
       verifyResult = activation.verifyResult;
@@ -426,6 +514,18 @@ async function runDispatch(client, positionals, options, json) {
   let review = null;
   const to = stringOption(options, 'to', 'verify');
   if (passed && (to === 'review' || to === 'done')) {
+    task = await reportTaskActivity(client, task, {
+      phase: 'requesting-review',
+      label: '리뷰 요청 중',
+      detail: '검증 통과 후 리뷰 단계로 넘기고 있습니다.',
+      tool,
+      model,
+      workspace,
+      worktreeBranch: worktree?.branch || '',
+      maxAttempts,
+      passed,
+      learnedArtifacts,
+    });
     task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/request-review`, { method: 'POST', body: { expectedVersion: task.version } })).task;
     if (to === 'done') {
       const reviewerSession = await loadSessionFrom(stringOption(options, 'reviewer-home', botHome()));
@@ -436,6 +536,21 @@ async function runDispatch(client, positionals, options, json) {
   }
 
   const final = findTask((await client.request('/api/bootstrap')).tasks, task.id);
+  await reportTaskActivity(client, final, {
+    phase: passed ? 'finished' : 'failed',
+    label: passed ? '작업 루프 완료' : '작업 루프 실패',
+    detail: passed ? `검증 통과 · 현재 상태 ${final.status}` : '검증을 통과하지 못했습니다.',
+    tool,
+    model,
+    workspace,
+    worktreeBranch: worktree?.branch || '',
+    maxAttempts,
+    exitCode: run?.code,
+    passed,
+    failureCaseIds: (verifyResult?.failureCases || []).map((failure) => failure.id),
+    learnedArtifacts,
+    finished: true,
+  });
   const summary = { taskId: task.id, attempts, learnedArtifacts, executorExit: run?.code, verification: final.verification?.status, passed, finalStatus: final.status, review };
   if (json) printValue({ ...summary, task: final }, { json: true });
   else {
@@ -846,7 +961,7 @@ async function runHarness(client, positionals, options, json) {
     printValue(result.harness, { json: true });
     return 0;
   }
-  if (['test', 'activate', 'disable'].includes(action)) {
+  if (['test', 'activate', 'disable', 'archive'].includes(action)) {
     const id = requirePositional(positionals, 1, 'Harness ID is required.');
     const current = await client.request(`/api/harnesses/${encodeURIComponent(id)}`);
     const result = await client.request(`/api/harnesses/${encodeURIComponent(id)}/${action}`, {
@@ -856,7 +971,7 @@ async function runHarness(client, positionals, options, json) {
     if (action === 'test' && !result.test.passed) return 2;
     return 0;
   }
-  throw new Error('Harness action must be list, show, create, update, test, activate, or disable.');
+  throw new Error('Harness action must be list, show, create, update, test, activate, disable, or archive.');
 }
 
 async function runSkill(client, positionals, options, json) {
@@ -872,7 +987,7 @@ async function runSkill(client, positionals, options, json) {
     printValue(result.skill, { json: true });
     return 0;
   }
-  if (action === 'activate' || action === 'disable') {
+  if (action === 'activate' || action === 'disable' || action === 'archive') {
     const current = await client.request(`/api/skills/${encodeURIComponent(id)}`);
     const result = await client.request(`/api/skills/${encodeURIComponent(id)}/${action}`, {
       method: 'POST', body: { expectedVersion: current.skill.version },
@@ -880,11 +995,26 @@ async function runSkill(client, positionals, options, json) {
     printValue(result.skill, { json: true });
     return 0;
   }
-  throw new Error('Skill action must be list, show, activate, or disable.');
+  throw new Error('Skill action must be list, show, activate, disable, or archive.');
 }
 
 async function runLearning(client, positionals, options, json) {
   const action = positionals[0];
+  if (action === 'audit') {
+    const result = await client.request('/api/learning/audit');
+    if (json) printValue(result, { json: true });
+    else printLearningAudit(result.audit);
+    return 0;
+  }
+  if (action === 'apply-cleanup') {
+    const result = await client.request('/api/learning/audit/apply-cleanup', { method: 'POST', body: {} });
+    if (json) printValue(result, { json: true });
+    else {
+      printValue(`Applied ${result.applied.length} cleanup action(s).`);
+      printLearningAudit(result.audit);
+    }
+    return 0;
+  }
   if (action === 'craft') {
     const type = String(requireOption(options, 'type')).toUpperCase();
     const failureCaseIds = repeatedOption(options, 'failure');
@@ -914,7 +1044,15 @@ async function runLearning(client, positionals, options, json) {
     else printTask(result.task, users, { json: false });
     return 0;
   }
-  throw new Error('Learning action must be craft or apply.');
+  throw new Error('Learning action must be audit, apply-cleanup, craft, or apply.');
+}
+
+function printLearningAudit(audit) {
+  const rows = [...(audit.harnesses || []), ...(audit.skills || [])];
+  printValue(`Learning audit: keep ${audit.summary.keep}, conditional ${audit.summary.conditional}, cleanup ${audit.summary.cleanup}, archive actions ${audit.summary.archiveActions || 0}`);
+  for (const item of rows.filter((row) => row.category !== 'KEEP')) {
+    printValue(`- ${item.category} ${item.type} ${item.id}: ${item.action} (${item.reasons[0]})`);
+  }
 }
 
 async function listFailures(client, options, json) {
