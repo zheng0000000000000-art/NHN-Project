@@ -1616,7 +1616,7 @@ function renderActions(task) {
   if (!task.archived && task.status !== 'DONE' && participant) actions.push(actionButton(task, 'dispatch-command', 'CLI 명령'));
   if (task.status === 'DONE' && participant && !task.archived) actions.push(actionButton(task, 'archive', '아카이브'));
   if (task.archived && participant) actions.push(actionButton(task, 'unarchive', '복원', 'primary'));
-  if ((task.creatorUserId === state.user.id || admin) && (task.status === 'DONE' || task.archived)) actions.push(actionButton(task, 'delete', '삭제', 'danger'));
+  if (task.creatorUserId === state.user.id || admin) actions.push(actionButton(task, 'delete', '삭제', 'danger'));
   return actions.join('');
 }
 
