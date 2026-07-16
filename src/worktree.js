@@ -66,6 +66,24 @@ export async function listTaskWorktrees(repoRoot) {
   return entries.filter((entry) => entry.path.includes(WORKTREE_DIRNAME) || entry.path.includes(marker));
 }
 
+// Land a task's verified worktree changes into the repo's current branch: commit the
+// working-tree changes onto task/<id>, merge (no-ff) into the main branch, then remove
+// the worktree. Throws on merge conflict (caller reports; a human merges manually).
+export async function mergeTaskWorktree(repoRoot, taskId, { message } = {}) {
+  const branch = worktreeBranch(taskId);
+  const dir = worktreePath(repoRoot, taskId);
+  const commitMsg = message || `team-loop: land ${branch}`;
+  await git(['add', '-A'], dir);
+  const status = await git(['status', '--porcelain'], dir);
+  if (status.trim()) {
+    await git(['-c', 'user.email=team-loop@local', '-c', 'user.name=team-loop', 'commit', '-m', commitMsg], dir);
+  }
+  await git(['merge', '--no-ff', branch, '-m', `Merge ${branch}`], repoRoot);
+  const head = (await git(['rev-parse', 'HEAD'], repoRoot)).trim();
+  await removeTaskWorktree(repoRoot, taskId).catch(() => {});
+  return { merged: true, branch, commit: head };
+}
+
 function sanitizeTaskId(taskId) {
   const clean = String(taskId ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '');
   if (!clean) throw new Error('Task id is required for a worktree.');

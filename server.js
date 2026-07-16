@@ -15,7 +15,7 @@ import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
 import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
-import { worktreePath } from './src/worktree.js';
+import { mergeTaskWorktree, worktreePath } from './src/worktree.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
@@ -672,7 +672,20 @@ async function handleApi(request, response) {
           : null;
       }
     });
-    sendJson(response, 200, { task });
+    let merge = null;
+    if (decision === 'APPROVE' && task.status === 'DONE') {
+      const wt = worktreePath(workspaceRoot, taskId);
+      if (existsSync(wt)) {
+        try {
+          merge = await mergeTaskWorktree(workspaceRoot, taskId, { message: task.title });
+          await store.recordAudit(actor.id, 'TASK_MERGED', { taskId, commit: merge.commit, branch: merge.branch });
+        } catch (error) {
+          merge = { merged: false, error: error.message };
+          await store.recordAudit(actor.id, 'TASK_MERGE_FAILED', { taskId, error: error.message });
+        }
+      }
+    }
+    sendJson(response, 200, { task, merge });
     return;
   }
 
