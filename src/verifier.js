@@ -58,6 +58,7 @@ export class Verifier {
       : (await this.#config()).profiles[task.verificationProfile];
     if (!profile) throw new HttpError(400, `Verification profile not found: ${task.verificationProfile}`);
     if (!await this.#isGitRepository(verifyRoot)) throw new HttpError(409, 'Verification root must be a Git repository for scope verification.');
+    await sandboxPreflight(profile.commands);
 
     const startedAt = nowIso();
     const checks = [];
@@ -136,6 +137,24 @@ export class Verifier {
   }
 }
 
+
+// Fail-closed: if the sandbox is required (a code-executing command will be wrapped) but
+// the backend (Docker) is not reachable, refuse the verification with a clear error
+// instead of silently running unsandboxed on the host.
+export async function sandboxPreflight(commands, spawnProcess = runProcess) {
+  const mode = process.env.TEAM_LOOP_SANDBOX;
+  if (!mode || mode === 'off') return;
+  const skip = (process.env.TEAM_LOOP_SANDBOX_SKIP || 'git').split(',').map((s) => s.trim()).filter(Boolean);
+  const willSandbox = (commands ?? []).some((command) => !skip.includes(command.file));
+  if (!willSandbox) return; // only trusted (host-run) commands: no sandbox needed
+  if (mode === 'docker') {
+    const bin = process.env.TEAM_LOOP_DOCKER_BIN || 'docker';
+    const probe = await spawnProcess({ file: bin, args: ['version', '--format', '{{.Server.Version}}'], cwd: process.cwd(), expectedExit: 0, timeoutMs: 10_000 });
+    if (!probe.passed) {
+      throw new HttpError(503, 'Verification requires the Docker sandbox but Docker is not available. Start Docker and retry (or unset TEAM_LOOP_SANDBOX).');
+    }
+  }
+}
 
 export function sandboxWrap(file, args, root, cwd) {
   const mode = process.env.TEAM_LOOP_SANDBOX;

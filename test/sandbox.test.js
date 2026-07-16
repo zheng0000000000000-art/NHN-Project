@@ -59,3 +59,32 @@ test('sandboxWrap runs trusted tools (git) on the host even when the sandbox is 
     delete process.env.TEAM_LOOP_SANDBOX;
   }
 });
+
+import { sandboxPreflight } from '../src/verifier.js';
+
+test('sandboxPreflight is a no-op when the sandbox is off', async () => {
+  delete process.env.TEAM_LOOP_SANDBOX;
+  await sandboxPreflight([{ file: 'node', args: ['--test'] }], async () => ({ passed: false }));
+});
+
+test('sandboxPreflight skips the docker check when only host-run tools (git) are used', async () => {
+  process.env.TEAM_LOOP_SANDBOX = 'docker';
+  try {
+    // git runs on the host, so no sandbox backend is needed even if docker is down
+    await sandboxPreflight([{ file: 'git', args: ['diff', '--check'] }], async () => ({ passed: false }));
+  } finally {
+    delete process.env.TEAM_LOOP_SANDBOX;
+  }
+});
+
+test('sandboxPreflight fails CLOSED when a code command needs the sandbox but docker is unavailable', async () => {
+  process.env.TEAM_LOOP_SANDBOX = 'docker';
+  try {
+    await assert.rejects(
+      () => sandboxPreflight([{ file: 'node', args: ['--test'] }], async () => ({ passed: false })),
+      /Docker sandbox|not available/,
+    );
+  } finally {
+    delete process.env.TEAM_LOOP_SANDBOX;
+  }
+});
