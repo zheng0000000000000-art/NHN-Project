@@ -244,6 +244,78 @@ function executorPreview(tool, model, { workspace, permission, sandbox }) {
   return `claude -p <prompt> --permission-mode ${permission || 'acceptEdits'}${model ? ` --model ${model}` : ''}`;
 }
 
+async function autoLearnFromFailures(client, taskId, failureCases, { json }) {
+  const failureCaseIds = (failureCases || []).map((failure) => failure.id).filter(Boolean);
+  if (!failureCaseIds.length) return null;
+  try {
+    const crafted = await client.request('/api/learning/auto-craft', {
+      method: 'POST',
+      body: { taskId, failureCaseIds },
+    });
+    if (crafted.type === 'SKILL' && crafted.skill?.id) {
+      const current = await client.request(`/api/skills/${encodeURIComponent(crafted.skill.id)}`);
+      const activated = await client.request(`/api/skills/${encodeURIComponent(crafted.skill.id)}/activate`, {
+        method: 'POST',
+        body: { expectedVersion: current.skill.version },
+      });
+      const task = findTask((await client.request('/api/bootstrap')).tasks, taskId);
+      await client.request(`/api/tasks/${encodeURIComponent(task.id)}/apply-learning`, {
+        method: 'POST',
+        body: { expectedVersion: task.version, skillIds: [activated.skill.id] },
+      });
+      if (!json) process.stdout.write(`Auto-learned skill ${activated.skill.id} and applied it to ${task.id}.\n`);
+      return { type: 'SKILL', id: activated.skill.id, status: 'ACTIVE_APPLIED', sourceFailureCaseIds: failureCaseIds };
+    }
+    if (crafted.type === 'HARNESS' && crafted.harness?.id) {
+      if (!json) process.stdout.write(`Auto-learned draft harness ${crafted.harness.id}; it will be tested after the task passes.\n`);
+      return { type: 'HARNESS', id: crafted.harness.id, status: 'DRAFT', sourceFailureCaseIds: failureCaseIds };
+    }
+  } catch (error) {
+    if (!json) process.stdout.write(`Auto-learning skipped: ${error.message}\n`);
+  }
+  return null;
+}
+
+async function activatePassingHarnesses(client, taskId, learnedArtifacts, { json }) {
+  for (const artifact of learnedArtifacts) {
+    if (artifact.type !== 'HARNESS' || artifact.status !== 'DRAFT') continue;
+    try {
+      const test = await client.request(`/api/harnesses/${encodeURIComponent(artifact.id)}/test`, {
+        method: 'POST',
+        body: {},
+      });
+      if (!test.test?.passed) {
+        if (!json) process.stdout.write(`Auto-learned harness ${artifact.id} did not pass its own test; leaving it as draft.\n`);
+        artifact.status = 'DRAFT_TEST_FAILED';
+        continue;
+      }
+      const activated = await client.request(`/api/harnesses/${encodeURIComponent(artifact.id)}/activate`, {
+        method: 'POST',
+        body: { expectedVersion: test.harness.version },
+      });
+      artifact.status = 'ACTIVE';
+      const task = findTask((await client.request('/api/bootstrap')).tasks, taskId);
+      await client.request(`/api/tasks/${encodeURIComponent(task.id)}/apply-learning`, {
+        method: 'POST',
+        body: { expectedVersion: task.version, harnessId: activated.harness.id },
+      });
+      const applied = findTask((await client.request('/api/bootstrap')).tasks, taskId);
+      const verifyResult = await client.request(`/api/tasks/${encodeURIComponent(applied.id)}/verify`, {
+        method: 'POST',
+        body: { expectedVersion: applied.version },
+      });
+      artifact.status = verifyResult.task.verification?.passed ? 'ACTIVE_APPLIED' : 'ACTIVE_APPLIED_VERIFY_FAILED';
+      if (!json) process.stdout.write(`Auto-learned harness ${artifact.id} activated, applied, and re-verified.\n`);
+      return { reverified: true, verifyResult };
+    } catch (error) {
+      artifact.status = 'ACTIVATION_SKIPPED';
+      artifact.error = error.message;
+      if (!json) process.stdout.write(`Auto-learned harness ${artifact.id} activation skipped: ${error.message}\n`);
+    }
+  }
+  return { reverified: false, verifyResult: null };
+}
+
 // Dispatch: hand an existing board task to a CLI executor that actually does the work,
 // then verify. Dry-run by default; --execute really runs the agent in WORKSPACE_ROOT.
 async function runDispatch(client, positionals, options, json) {

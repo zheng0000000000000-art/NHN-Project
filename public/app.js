@@ -439,6 +439,14 @@ document.querySelector('#task-form').addEventListener('submit', async (event) =>
   body.allowedPaths = lines(body.allowedPaths);
   body.acceptanceCriteria = lines(body.acceptanceCriteria);
   body.priority = Number(body.priority || 100);
+  body.schedule = {
+    plannedStart: body.plannedStart || '',
+    plannedEnd: body.plannedEnd || '',
+    note: body.scheduleNote || '',
+  };
+  delete body.plannedStart;
+  delete body.plannedEnd;
+  delete body.scheduleNote;
   try {
     await api('/api/tasks', { method: 'POST', body });
     resetTaskForm(event.currentTarget);
@@ -655,6 +663,9 @@ function resetTaskForm(form) {
   form.reset();
   form.elements.priority.value = '100';
   form.elements.allowedPaths.value = '**';
+  form.elements.plannedStart.value = '';
+  form.elements.plannedEnd.value = '';
+  form.elements.scheduleNote.value = '';
   populateTaskForm();
 }
 
@@ -1612,7 +1623,7 @@ function renderActions(task) {
 async function copyDispatchCommand(task) {
   const executor = task.executor?.tool || 'codex';
   const model = task.executor?.model ? ` --model ${shellArg(task.executor.model)}` : '';
-  const command = `team-loop --server ${shellArg(window.location.origin)} dispatch ${shellArg(task.id)} --executor ${shellArg(executor)}${model} --execute --retry 3 --to review`;
+  const command = `team-loop --server ${shellArg(window.location.origin)} dispatch ${shellArg(task.id)} --executor ${shellArg(executor)}${model} --execute --retry 3 --auto-learn --to review`;
   try {
     await navigator.clipboard.writeText(command);
     showToast('CLI 실행 명령을 복사했습니다.');

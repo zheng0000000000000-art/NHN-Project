@@ -82,14 +82,16 @@ A member may:
 - Press `회의록 저장` to turn recent chat into WIKI meeting notes.
 - View WIKI context, project history, meeting notes, and archived cases.
 - Apply active harnesses/skills only to tasks where they are creator, assignee, or reviewer.
+- Run CLI dispatch with `--auto-learn` so failures from their assigned `IN_PROGRESS` task can produce failure-derived harnesses or skills.
+- Test and activate failure-derived harnesses/skills that they created through their own auto-learning loop.
 - Push their own external CLI usage snapshots.
 
 A member may not:
 
-- Create, update, test, activate, or disable harnesses.
-- Activate or disable skills.
-- Craft new learning artifacts from cases.
-- Use AI auto-craft for harness/skill creation.
+- Create, update, or disable arbitrary harnesses.
+- Activate or disable arbitrary skills.
+- Craft new learning artifacts from unrelated cases or other members' tasks.
+- Use AI auto-craft outside their own assigned `IN_PROGRESS` task.
 - Promote failure cases to fixture candidates.
 - Perform admin-only user or registry maintenance.
 - Review their own task unless the server is explicitly running with `SOLO_MODE=true`.

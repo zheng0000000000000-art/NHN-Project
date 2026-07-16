@@ -147,6 +147,7 @@ export class Store {
         allowedPaths,
         acceptanceCriteria: this.#normalizeList(input.acceptanceCriteria, 10, 1000),
         verificationProfile,
+        schedule: normalizeTaskSchedule(input.schedule),
         skillIds,
         learning: {
           applications: skillIds.length || defaultProfile
@@ -257,4 +258,26 @@ export class Store {
     this.lock = result.catch(() => {});
     return result;
   }
+}
+
+function normalizeTaskSchedule(input = {}) {
+  const plannedStart = normalizeDateOnly(input?.plannedStart);
+  const plannedEnd = normalizeDateOnly(input?.plannedEnd);
+  if (plannedStart && plannedEnd && plannedStart > plannedEnd) {
+    throw new HttpError(400, 'Schedule start must be on or before the deadline.');
+  }
+  return {
+    plannedStart,
+    plannedEnd,
+    note: String(input?.note ?? '').trim().slice(0, 1000),
+  };
+}
+
+function normalizeDateOnly(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(Date.parse(`${text}T00:00:00.000Z`))) {
+    throw new HttpError(400, 'Schedule dates must use YYYY-MM-DD.');
+  }
+  return text;
 }

@@ -281,9 +281,15 @@ async function handleApi(request, response) {
       return;
     }
     if (method === 'POST' && harnessAction) {
-      requireAdmin(actor);
       const body = await readBody(request);
       assertPlainObject(body);
+      if (harnessAction === 'test' || harnessAction === 'activate') {
+        const harness = await harnessRegistry.get(harnessId);
+        if (!harness) throw new HttpError(404, 'Harness not found.');
+        requireAdminOrFailureDerivedOwner(actor, harness);
+      } else {
+        requireAdmin(actor);
+      }
       if (harnessAction === 'update') {
         const harness = await harnessRegistry.update(harnessId, actor, body.expectedVersion, body);
         await store.recordAudit(actor.id, 'HARNESS_UPDATED', { harnessId, version: harness.version, definitionSha256: harness.definitionSha256 });
@@ -321,9 +327,12 @@ async function handleApi(request, response) {
       return;
     }
     if (method === 'POST' && skillAction) {
-      requireAdmin(actor);
       const body = await readBody(request);
       assertPlainObject(body);
+      const current = await skillRegistry.get(skillId);
+      if (!current) throw new HttpError(404, 'Skill not found.');
+      if (skillAction === 'activate') requireAdminOrFailureDerivedOwner(actor, current);
+      else requireAdmin(actor);
       const status = skillAction === 'activate' ? 'ACTIVE' : 'DISABLED';
       const skill = await skillRegistry.setStatus(skillId, actor.id, body.expectedVersion, status);
       if (status === 'ACTIVE') await resolveArtifactCases(actor, skill, 'SKILL');
@@ -349,10 +358,10 @@ async function handleApi(request, response) {
   }
 
   if (method === 'POST' && url.pathname === '/api/learning/auto-craft') {
-    requireAdmin(actor);
     const body = await readBody(request);
     assertPlainObject(body);
     const cases = await selectedFailureCases(body.failureCaseIds);
+    await requireAutoLearningAccess(actor, body.taskId, cases);
     const context = await projectContext.get();
     const plan = await planLearningArtifact({ cases, context });
     const result = await learning.craft(actor, { ...plan, failureCaseIds: cases.map((item) => item.id) });
@@ -911,6 +920,26 @@ function requireAdmin(actor) {
   if (actor.role !== 'admin') throw new HttpError(403, 'Administrator access is required.');
 }
 
+function requireAdminOrFailureDerivedOwner(actor, artifact) {
+  if (actor.role === 'admin') return;
+  if (artifact?.source === 'FAILURE_DERIVED' && artifact.createdByUserId === actor.id) return;
+  throw new HttpError(403, 'Administrator access or failure-derived artifact ownership is required.');
+}
+
+async function requireAutoLearningAccess(actor, taskId, cases) {
+  if (actor.role === 'admin') return;
+  const normalizedTaskId = String(taskId ?? '').trim();
+  if (!normalizedTaskId) throw new HttpError(400, 'taskId is required for member auto-learning.');
+  const task = await store.getTask(normalizedTaskId);
+  if (!task) throw new HttpError(404, 'Task not found.');
+  requireAssigneeOrAdmin(task, actor);
+  if (task.status !== 'IN_PROGRESS') throw new HttpError(409, 'Auto-learning requires an IN_PROGRESS task.');
+  const unrelated = cases.filter((item) => !(item.taskIds || []).includes(task.id));
+  if (unrelated.length) {
+    throw new HttpError(403, 'Members can auto-learn only from failure cases produced by their assigned task.');
+  }
+}
+
 function requireAssigneeOrAdmin(task, actor) {
   if (task.assigneeUserId !== actor.id && actor.role !== 'admin') throw new HttpError(403, 'Only the assignee can do this.');
 }
@@ -1068,9 +1097,14 @@ function fallbackDiscussionMemory(messages = []) {
 }
 
 function normalizeTaskSchedule(input = {}) {
+  const plannedStart = normalizeDateOnly(input.plannedStart);
+  const plannedEnd = normalizeDateOnly(input.plannedEnd);
+  if (plannedStart && plannedEnd && plannedStart > plannedEnd) {
+    throw new HttpError(400, 'Schedule start must be on or before the deadline.');
+  }
   return {
-    plannedStart: normalizeDateOnly(input.plannedStart),
-    plannedEnd: normalizeDateOnly(input.plannedEnd),
+    plannedStart,
+    plannedEnd,
     note: String(input.note ?? '').trim().slice(0, 1000),
   };
 }
