@@ -677,7 +677,11 @@ async function handleApi(request, response) {
       const wt = worktreePath(workspaceRoot, taskId);
       if (existsSync(wt)) {
         try {
-          merge = await mergeTaskWorktree(workspaceRoot, taskId, { message: task.title });
+          const executorLabel = task.executor?.tool ? (task.executor.model ? `${task.executor.tool}/${task.executor.model}` : task.executor.tool) : null;
+          merge = await mergeTaskWorktree(workspaceRoot, taskId, {
+            message: task.title,
+            trailers: { 'Team-Loop-Task': taskId, Executor: executorLabel, 'Reviewed-By': actor.name || actor.id },
+          });
           await store.recordAudit(actor.id, 'TASK_MERGED', { taskId, commit: merge.commit, branch: merge.branch });
         } catch (error) {
           merge = { merged: false, error: error.message };

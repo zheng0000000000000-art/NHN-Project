@@ -69,16 +69,19 @@ export async function listTaskWorktrees(repoRoot) {
 // Land a task's verified worktree changes into the repo's current branch: commit the
 // working-tree changes onto task/<id>, merge (no-ff) into the main branch, then remove
 // the worktree. Throws on merge conflict (caller reports; a human merges manually).
-export async function mergeTaskWorktree(repoRoot, taskId, { message } = {}) {
+export async function mergeTaskWorktree(repoRoot, taskId, { message, trailers } = {}) {
   const branch = worktreeBranch(taskId);
   const dir = worktreePath(repoRoot, taskId);
-  const commitMsg = message || `team-loop: land ${branch}`;
+  const subject = message || `team-loop: land ${branch}`;
+  const trailerLines = Object.entries(trailers || {}).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`);
+  const commitMsg = trailerLines.length ? `${subject}\n\n${trailerLines.join('\n')}` : subject;
   await git(['add', '-A'], dir);
   const status = await git(['status', '--porcelain'], dir);
   if (status.trim()) {
     await git(['-c', 'user.email=team-loop@local', '-c', 'user.name=team-loop', 'commit', '-m', commitMsg], dir);
   }
-  await git(['merge', '--no-ff', branch, '-m', `Merge ${branch}`], repoRoot);
+  const mergeMsg = trailerLines.length ? `Merge ${branch}\n\n${trailerLines.join('\n')}` : `Merge ${branch}`;
+  await git(['merge', '--no-ff', branch, '-m', mergeMsg], repoRoot);
   const head = (await git(['rev-parse', 'HEAD'], repoRoot)).trim();
   await removeTaskWorktree(repoRoot, taskId).catch(() => {});
   return { merged: true, branch, commit: head };
