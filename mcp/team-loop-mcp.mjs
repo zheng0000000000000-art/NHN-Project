@@ -12,6 +12,7 @@
 import readline from 'node:readline';
 import { CliClient } from '../src/cli/client.js';
 import { loadSession, normalizeServer } from '../src/cli/session.js';
+import { createTaskWorktree, removeTaskWorktree } from '../src/worktree.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'team-loop', version: '0.7.0' };
@@ -122,7 +123,22 @@ const TOOLS = {
     inputSchema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
     async run(client, args) { return (await client.request('/api/project-context', { method: 'PUT', body: { content: String(args.content ?? '') } })).projectContext; },
   },
-};
+  create_worktree: {
+    description: 'Create an isolated git worktree for a task. Edit only inside it; verify_task then checks it. Physical isolation from other agents.',
+    inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, base: { type: 'string' } }, required: ['taskId'] },
+    async run(client, args) {
+      const b = await client.request('/api/bootstrap');
+      return createTaskWorktree(b.workspace?.root || process.cwd(), args.taskId, { base: args.base || 'HEAD' });
+    },
+  },
+  remove_worktree: {
+    description: 'Remove a task worktree checkout (the task/<id> branch stays in the repo).',
+    inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] },
+    async run(client, args) {
+      const b = await client.request('/api/bootstrap');
+      return removeTaskWorktree(b.workspace?.root || process.cwd(), args.taskId);
+    },
+  },};
 
 function toolList() {
   return Object.entries(TOOLS).map(([name, def]) => ({ name, description: def.description, inputSchema: def.inputSchema }));
