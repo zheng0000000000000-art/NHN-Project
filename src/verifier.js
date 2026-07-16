@@ -30,28 +30,34 @@ export class Verifier {
     }]));
   }
 
-  async run(task) {
-    return this.withWorkspaceLock(() => this.runLocked(task));
+  // `root` lets a task be verified inside its own git worktree (verify-in-worktree),
+  // so an agent's isolated edits are actually checked. Defaults to the shared workspace.
+  async run(task, { root } = {}) {
+    const verifyRoot = root ? path.resolve(root) : this.workspaceRoot;
+    return this.withWorkspaceLock(verifyRoot, () => this.runLocked(task, verifyRoot));
   }
 
-  async withWorkspaceLock(work) {
-    if (ACTIVE_WORKSPACES.has(this.workspaceRoot)) {
+  async withWorkspaceLock(rootOrWork, maybeWork) {
+    const [root, work] = typeof rootOrWork === 'function' ? [this.workspaceRoot, rootOrWork] : [rootOrWork, maybeWork];
+    const key = root ? path.resolve(root) : this.workspaceRoot;
+    if (ACTIVE_WORKSPACES.has(key)) {
       throw new HttpError(409, 'Another verification is already running.');
     }
-    ACTIVE_WORKSPACES.add(this.workspaceRoot);
+    ACTIVE_WORKSPACES.add(key);
     try {
       return await work();
     } finally {
-      ACTIVE_WORKSPACES.delete(this.workspaceRoot);
+      ACTIVE_WORKSPACES.delete(key);
     }
   }
 
-  async runLocked(task) {
+  async runLocked(task, root = this.workspaceRoot) {
+    const verifyRoot = path.resolve(root);
     const profile = this.harnessRegistry
       ? await this.harnessRegistry.resolveActive(task.verificationProfile)
       : (await this.#config()).profiles[task.verificationProfile];
     if (!profile) throw new HttpError(400, `Verification profile not found: ${task.verificationProfile}`);
-    if (!await this.#isGitRepository()) throw new HttpError(409, 'WORKSPACE_ROOT must be a Git repository for scope verification.');
+    if (!await this.#isGitRepository(verifyRoot)) throw new HttpError(409, 'Verification root must be a Git repository for scope verification.');
 
     const startedAt = nowIso();
     const checks = [];
@@ -59,15 +65,15 @@ export class Verifier {
       checks.push(await runProcess({
         file: command.file,
         args: command.args ?? [],
-        cwd: resolveCommandCwd(this.workspaceRoot, command.cwd ?? '.'),
+        cwd: resolveCommandCwd(verifyRoot, command.cwd ?? '.'),
         expectedExit: Number.isInteger(command.expectedExit) ? command.expectedExit : 0,
         timeoutMs: Number.isFinite(command.timeoutMs) ? command.timeoutMs : 120_000,
       }));
     }
 
-    const changedPaths = await this.changedPaths();
+    const changedPaths = await this.changedPaths(verifyRoot);
     const scopeViolations = changedPaths.filter((changedPath) => !task.allowedPaths.some((pattern) => globMatch(pattern, changedPath)));
-    const fingerprint = await this.workspaceFingerprint(changedPaths);
+    const fingerprint = await this.workspaceFingerprint(changedPaths, verifyRoot);
     const commandPass = checks.every((check) => check.passed);
     const passed = commandPass && scopeViolations.length === 0;
 
@@ -80,23 +86,24 @@ export class Verifier {
       changedPaths,
       scopeViolations,
       workspaceFingerprint: fingerprint,
+      verifyRoot,
       passed,
     };
   }
 
-  async changedPaths() {
-    const tracked = await gitLines(this.workspaceRoot, ['diff', '--name-only', '--diff-filter=ACDMRTUXB', 'HEAD']);
-    const staged = await gitLines(this.workspaceRoot, ['diff', '--cached', '--name-only', '--diff-filter=ACDMRTUXB', 'HEAD']);
-    const untracked = await gitLines(this.workspaceRoot, ['ls-files', '--others', '--exclude-standard']);
+  async changedPaths(root = this.workspaceRoot) {
+    const tracked = await gitLines(root, ['diff', '--name-only', '--diff-filter=ACDMRTUXB', 'HEAD']);
+    const staged = await gitLines(root, ['diff', '--cached', '--name-only', '--diff-filter=ACDMRTUXB', 'HEAD']);
+    const untracked = await gitLines(root, ['ls-files', '--others', '--exclude-standard']);
     return [...new Set([...tracked, ...staged, ...untracked].map(normalizeRelativePath).filter(Boolean))].sort();
   }
 
-  async workspaceFingerprint(paths = null) {
-    const changedPaths = paths ?? await this.changedPaths();
-    const head = (await gitCapture(this.workspaceRoot, ['rev-parse', 'HEAD'])).stdout.trim();
+  async workspaceFingerprint(paths = null, root = this.workspaceRoot) {
+    const changedPaths = paths ?? await this.changedPaths(root);
+    const head = (await gitCapture(root, ['rev-parse', 'HEAD'])).stdout.trim();
     const entries = [];
     for (const relativePath of changedPaths) {
-      const fullPath = path.join(this.workspaceRoot, relativePath);
+      const fullPath = path.join(root, relativePath);
       try {
         const fileStat = await stat(fullPath);
         if (fileStat.isDirectory()) continue;
@@ -109,9 +116,10 @@ export class Verifier {
     return sha256(JSON.stringify({ head, entries }));
   }
 
-  async fingerprintMatches(verification) {
+  async fingerprintMatches(verification, root = null) {
     if (!verification?.workspaceFingerprint) return false;
-    return verification.workspaceFingerprint === await this.workspaceFingerprint();
+    const verifyRoot = root ? path.resolve(root) : (verification.verifyRoot ? path.resolve(verification.verifyRoot) : this.workspaceRoot);
+    return verification.workspaceFingerprint === await this.workspaceFingerprint(null, verifyRoot);
   }
 
   async #config() {
@@ -120,8 +128,8 @@ export class Verifier {
     return config;
   }
 
-  async #isGitRepository() {
-    const result = await gitCapture(this.workspaceRoot, ['rev-parse', '--is-inside-work-tree'], 15_000, false);
+  async #isGitRepository(root = this.workspaceRoot) {
+    const result = await gitCapture(root, ['rev-parse', '--is-inside-work-tree'], 15_000, false);
     return result.actualExit === 0 && result.stdout.trim() === 'true';
   }
 }

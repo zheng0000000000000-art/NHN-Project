@@ -13,7 +13,9 @@ import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
 import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
+import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
+import { worktreePath } from './src/worktree.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
@@ -576,7 +578,9 @@ async function handleApi(request, response) {
   }
 
   if (action === 'verify') {
-    await verifier.withWorkspaceLock(async () => {
+    const worktree = worktreePath(workspaceRoot, taskId);
+    const verifyRoot = existsSync(worktree) ? worktree : workspaceRoot;
+    await verifier.withWorkspaceLock(verifyRoot, async () => {
       const runningTask = await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_STARTED', async (next) => {
         requireAssigneeOrAdmin(next, actor);
         if (next.status !== 'IN_PROGRESS') throw new HttpError(409, 'Verification requires an IN_PROGRESS task.');
@@ -590,7 +594,7 @@ async function handleApi(request, response) {
 
       let verification;
       try {
-        verification = await verifier.runLocked(runningTask);
+        verification = await verifier.runLocked(runningTask, verifyRoot);
       } catch (error) {
         verification = {
           status: 'ERROR',
