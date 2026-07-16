@@ -129,6 +129,10 @@ export class Store {
       : input.verificationProfile;
     const verificationProfile = String(requestedProfile);
     if (!profileNames.includes(verificationProfile)) throw new HttpError(400, 'Unknown verification profile.');
+    const memberSafeProfiles = (process.env.MEMBER_SAFE_PROFILES || 'repository-basic').split(',').map((p) => p.trim()).filter(Boolean);
+    if (actor.role !== 'admin' && !memberSafeProfiles.includes(verificationProfile)) {
+      throw new HttpError(403, `Members may only use safe verification profiles (${memberSafeProfiles.join(', ')}); code-executing profiles like node --test require an admin.`);
+    }
     const allowedPaths = this.#normalizePaths(input.allowedPaths);
     if (allowedPaths.length === 0) throw new HttpError(400, 'At least one allowed path is required. Use ** to allow the whole workspace.');
     const skillIds = this.#normalizeSkillIds(input.skillIds ?? autoSkillIds);
