@@ -2,13 +2,23 @@ import { parseCliArgs, option, requireOption, listOption, repeatedOption } from 
 import { CliClient } from './client.js';
 import { botHome, clearSession, loadConfig, loadSession, loadSessionFrom, normalizeServer, saveConfig, saveSession } from './session.js';
 import { mergeCliExecutor } from '../executor.js';
-import { createTaskWorktree, removeTaskWorktree, listTaskWorktrees } from '../worktree.js';
+import { commitTaskWorktree, createTaskWorktree, mergePreparedWorktree, mergeTaskWorktree, removeTaskWorktree, listTaskWorktrees, worktreePath } from '../worktree.js';
 import { printFailures, printHarnesses, printTask, printTasks, printUsers, printValue } from './format.js';
-import { readFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { readPassword } from './password.js';
 import { captureClaudeStatusline, collectUsageSnapshots, commitUsageCursor } from './usage-collector.js';
 import { startOtelReceiver } from './otel-receiver.js';
+import { Verifier, globMatch } from '../verifier.js';
+import { RunArtifactService, normalizeRunDocument } from '../run-artifacts.js';
+import { auditSkills, buildSkillPolicy } from '../skill-policy.js';
+import { ScopeLeaseService } from '../scope-leases.js';
+import { RunLedger } from '../run-ledger.js';
+import { initializeProject, loadProjectConfig } from '../project-setup.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const TEAM_LOOP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 export async function runCli(argv) {
   const { positionals, options } = parseCliArgs(argv);
@@ -24,6 +34,9 @@ export async function runCli(argv) {
     return 0;
   }
   if (command === 'serve') return serve(options);
+  if (command === 'init') return initProject(options, json);
+  if (command === 'work') return workProject(positionals.slice(1), options, json);
+  if (command === 'run') return runArtifact(positionals.slice(1), options, json);
 
   const saved = await loadSession();
   const server = normalizeServer(option(options, 'server', process.env.TEAM_LOOP_URL || saved?.server));
@@ -101,6 +114,240 @@ export async function runCli(argv) {
   if (command === 'worktree') return runWorktree(client, positionals.slice(1), options, json);
 
   throw new Error(`Unknown command: ${command}. Run "team-loop help".`);
+}
+
+async function runArtifact(args, options, json) {
+  const action = args[0];
+  const workspaceRoot = path.resolve(option(options, 'workspace', process.cwd()));
+  const scopeLeases = new ScopeLeaseService({ workspaceRoot });
+  const runLedger = new RunLedger({ workspaceRoot });
+  if (action === 'draft') {
+    const id = args[1];
+    if (!id) throw new Error('Run id is required.');
+    const verifier = createRunVerifier(workspaceRoot);
+    const hinted = listOption(options, 'allowed-path');
+    const actual = (await verifier.changedPaths()).filter((item) => !item.startsWith('.team-loop/') && !item.startsWith('.team-loop-worktrees/'));
+    const writeScope = hinted.length ? hinted : actual;
+    const paths = hinted.length ? actual.filter((item) => hinted.some((pattern) => globMatch(pattern, item))) : actual;
+    if (!writeScope.length) throw new Error('No changed paths found. Provide --allowed-path.');
+    const document = normalizeRunDocument({
+      id, title: option(options, 'title', id), summary: option(options, 'summary', ''), objective: option(options, 'objective', ''), audience: option(options, 'audience', ''), mode: option(options, 'mode', 'AUTO'), agent: option(options, 'owner', ''),
+      changes: paths.map((item) => ({ path: item, summary: '' })), writeScope,
+      readScope: listOption(options, 'read-scope'), interfaces: listOption(options, 'interfaces'),
+      sharedContracts: { terms: listOption(options, 'terms'), assumptions: listOption(options, 'assumptions'), requiredClaims: listOption(options, 'required-claims'), openQuestions: listOption(options, 'open-questions') },
+      verification: { profile: option(options, 'profile', 'repository-basic') },
+    });
+    const file = path.join(workspaceRoot, '.team-loop', 'runs', `${document.id}.json`);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    printValue({ documentPath: slash(path.relative(workspaceRoot, file)), document }, { json });
+    return 0;
+  }
+  if (action === 'sync') {
+    const file = args[1];
+    if (!file) throw new Error('Run document path is required.');
+    const absolute = path.resolve(workspaceRoot, file);
+    const document = normalizeRunDocument(JSON.parse(await readFile(absolute, 'utf8')));
+    const verifier = createRunVerifier(workspaceRoot);
+    const actual = (await verifier.changedPaths()).filter((item) => !item.startsWith('.team-loop/') && !item.startsWith('.team-loop-worktrees/'));
+    const inScope = actual.filter((item) => document.writeScope.some((pattern) => globMatch(pattern, item)));
+    const previous = new Map(document.changes.map((item) => [item.path, item.summary]));
+    document.changes = inScope.map((item) => ({ path: item, summary: previous.get(item) || 'Automatically synchronized from Git changes' }));
+    await writeFile(absolute, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+    printValue({ runId: document.id, synchronizedPaths: inScope, outsideWriteScope: actual.filter((item) => !inScope.includes(item)) }, { json });
+    return 0;
+  }
+  if (action === 'skill-stats') {
+    const file = path.join(workspaceRoot, '.team-loop', 'learning', 'skill-outcomes.jsonl');
+    let lines = [];
+    try { lines = (await readFile(file, 'utf8')).split(/\r?\n/).filter(Boolean).map(JSON.parse); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    const latestByRun = new Map(lines.map((event) => [event.runId, event]));
+    const runs = [...latestByRun.values()];
+    const rate = (items) => items.length ? items.filter((item) => item.verdict === 'PASSED').length / items.length : null;
+    const stats = {};
+    for (const event of runs) for (const id of event.skillIds || []) {
+      stats[id] ||= { runs: 0, passed: 0, failed: 0 };
+      stats[id].runs += 1; stats[id][event.verdict === 'PASSED' ? 'passed' : 'failed'] += 1;
+    }
+    printValue({ note: 'Observed correlation, not causal proof.', overallPassRate: rate(runs), skills: Object.entries(stats).map(([id, value]) => {
+      const without = runs.filter((event) => !(event.skillIds || []).includes(id));
+      const passRate = value.runs ? value.passed / value.runs : null;
+      const withoutSkillPassRate = rate(without);
+      return { id, ...value, passRate, withoutSkillRuns: without.length, withoutSkillPassRate, observedUplift: withoutSkillPassRate == null ? null : passRate - withoutSkillPassRate };
+    }).sort((a, b) => b.runs - a.runs) }, { json });
+    return 0;
+  }
+  if (action === 'execute') {
+    const file = args[1];
+    if (!file) throw new Error('Run document path is required.');
+    const document = normalizeRunDocument(JSON.parse(await readFile(path.resolve(workspaceRoot, file), 'utf8')));
+    const policy = await buildSkillPolicy({ workspaceRoot, document });
+    const tool = String(option(options, 'executor', 'codex'));
+    const model = String(option(options, 'model', ''));
+    const permission = String(option(options, 'permission', 'acceptEdits'));
+    const sandbox = String(option(options, 'sandbox', 'workspace-write'));
+    if (!options.execute) {
+      printValue({ dryRun: true, runId: document.id, isolatedWorkspace: worktreePath(workspaceRoot, document.id), writeScope: document.writeScope, interfaces: document.interfaces, enabledSkills: policy.selected.map((item) => item.id), wouldRun: executorPreview(tool, model, { workspace: worktreePath(workspaceRoot, document.id), permission, sandbox }) }, { json: true });
+      return 0;
+    }
+    const owner = String(option(options, 'owner', document.agent || process.env.USERNAME || process.env.USER || 'unknown'));
+    const scope = await scopeLeases.acquire(document, { owner, ttlMinutes: option(options, 'ttl-minutes', 120) });
+    const workspace = worktreePath(workspaceRoot, document.id);
+    try { await access(workspace); } catch { await createTaskWorktree(workspaceRoot, document.id, { base: scope.lease.baseRevision || 'HEAD' }); }
+    const prompt = buildRunPrompt(document, policy, workspace);
+    const heartbeat = setInterval(() => { scopeLeases.heartbeat(document.id, { owner, ttlMinutes: option(options, 'ttl-minutes', 120) }).catch(() => {}); }, 60_000);
+    heartbeat.unref();
+    let execution;
+    try { execution = await runExecutor(tool, prompt, { workspace, model, permission, sandbox, inherit: !json }); }
+    finally { clearInterval(heartbeat); }
+    const verifier = createRunVerifier(workspaceRoot);
+    const actualPaths = await verifier.changedPaths(workspace);
+    const inScopePaths = actualPaths.filter((item) => document.writeScope.some((pattern) => globMatch(pattern, item)));
+    if (inScopePaths.length) {
+      const summaryByPath = new Map(document.changes.map((item) => [item.path, item.summary]));
+      document.changes = inScopePaths.map((item) => ({ path: item, summary: summaryByPath.get(item) || 'Automatically recorded from isolated worktree' }));
+      await writeFile(path.resolve(workspaceRoot, file), `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+    }
+    const autoMerge = Boolean(options['auto-merge']);
+    const output = await new RunArtifactService({ workspaceRoot, verifier }).verifyFile(file, { force: Boolean(options.force), root: workspace, releaseOnPass: false, passedScopeState: autoMerge ? 'VERIFIED_PENDING_AUTO_MERGE' : 'VERIFIED_AWAITING_APPROVAL' });
+    let merge = null;
+    let prepared = null;
+    if (output.result.verdict === 'PASSED') {
+      if (autoMerge) {
+        merge = await mergeTaskWorktree(workspaceRoot, document.id, { message: `team-loop: ${document.title}`, trailers: { 'Run-Id': document.id } });
+        await runLedger.recordEvent(document.id, { type: 'LANDED', attempt: output.result.attempt, commit: merge.commit, automatic: true });
+      } else {
+        prepared = await commitTaskWorktree(workspaceRoot, document.id, { message: `team-loop: ${document.title}`, trailers: { 'Run-Id': document.id }, remove: true });
+        await runLedger.recordEvent(document.id, { type: 'VERIFIED_AWAITING_APPROVAL', attempt: output.result.attempt, commit: prepared.commit, branch: prepared.branch });
+      }
+      await scopeLeases.release(document.id, { reason: autoMerge ? 'verified worktree merged' : 'verified commit awaiting approval', owner });
+    }
+    printValue({ runId: document.id, taskId: document.taskId, attempt: output.result.attempt, executorExit: execution.code, verdict: output.result.verdict, state: merge ? 'LANDED' : prepared ? 'VERIFIED_AWAITING_APPROVAL' : 'FAILED', prepared, worktree: output.result.verdict === 'PASSED' ? null : workspace, merge, resultPath: output.resultPath }, { json });
+    return output.result.verdict === 'PASSED' ? 0 : 2;
+  }
+  if (action === 'land') {
+    const runId = args[1];
+    if (!runId) throw new Error('Run id is required.');
+    const latest = await runLedger.latest(runId);
+    if (!latest || latest.verdict !== 'PASSED') throw new Error('Only a verified run can be landed.');
+    const events = await runLedger.events(runId);
+    if (events.some((item) => item.type === 'LANDED' && item.attempt === latest.attempt)) throw new Error(`Run ${runId} attempt ${latest.attempt} is already landed.`);
+    const prepared = [...events].reverse().find((item) => item.type === 'VERIFIED_AWAITING_APPROVAL' && item.attempt === latest.attempt);
+    if (!prepared) throw new Error('Verified branch metadata is missing.');
+    const merge = await mergePreparedWorktree(workspaceRoot, runId, { trailers: { 'Run-Id': runId, 'Run-Attempt': latest.attempt } });
+    await runLedger.recordEvent(runId, { type: 'LANDED', attempt: latest.attempt, commit: merge.commit, automatic: false });
+    printValue({ runId, attempt: latest.attempt, state: 'LANDED', merge }, { json });
+    return 0;
+  }
+  if (action === 'scopes') {
+    printValue({ scopes: await scopeLeases.list() }, { json });
+    return 0;
+  }
+  if (action === 'release') {
+    const runId = args[1];
+    if (!runId) throw new Error('Run id is required.');
+    printValue(await scopeLeases.release(runId, { reason: 'manual release', owner: option(options, 'owner', process.env.USERNAME || process.env.USER || 'unknown') }), { json });
+    return 0;
+  }
+  if (action === 'heartbeat') {
+    const runId = args[1];
+    if (!runId) throw new Error('Run id is required.');
+    printValue(await scopeLeases.heartbeat(runId, { owner: option(options, 'owner'), ttlMinutes: option(options, 'ttl-minutes', 120) }), { json });
+    return 0;
+  }
+  if (action === 'audit-skills') {
+    const data = JSON.parse(await readFile(path.join(workspaceRoot, 'data', 'skills.json'), 'utf8'));
+    const audits = auditSkills(Array.isArray(data.skills) ? data.skills : []);
+    const gradeCounts = audits.reduce((counts, item) => ({ ...counts, [item.grade]: (counts[item.grade] || 0) + 1 }), {});
+    printValue({ total: audits.length, gradeCounts, audits }, { json });
+    return 0;
+  }
+  const file = args[1];
+  if (!file) throw new Error('Run document path is required.');
+  if (action === 'context' || action === 'begin') {
+    const document = normalizeRunDocument(JSON.parse(await readFile(path.resolve(workspaceRoot, file), 'utf8')));
+    const scope = await scopeLeases.acquire(document, { owner: option(options, 'owner'), ttlMinutes: option(options, 'ttl-minutes', 120) });
+    const policy = await buildSkillPolicy({ workspaceRoot, document });
+    const value = options.detail
+      ? { runId: document.id, scope, skillPolicy: policy }
+      : { runId: document.id, mode: document.mode, scope: scope.lease, reused: scope.reused, enabledSkills: policy.selected.map((item) => item.id), disabledDeclaredSkills: policy.autoDisabled, estimatedTokens: policy.estimatedTokens };
+    printValue(value, { json });
+    return 0;
+  }
+  if (action !== 'verify') throw new Error('Usage: team-loop run begin|context|verify <run.json>, run scopes, run heartbeat|release <run-id>, or run audit-skills');
+  const verifier = createRunVerifier(workspaceRoot);
+  const output = await new RunArtifactService({ workspaceRoot, verifier }).verifyFile(file, { force: Boolean(options.force) });
+  printValue({ runId: output.result.runId, verdict: output.result.verdict, mode: output.result.mode, documentMatch: output.result.documentMatch, scopeLease: output.result.scopeLease, skillPolicy: output.result.skillPolicy, verificationStrength: output.result.verificationPolicy.strength, requestedProfile: output.result.verificationPolicy.requestedProfile, appliedProfile: output.result.verificationPolicy.appliedProfile, autoEscalated: output.result.verificationPolicy.autoEscalated, escalationReason: output.result.verificationPolicy.reason, checks: output.result.verification.checks.map((check) => ({ file: check.file, args: check.args, passed: check.passed, actualExit: check.actualExit })), undeclaredPaths: output.result.undeclaredPaths, missingDeclaredPaths: output.result.missingDeclaredPaths, resultPath: output.resultPath }, { json });
+  return output.result.verdict === 'PASSED' ? 0 : 2;
+}
+
+function slash(value) { return String(value).replaceAll('\\', '/'); }
+
+function createRunVerifier(workspaceRoot) {
+  return new Verifier({
+    workspaceRoot,
+    runtimeRoot: TEAM_LOOP_ROOT,
+    profilePaths: [
+      path.join(TEAM_LOOP_ROOT, 'config', 'verification-profiles.json'),
+      path.join(workspaceRoot, 'config', 'verification-profiles.json'),
+      path.join(workspaceRoot, '.team-loop', 'verification-profiles.json'),
+    ],
+  });
+}
+
+async function initProject(options, json) {
+  const workspaceRoot = path.resolve(option(options, 'workspace', process.cwd()));
+  const initialized = await initializeProject(workspaceRoot, { force: Boolean(options.force) });
+  printValue({ workspaceRoot, ...initialized }, { json });
+  return 0;
+}
+
+async function workProject(args, options, json) {
+  const workspaceRoot = path.resolve(option(options, 'workspace', process.cwd()));
+  const project = await loadProjectConfig(workspaceRoot);
+  if (!project) throw new Error('This project is not initialized. Run "team-loop init" first.');
+  const goal = String(option(options, 'goal', args.join(' '))).trim();
+  if (!goal) throw new Error('A work goal is required. Example: team-loop work "add search"');
+  const mode = inferWorkMode(goal);
+  const scope = mode === 'CODE'
+    ? [...(project.sourceRoots || []), ...(project.testRoots || [])]
+    : (project.documentRoots || ['docs/**', '*.md']);
+  const id = `${new Date().toISOString().slice(0, 10)}-${slug(goal)}`.slice(0, 80).replace(/[-_.]+$/, '');
+  const document = normalizeRunDocument({
+    id, title: goal.slice(0, 160), objective: goal, mode,
+    changes: [], writeScope: scope,
+    verification: { profile: project.defaultProfile || 'project-default' },
+    agent: option(options, 'owner', ''),
+  });
+  const relativeFile = `.team-loop/runs/${id}.json`;
+  const absoluteFile = path.join(workspaceRoot, relativeFile);
+  await mkdir(path.dirname(absoluteFile), { recursive: true });
+  await writeFile(absoluteFile, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', flag: options.force ? 'w' : 'wx' });
+  if (options.execute) return runArtifact(['execute', relativeFile], { ...options, workspace: workspaceRoot, executor: option(options, 'executor', project.defaultExecutor || 'codex') }, json);
+  printValue({ runId: id, mode: document.mode, writeScope: scope, documentPath: relativeFile, next: `team-loop run execute ${relativeFile} --execute` }, { json });
+  return 0;
+}
+
+function inferWorkMode(goal) {
+  if (/brainstorm|브레인스토밍|아이디어|대안/.test(goal.toLowerCase())) return 'BRAINSTORM';
+  if (/document|docs?|readme|문서|정리|기획/.test(goal.toLowerCase())) return 'DOCUMENT';
+  return 'CODE';
+}
+
+function slug(value) {
+  const ascii = String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return ascii || `work-${Date.now().toString(36)}`;
+}
+
+function buildRunPrompt(document, policy, workspace) {
+  const rules = policy.selected.flatMap((skill) => skill.rules.map((rule) => `- [${skill.id}] ${rule}`));
+  const contracts = document.sharedContracts;
+  const modeInstruction = document.mode.appliedMode === 'BRAINSTORM'
+    ? 'First diverge into independent idea categories, then add counterarguments and a separate synthesis. Preserve rejected and deferred options with reasons.'
+    : document.mode.appliedMode === 'DOCUMENT'
+      ? 'Produce a reader-ready document. Separate claims, evidence or assumptions, decisions, and open questions. Keep shared terminology consistent.'
+      : 'Implement the requested code change with relevant tests and runtime verification.';
+  return [`# Verified ${document.mode.appliedMode} run: ${document.title}`, document.summary, `Objective: ${document.objective || '(not specified)'}`, `Audience: ${document.audience || '(not specified)'}`, `Workspace: ${workspace}`, `Write only: ${document.writeScope.join(', ')}`, `Read context: ${document.readScope.join(', ') || '(none)'}`, `Shared interfaces: ${document.interfaces.join(', ') || '(none)'}`, `Terms: ${contracts.terms.join(', ') || '(none)'}`, `Assumptions: ${contracts.assumptions.join(', ') || '(none)'}`, `Required claims: ${contracts.requiredClaims.join(', ') || '(none)'}`, `Open questions: ${contracts.openQuestions.join(', ') || '(none)'}`, '', '# Mode instruction', modeInstruction, '', '# Required rules', ...rules, '', 'Do not edit outside Write only. Run relevant checks, but do not commit or merge; the orchestrator handles verification and landing.'].join('\n');
 }
 
 // Shared: one reviewer decision on a single task -- approve when program verification
@@ -209,7 +456,8 @@ function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inhe
     }
     // Deliver the prompt on STDIN, never as a CLI argument: long multi-line
     // work orders are fragile as command-line arguments on Windows shells.
-    const child = spawn(exe, args, {
+    const command = windowsCommand(exe, args);
+    const child = spawn(command.exe, command.args, {
       cwd: workspace,
       stdio: ['pipe', inherit ? 'inherit' : 'pipe', inherit ? 'inherit' : 'pipe'],
       shell: false,
@@ -225,6 +473,11 @@ function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inhe
     child.stdin.write(prompt);
     child.stdin.end();
   });
+}
+
+function windowsCommand(exe, args) {
+  if (process.platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(String(exe))) return { exe, args };
+  return { exe: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', exe, ...args] };
 }
 
 function customExecutorArgs() {
@@ -1207,5 +1460,12 @@ function requirePositional(positionals, index, message) {
 }
 
 function printHelp() {
+  process.stdout.write(`Project loop (recommended):
+  team-loop init [--workspace /path/to/project]
+  team-loop work "goal" [--execute] [--executor codex|claude-code|custom]
+  team-loop run land <run-id>  (approve and merge verified work)
+  Passing work waits for explicit land.
+
+`);
   process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine] [--archived] [--all]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n  team-loop task archive <task-id>\n  team-loop task unarchive <task-id>\n  team-loop task delete <task-id>\n  team-loop worktree create|remove|list <task-id>   (per-task isolated git worktree)\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nDispatch (hand a task to a CLI agent that does the work):\n  team-loop dispatch <task-id> [--executor claude-code|codex|custom]\n      [--execute] [--isolate] [--model NAME] [--permission MODE] [--sandbox workspace-write]\n      [--to verify|review|done] [--reviewer-home DIR]\n  (default is a dry-run that prints the work order; --execute runs the agent\n   headless in WORKSPACE_ROOT, then verifies. claude-code and codex are supported.)\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n  TEAM_LOOP_CODEX_BIN           Codex executable override, defaults to codex.cmd on Windows\n  TEAM_LOOP_CLAUDE_BIN          Claude executable override, defaults to claude\n  TEAM_LOOP_CUSTOM_EXECUTOR_BIN Custom executor that reads the work order from stdin\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
 }

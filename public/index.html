@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Team Loop Harness Dashboard</title>
+  <title>Team Loop · AI Work Intelligence</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -35,31 +35,45 @@
     <section id="workspace-view" class="hidden">
       <header class="topbar">
         <div>
-          <p class="eyebrow">TEAM LOOP LITE · VERIFIED WORK</p>
-          <h1>작업 · 사용량 · 하네스 대시보드</h1>
+          <p class="eyebrow">TEAM LOOP · AI WORK INTELLIGENCE</p>
+          <h1>검증 학습 루프</h1>
           <p id="workspace-root" class="muted mono"></p>
         </div>
         <div class="top-actions">
           <a class="ghost" href="/roguelite.html">미지의 경매장</a>
           <span id="current-user" class="user-pill"></span>
+          <button id="theme-toggle" class="ghost" type="button" aria-label="색상 모드 전환">다크 모드</button>
           <button id="refresh-button" class="ghost" type="button">새로고침</button>
           <button id="logout-button" class="ghost" type="button">로그아웃</button>
         </div>
       </header>
 
       <nav class="view-tabs" aria-label="주 화면">
-        <button type="button" class="view-tab active" data-view="usage">사용량 대시보드</button>
-        <button type="button" class="view-tab" data-view="board">작업 보드</button>
-        <button type="button" class="view-tab" data-view="harnesses">하네스 & 스킬</button>
-        <button type="button" class="view-tab" data-view="case-wiki">WIKI</button>
-        <button type="button" class="view-tab" data-view="discussion">대화</button>
+        <button type="button" class="view-tab active" data-view="loop">학습 루프</button>
+        <button type="button" class="view-tab" data-view="board">작업</button>
+        <button type="button" class="view-tab" data-view="harnesses">실패 · 하네스 · 스킬</button>
+        <button type="button" class="view-tab" data-view="case-wiki">근거 탐색</button>
+        <button type="button" class="view-tab" data-view="usage">운영 지표</button>
       </nav>
 
-      <section id="usage-view" class="view-section">
+      <section id="loop-view" class="view-section">
+        <div class="loop-hero"><div><p class="eyebrow">VERIFIED LEARNING LOOP</p><h2>실패가 다음 작업의 규칙이 됩니다</h2><p>작업 결과를 프로그램으로 검증하고, 반복 실패를 하네스와 스킬로 승격해 다음 실행에 자동 적용합니다.</p></div><button class="primary" type="button" data-loop-view="board">새 작업 시작</button></div>
+        <section id="loop-kpis" class="loop-kpis"></section>
+        <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">AUTOMATIC RUN MODE</p><h3>AI가 선택한 작업 모드</h3><p class="muted">모드는 자동 적용되며 여기서는 판정 결과만 확인합니다.</p></div><span id="loop-mode-count" class="badge"></span></div><div id="loop-run-modes" class="loop-mode-grid"></div></section>
+        <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">ACTION QUEUE</p><h3>지금 처리할 것</h3></div><span id="loop-action-count" class="badge"></span></div><div id="loop-pipeline" class="loop-pipeline"></div></section>
+        <div class="loop-main-grid">
+          <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">FAILURE TRIAGE</p><h3>학습으로 전환할 실패</h3></div><button class="ghost compact" type="button" data-loop-view="harnesses">전체 보기</button></div><div id="loop-failures" class="loop-failure-list"></div></section>
+          <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">LEARNING IMPACT</p><h3>활성 학습의 근거</h3></div><button class="ghost compact" type="button" data-loop-view="harnesses">관리</button></div><div id="loop-impact" class="loop-impact-list"></div></section>
+        </div>
+        <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">RECENT VERIFIED WORK</p><h3>최근 루프 결과</h3></div><button class="ghost compact" type="button" data-loop-view="board">작업 보드</button></div><div id="loop-recent" class="loop-recent-grid"></div></section>
+      </section>
+
+      <section id="usage-view" class="view-section hidden">
         <div class="dashboard-heading">
           <div>
-            <p class="eyebrow">VISIBLE USAGE</p>
-            <h2>누가, 어디서, 얼마나 사용했는지</h2>
+            <p class="eyebrow">AI OPERATIONS REPORT</p>
+            <h2>팀 AI 사용 종합 분석</h2>
+            <p class="report-lead">사용량, 비용, 도구별 활동과 운영 위험을 한 화면에서 확인합니다.</p>
             <p id="usage-scope" class="muted"></p>
           </div>
           <div class="dashboard-controls">
@@ -127,6 +141,7 @@
       </section>
 
       <section id="board-view" class="view-section hidden">
+        <div class="dashboard-heading"><div><p class="eyebrow">HUMAN COORDINATION</p><h2>사람들의 계획과 담당</h2><p class="report-lead">앞으로 할 일, 담당자와 일정만 공유합니다. AI 실행 결과와 실패 학습은 작업 카드 없이 별도 검증 기록으로 남습니다.</p></div></div>
         <section class="toolbar">
           <div class="toolbar-actions"><button id="new-task-button" class="primary" type="button">새 작업</button><button id="ai-assistant-button" class="ghost" type="button">AI 도우미</button><button id="milestone-toggle" class="ghost" type="button">마일스톤</button><span id="ai-status" class="badge"></span></div>
           <div id="summary" class="summary"></div>
@@ -339,6 +354,17 @@
           <div class="card-heading"><div><p class="eyebrow">ARCHIVED ENTRIES</p><h3>아카이브 항목</h3><p class="muted">한 줄 요약을 누르면 연결된 하네스/스킬과 대표 증거를 펼쳐봅니다.</p></div></div>
           <div id="case-archive" class="case-archive-grid"></div>
         </section>
+      </section>
+
+      <section id="ai-logs-view" class="view-section hidden">
+        <div class="dashboard-heading">
+          <div><p class="eyebrow">READ-ONLY SESSION REPLAY</p><h2>AI 대화 세션</h2><p class="muted">로컬 Codex 세션을 사용자·AI·도구 타임라인으로 복원합니다. 추론 원문과 시스템 이벤트는 표시하지 않습니다.</p></div>
+          <div class="dashboard-controls"><label>표시<select id="ai-log-mode"><option value="answers">질문과 최종 답변만</option><option value="full">전체 작업 기록</option></select></label><span id="ai-log-count" class="badge"></span><button id="ai-log-refresh" class="ghost" type="button">세션 갱신</button></div>
+        </div>
+        <div class="ai-log-layout">
+          <aside class="dashboard-card ai-session-sidebar"><label>세션 검색<input id="ai-log-search" type="search" placeholder="제목 또는 작업 폴더"></label><div id="ai-session-list" class="ai-session-list"></div></aside>
+          <section class="dashboard-card ai-transcript-card"><div id="ai-session-detail" class="ai-session-detail"><div class="empty">왼쪽에서 세션을 선택하세요.</div></div></section>
+        </div>
       </section>
 
       <section id="discussion-view" class="view-section hidden">

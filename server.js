@@ -21,6 +21,10 @@ import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
 import { selectLearningForTask } from './src/learning-selector.js';
 import { auditLearningArtifacts } from './src/learning-audit.js';
+import { ContextIndex } from './src/context-index.js';
+import { AISessionLogStore } from './src/ai-session-logs.js';
+import { RunDashboardStore } from './src/run-dashboard.js';
+import { ScopeLeaseService } from './src/scope-leases.js';
 import { assertPlainObject, HttpError, nowIso, sha256 } from './src/utils.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -50,7 +54,11 @@ const discussions = new DiscussionStore(dataDirectory);
 const ai = new AIService();
 const usageTracker = new UsageTracker({ dataDirectory, configPath: usageConfigPath });
 const externalUsage = new ExternalUsageStore({ dataDirectory });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), externalUsage.initialize()]);
+const contextIndex = new ContextIndex({ workspaceRoot });
+const aiSessionLogs = new AISessionLogStore();
+const runDashboard = new RunDashboardStore({ workspaceRoot });
+const runScopes = new ScopeLeaseService({ workspaceRoot });
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), externalUsage.initialize(), contextIndex.initialize()]);
 const sessionSecret = await loadOrCreateSecret(dataDirectory);
 
 const server = http.createServer(async (request, response) => {
@@ -114,8 +122,19 @@ async function handleApi(request, response) {
 
   const actor = await requireUser(request);
 
+  if (method === 'GET' && url.pathname === '/api/ai-sessions') {
+    sendJson(response, 200, { sessions: await aiSessionLogs.list({ limit: url.searchParams.get('limit') }) });
+    return;
+  }
+
+  const aiSessionMatch = url.pathname.match(/^\/api\/ai-sessions\/([^/]+)$/);
+  if (method === 'GET' && aiSessionMatch) {
+    sendJson(response, 200, { session: await aiSessionLogs.get(decodeURIComponent(aiSessionMatch[1])) });
+    return;
+  }
+
   if (method === 'GET' && url.pathname === '/api/bootstrap') {
-    const [users, tasks, audits, profiles, harnesses, skills, failures, failureSummary, context, discussionSnapshot] = await Promise.all([
+    const [users, tasks, audits, profiles, harnesses, skills, failures, failureSummary, context, discussionSnapshot, runResults, activeRunScopes] = await Promise.all([
       store.listUsers(),
       store.listTasks(),
       store.listAuditEvents(),
@@ -126,6 +145,8 @@ async function handleApi(request, response) {
       failureCases.summary(),
       projectContext.get(),
       discussions.snapshot(),
+      runDashboard.recent(),
+      runScopes.list(),
     ]);
     sendJson(response, 200, {
       user: actor,
@@ -140,7 +161,10 @@ async function handleApi(request, response) {
       failures,
       failureSummary,
       projectContext: context,
+      contextIndex: contextIndex.status(),
       discussions: discussionSnapshot,
+      runResults,
+      activeRunScopes,
       workspace: { root: workspaceRoot },
       learningAudit: auditLearningArtifacts({ harnesses, skills }),
     });
@@ -156,6 +180,19 @@ async function handleApi(request, response) {
       contentSha256: context.content ? sha256(context.content) : null,
     });
     sendJson(response, 200, { projectContext: context });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/context-index') {
+    sendJson(response, 200, { contextIndex: contextIndex.status() });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/context-index/refresh') {
+    requireAdmin(actor);
+    const status = await contextIndex.refresh();
+    await store.recordAudit(actor.id, 'CONTEXT_INDEX_REFRESHED', status);
+    sendJson(response, 200, { contextIndex: status });
     return;
   }
 
@@ -197,9 +234,11 @@ async function handleApi(request, response) {
     let memoryDraft;
     let aiMeta = null;
     try {
+      const contextPack = contextIndex.search(selectedMessages.map((message) => message.content).join('\n'));
       memoryDraft = await ai.discussionMemory({
         messages: selectedMessages.map((message) => ({ ...message, authorName: userMap.get(message.authorUserId) || '' })),
         projectContext: context,
+        contextPack,
       });
       aiMeta = { provider: memoryDraft._meta?.provider || ai.status().provider, model: memoryDraft._meta?.model || ai.status().model, fallback: false };
     } catch (error) {
@@ -491,7 +530,8 @@ async function handleApi(request, response) {
     const body = await readBody(request);
     assertPlainObject(body);
     const [tasks, profiles, context] = await Promise.all([store.listTasks(), verifier.publicProfiles(), projectContext.get()]);
-    const draft = await runTrackedAI(request, actor, 'task-draft', () => ai.draftTask({ goal: body.goal, tasks, profiles, projectContext: context }));
+    const contextPack = contextIndex.search(body.goal);
+    const draft = await runTrackedAI(request, actor, 'task-draft', () => ai.draftTask({ goal: body.goal, tasks, profiles, projectContext: context, contextPack }));
     await store.recordAudit(actor.id, 'AI_TASK_DRAFTED', {
       contentSha256: draft.aiMeta.contentSha256,
       model: draft.aiMeta.model,
@@ -505,7 +545,8 @@ async function handleApi(request, response) {
     const body = await readBody(request);
     assertPlainObject(body);
     const [tasks, profiles, context] = await Promise.all([store.listTasks(), verifier.publicProfiles(), projectContext.get()]);
-    const result = await runTrackedAI(request, actor, 'next-tasks', () => ai.suggestNextTasks({ objective: body.objective, tasks, profiles, projectContext: context }));
+    const contextPack = contextIndex.search(body.objective);
+    const result = await runTrackedAI(request, actor, 'next-tasks', () => ai.suggestNextTasks({ objective: body.objective, tasks, profiles, projectContext: context, contextPack }));
     await store.recordAudit(actor.id, 'AI_NEXT_TASKS_SUGGESTED', {
       contentSha256: result.aiMeta.contentSha256,
       suggestionCount: result.suggestions.length,
@@ -526,13 +567,14 @@ async function handleApi(request, response) {
     requireTaskParticipantOrAdmin(current, actor);
     const [users, context] = await Promise.all([store.listUsers(), projectContext.get()]);
     const appliedSkills = aiAction === 'brief' ? await skillRegistry.resolveActiveMany(current.skillIds ?? []) : [];
+    const contextPack = contextIndex.search(taskContextQuery(current));
     const generated = await runTrackedAI(
       request,
       actor,
       aiAction === 'brief' ? 'task-brief' : 'verification-summary',
       () => aiAction === 'brief'
-        ? ai.taskBrief({ task: current, users, skills: appliedSkills, projectContext: context })
-        : ai.verificationSummary({ task: current, users, projectContext: context }),
+        ? ai.taskBrief({ task: current, users, skills: appliedSkills, projectContext: context, contextPack })
+        : ai.verificationSummary({ task: current, users, projectContext: context, contextPack }),
     );
     const field = aiAction === 'brief' ? 'brief' : 'verificationSummary';
     const mutation = aiAction === 'brief' ? 'AI_TASK_BRIEF_SAVED' : 'AI_VERIFICATION_SUMMARY_SAVED';
@@ -937,7 +979,8 @@ async function planLearningArtifact({ cases, context }) {
   let plan = null;
   if (ai.status().enabled) {
     try {
-      plan = await ai.learningArtifactPlan({ failureCases: cases, projectContext: context });
+      const contextPack = contextIndex.search(cases.map((item) => [item.title, item.kind, item.harnessId, item.lastEvidence?.file].filter(Boolean).join(' ')).join('\n'));
+      plan = await ai.learningArtifactPlan({ failureCases: cases, projectContext: context, contextPack });
     } catch (error) {
       console.error('AI learning artifact planning failed; falling back:', error.message);
     }
@@ -953,6 +996,16 @@ async function planLearningArtifact({ cases, context }) {
     rationale: source.rationale || fallback.rationale,
     planner: plan?.type ? 'ai' : 'fallback',
   };
+}
+
+function taskContextQuery(task = {}) {
+  return [
+    task.title,
+    task.description,
+    ...(task.allowedPaths || []),
+    ...(task.acceptanceCriteria || []),
+    task.verificationProfile,
+  ].filter(Boolean).join('\n');
 }
 
 function fallbackLearningPlan(cases) {

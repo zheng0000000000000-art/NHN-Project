@@ -15,13 +15,15 @@ const state = {
   milestoneFilter: { type: '', userId: '', query: '', date: '' },
   showLearningCreate: false,
   showHarnessCreate: false,
-  activeView: 'usage',
+  activeView: 'loop',
   harnesses: [],
   skills: [],
   learningAudit: null,
   failures: [],
   failureSummary: { total: 0, open: 0, fixtureCandidates: 0, resolved: 0, ignored: 0, occurrences: 0 },
   discussions: { messages: [], memories: [] },
+  aiSessions: [], selectedAISession: null, aiSessionQuery: '', aiLogMode: 'answers',
+  runResults: [], activeRunScopes: [],
 };
 
 const columns = [
@@ -57,10 +59,14 @@ const milestoneRanges = document.querySelector('#milestone-ranges');
 const milestoneCalendar = document.querySelector('#milestone-calendar');
 const milestoneStream = document.querySelector('#milestone-stream');
 const usageView = document.querySelector('#usage-view');
+const loopView = document.querySelector('#loop-view');
 const boardView = document.querySelector('#board-view');
 const harnessView = document.querySelector('#harness-view');
 const caseWikiView = document.querySelector('#case-wiki-view');
 const discussionView = document.querySelector('#discussion-view');
+const aiLogsView = document.querySelector('#ai-logs-view');
+const aiSessionList = document.querySelector('#ai-session-list');
+const aiSessionDetail = document.querySelector('#ai-session-detail');
 const harnessFormError = document.querySelector('#harness-form-error');
 const harnessList = document.querySelector('#harness-list');
 const skillList = document.querySelector('#skill-list');
@@ -76,6 +82,20 @@ const wikiJudgingCriteria = document.querySelector('#wiki-judging-criteria');
 const discussionMessages = document.querySelector('#discussion-messages');
 const discussionError = document.querySelector('#discussion-error');
 const toast = document.querySelector('#toast');
+
+const savedTheme = localStorage.getItem('team-loop-theme');
+applyTheme(savedTheme || 'dark');
+document.querySelector('#theme-toggle').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('team-loop-theme', next);
+  applyTheme(next);
+});
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const button = document.querySelector('#theme-toggle');
+  if (button) button.textContent = theme === 'dark' ? '라이트 모드' : '다크 모드';
+}
 
 for (const tab of document.querySelectorAll('[data-auth-tab]')) {
   tab.addEventListener('click', () => {
@@ -139,8 +159,15 @@ for (const button of document.querySelectorAll('[data-view]')) {
     }
     if (state.activeView === 'case-wiki') renderCaseArchive();
     if (state.activeView === 'discussion') renderDiscussionBoard();
+    if (state.activeView === 'ai-logs') await loadAISessions({ quiet: false });
   });
 }
+loopView.addEventListener('click', (event) => { const target = event.target.closest('[data-loop-view]'); if (target) switchView(target.dataset.loopView); });
+
+document.querySelector('#ai-log-refresh').addEventListener('click', () => loadAISessions({ quiet: false }));
+document.querySelector('#ai-log-search').addEventListener('input', (event) => { state.aiSessionQuery = event.target.value; renderAISessionList(); });
+document.querySelector('#ai-log-mode').addEventListener('change', (event) => { state.aiLogMode = event.target.value; renderAISessionDetail(); });
+aiSessionList.addEventListener('click', async (event) => { const button = event.target.closest('[data-ai-session-id]'); if (button) await loadAISession(button.dataset.aiSessionId); });
 
 document.querySelector('#usage-refresh').addEventListener('click', () => loadUsage({ quiet: false }));
 document.querySelector('#case-wiki-refresh').addEventListener('click', async () => {
@@ -656,6 +683,7 @@ async function bootstrap({ quiet = true } = {}) {
     renderProjectContext();
     render();
     renderHarnessDashboard();
+    renderLearningLoop();
     switchView(state.activeView);
     if (state.activeView === 'usage') await loadUsage({ quiet: true });
     if (state.activeView === 'case-wiki') renderCaseArchive();
@@ -778,20 +806,99 @@ function applyDraftToForm(draft) {
 async function refreshCurrentView(quiet = true) {
   await bootstrap({ quiet: true });
   if (state.activeView === 'harnesses') await loadLearningAudit({ quiet: true });
+  if (state.activeView === 'ai-logs') await loadAISessions({ quiet: true });
   if (!quiet) showToast(state.activeView === 'usage' ? '사용량을 갱신했습니다.' : state.activeView === 'harnesses' ? '하네스를 갱신했습니다.' : state.activeView === 'case-wiki' ? 'WIKI를 갱신했습니다.' : state.activeView === 'discussion' ? '대화를 갱신했습니다.' : '최신 상태를 불러왔습니다.');
 }
 
 function switchView(view) {
-  state.activeView = ['usage', 'board', 'harnesses', 'case-wiki', 'discussion'].includes(view) ? view : 'usage';
+  state.activeView = ['loop', 'usage', 'board', 'harnesses', 'case-wiki', 'ai-logs', 'discussion'].includes(view) ? view : 'loop';
+  loopView.classList.toggle('hidden', state.activeView !== 'loop');
   usageView.classList.toggle('hidden', state.activeView !== 'usage');
   boardView.classList.toggle('hidden', state.activeView !== 'board');
   harnessView.classList.toggle('hidden', state.activeView !== 'harnesses');
   caseWikiView.classList.toggle('hidden', state.activeView !== 'case-wiki');
   discussionView.classList.toggle('hidden', state.activeView !== 'discussion');
+  aiLogsView.classList.toggle('hidden', state.activeView !== 'ai-logs');
   for (const button of document.querySelectorAll('[data-view]')) {
     button.classList.toggle('active', button.dataset.view === state.activeView);
   }
 }
+
+function renderLearningLoop() {
+  const tasks = state.tasks || [];
+  const failures = state.failures || [];
+  const activeHarnesses = state.harnesses.filter((item) => item.status === 'ACTIVE');
+  const activeSkills = state.skills.filter((item) => item.status === 'ACTIVE');
+  const learnedIds = new Set([...activeHarnesses, ...activeSkills].flatMap((item) => item.sourceFailureCaseIds || []));
+  const verified = tasks.filter((task) => task.verification);
+  const passed = verified.filter((task) => task.verification?.passed).length;
+  const openFailures = failures.filter((item) => item.status === 'OPEN');
+  const learnedFailures = failures.filter((item) => learnedIds.has(item.id));
+  const learnedOccurrences = learnedFailures.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
+  const repeatFailures = failures.filter((item) => Number(item.occurrences || 0) > 1).length;
+  renderRunModes();
+  document.querySelector('#loop-kpis').innerHTML = [
+    loopMetric('검증 통과율', verified.length ? formatPercent(passed / verified.length) : '—', `${passed}/${verified.length} 작업`, 'good'),
+    loopMetric('열린 실패', formatNumber(openFailures.length), '분류와 승격 필요', openFailures.length ? 'danger' : 'good'),
+    loopMetric('학습된 실패', formatNumber(learnedFailures.length), `${formatNumber(learnedOccurrences)}회 관찰 근거`, 'learned'),
+    loopMetric('반복 실패', formatNumber(repeatFailures), '재발 방지 대상', repeatFailures ? 'warning' : 'good'),
+    loopMetric('활성 방어', formatNumber(activeHarnesses.length + activeSkills.length), `하네스 ${activeHarnesses.length} · 스킬 ${activeSkills.length}`, 'learned'),
+  ].join('');
+  const queues = [
+    ['실행 중', tasks.filter((item) => item.status === 'IN_PROGRESS').length, 'board', '결과를 만들어 검증'],
+    ['검증/리뷰', tasks.filter((item) => item.status === 'REVIEW').length, 'board', '사람 승인 대기'],
+    ['분류할 실패', openFailures.length, 'harnesses', '원인과 반복성 확인'],
+    ['활성화 대기', [...state.harnesses, ...state.skills].filter((item) => item.status === 'DRAFT').length, 'harnesses', '시험 후 승격'],
+    ['재발 감시', learnedFailures.length, 'harnesses', '같은 서명 재등장 확인'],
+  ];
+  document.querySelector('#loop-action-count').textContent = `${queues.reduce((sum, item) => sum + item[1], 0)}건`;
+  document.querySelector('#loop-pipeline').innerHTML = queues.map((item, index) => `<button type="button" class="loop-stage" data-loop-view="${item[2]}"><span>${String(index + 1).padStart(2, '0')}</span><strong>${escapeHtml(item[0])}</strong><b>${formatNumber(item[1])}</b><small>${escapeHtml(item[3])}</small></button>`).join('');
+  document.querySelector('#loop-failures').innerHTML = openFailures.length ? openFailures.slice(0, 6).map((failure) => {
+    const recommendation = failure.kind === 'SCOPE_VIOLATION' ? ['SKILL', '실행 전 작업 규칙으로 예방'] : failure.lastEvidence?.file ? ['HARNESS', '동일 명령으로 재현 가능'] : ['SKILL', '사람 판단이 필요한 절차 문제'];
+    return `<article class="loop-failure"><div><span class="badge fail">${escapeHtml(failure.kind)}</span><strong>${escapeHtml(failure.title)}</strong><small>${formatNumber(failure.occurrences)}회 · ${escapeHtml(failure.harnessId || '하네스 없음')}</small></div><div class="loop-recommend"><b>${recommendation[0]} 추천</b><span>${recommendation[1]}</span></div></article>`;
+  }).join('') : '<div class="loop-empty-good">열린 실패가 없습니다. 현재 루프가 깨끗합니다.</div>';
+  const impact = [...activeSkills.map((item) => ({ ...item, type: 'SKILL' })), ...activeHarnesses.map((item) => ({ ...item, type: 'HARNESS' }))]
+    .map((item) => { const cases = failures.filter((failure) => (item.sourceFailureCaseIds || []).includes(failure.id)); return { item, cases, occurrences: cases.reduce((sum, failure) => sum + Number(failure.occurrences || 0), 0) }; })
+    .filter((entry) => entry.cases.length).sort((a, b) => b.occurrences - a.occurrences).slice(0, 6);
+  document.querySelector('#loop-impact').innerHTML = impact.length ? impact.map(({ item, cases, occurrences }) => `<article class="loop-impact"><span class="badge">${item.type}</span><div><strong>${escapeHtml(item.label)}</strong><small>실패 ${cases.length}종 · ${formatNumber(occurrences)}회 관찰에서 학습</small></div><b>${formatNumber(occurrences)}</b></article>`).join('') : '<div class="empty">실패 사례와 연결된 활성 학습이 아직 없습니다.</div>';
+  document.querySelector('#loop-recent').innerHTML = [...tasks].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 6).map((task) => `<article class="loop-work"><div><span class="badge ${task.verification?.passed ? 'pass' : task.verification ? 'fail' : ''}">${task.verification?.passed ? 'VERIFIED' : task.verification ? 'FAILED' : task.status}</span><strong>${escapeHtml(task.title)}</strong></div><p>${task.skillIds?.length || 0}개 스킬 · ${escapeHtml(task.verificationProfile || '하네스 없음')}</p><small>${escapeHtml(formatDateTime(task.updatedAt))}</small></article>`).join('') || '<div class="empty">아직 작업 기록이 없습니다.</div>';
+}
+
+function renderRunModes() {
+  const results = state.runResults || [];
+  const active = state.activeRunScopes || [];
+  document.querySelector('#loop-mode-count').textContent = active.length ? `${active.length}개 실행 중` : `${results.length}개 최근 결과`;
+  const activeIds = new Set(active.map((item) => item.runId));
+  const cards = [
+    ...active.map((item) => ({ runId: item.runId, title: item.title || item.runId, verdict: 'RUNNING', mode: item.mode, profile: item.verificationProfile, strength: '진행 중', enabledSkills: [], autoDisabledSkills: [] })),
+    ...results.filter((item) => !activeIds.has(item.runId)),
+  ].slice(0, 6);
+  document.querySelector('#loop-run-modes').innerHTML = cards.length ? cards.map((result) => {
+    const mode = result.mode || {};
+    const enabled = result.enabledSkills || [];
+    const disabled = result.autoDisabledSkills || [];
+    return `<article class="loop-mode-card mode-${escapeHtml(String(mode.appliedMode || 'CODE').toLowerCase())}">
+      <header><span class="mode-badge">${escapeHtml(mode.appliedMode || 'CODE')}</span><span class="badge ${result.verdict === 'PASSED' ? 'pass' : result.verdict === 'RUNNING' ? '' : 'fail'}">${escapeHtml(result.verdict)}</span></header>
+      <strong>${escapeHtml(result.title || result.runId)}</strong>
+      <p>${escapeHtml(mode.requestedMode === 'AUTO' ? `AUTO · ${modeReasonLabel(mode.reason)}` : `${mode.requestedMode} · 명시된 모드`)}</p>
+      <div class="mode-meta"><span>하네스 <b>${escapeHtml(result.profile || '없음')}</b></span><span>강도 <b>${escapeHtml(result.strength || '—')}</b></span></div>
+      ${result.verdict === 'RUNNING' ? '<small>스킬은 실행 문서에서 자동 적용 중</small>' : `<small>ON ${escapeHtml(enabled.join(', ') || '없음')}</small>`}
+      ${disabled.length ? `<small>OFF ${escapeHtml(disabled.join(', '))}</small>` : ''}
+    </article>`;
+  }).join('') : '<div class="empty">모드가 기록된 실행 결과가 아직 없습니다.</div>';
+}
+
+function modeReasonLabel(reason) {
+  return ({
+    'source, test, configuration, or tooling path takes precedence': '소스·테스트·설정·도구 경로를 우선 감지',
+    'goal or path indicates divergent idea exploration': '아이디어 발산 목표 또는 경로 감지',
+    'document-oriented paths or goal detected': '문서 전용 경로 또는 작성 목표 감지',
+    'source or mixed project work detected': '소스 또는 혼합 작업 감지',
+    'explicit mode requested': '실행 문서에서 명시',
+  })[reason] || reason || '자동 판정';
+}
+
+function loopMetric(label, value, caption, tone) { return `<article class="loop-metric tone-${tone}"><p>${escapeHtml(label)}</p><strong>${escapeHtml(value)}</strong><span>${escapeHtml(caption)}</span></article>`; }
 
 async function loadUsage({ quiet = true } = {}) {
   try {
@@ -802,6 +909,34 @@ async function loadUsage({ quiet = true } = {}) {
   } catch (error) {
     if (!quiet) showToast(error.message, true);
   }
+}
+
+async function loadAISessions({ quiet = true } = {}) {
+  try { const payload = await api('/api/ai-sessions?limit=80'); state.aiSessions = payload.sessions || []; renderAISessionList(); if (!quiet) showToast('AI 세션 목록을 갱신했습니다.'); }
+  catch (error) { aiSessionList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`; }
+}
+async function loadAISession(id) {
+  aiSessionDetail.innerHTML = '<div class="empty">세션을 불러오는 중입니다.</div>';
+  try { const payload = await api(`/api/ai-sessions/${encodeURIComponent(id)}`); state.selectedAISession = payload.session; renderAISessionList(); renderAISessionDetail(); }
+  catch (error) { aiSessionDetail.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`; }
+}
+function renderAISessionList() {
+  const query = state.aiSessionQuery.trim().toLowerCase();
+  const sessions = state.aiSessions.filter((session) => !query || `${session.title} ${session.cwd}`.toLowerCase().includes(query));
+  document.querySelector('#ai-log-count').textContent = `${formatNumber(sessions.length)}개 세션`;
+  aiSessionList.innerHTML = sessions.length ? sessions.map((session) => `<button type="button" class="ai-session-item ${state.selectedAISession?.id === session.id ? 'active' : ''}" data-ai-session-id="${escapeHtml(session.id)}"><strong>${escapeHtml(session.title)}</strong><span>${escapeHtml(formatDateTime(session.updatedAt))} · ${formatNumber(session.messageCount)}개 이벤트</span><small class="mono">${escapeHtml(session.cwd || '작업 폴더 없음')}</small></button>`).join('') : '<div class="empty">표시할 세션이 없습니다.</div>';
+}
+function renderAISessionDetail() {
+  const session = state.selectedAISession; if (!session) return;
+  const messages = state.aiLogMode === 'answers'
+    ? session.messages.filter((message) => message.role === 'user' || (message.role === 'assistant' && message.phase === 'final_answer'))
+    : session.messages;
+  aiSessionDetail.innerHTML = `<header class="ai-transcript-head"><div><p class="eyebrow">CODEX SESSION</p><h3>${escapeHtml(session.title)}</h3><p class="muted mono">${escapeHtml(session.cwd || '')}</p></div><span class="badge">${formatNumber(messages.length)}개 표시</span></header><div class="ai-transcript">${messages.length ? messages.map(renderAISessionMessage).join('') : '<div class="empty">이 세션에는 최종 답변으로 기록된 메시지가 없습니다. 전체 작업 기록으로 전환해 확인할 수 있습니다.</div>'}</div>`;
+}
+function renderAISessionMessage(message) {
+  const label = message.role === 'user' ? '사용자' : message.role === 'assistant' ? 'AI' : message.kind === 'output' ? `${message.toolName} 결과` : `${message.toolName} 호출`;
+  const body = message.role === 'tool' ? `<pre>${escapeHtml(message.content)}</pre>${message.truncated ? '<small>긴 출력이 잘렸습니다.</small>' : ''}` : `<p>${escapeHtml(message.content)}</p>`;
+  return `<article class="ai-log-message role-${escapeHtml(message.role)} kind-${escapeHtml(message.kind || 'message')}"><div class="ai-log-message-head"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(formatDateTime(message.at))}</span></div>${body}</article>`;
 }
 
 async function loadLearningAudit({ quiet = true } = {}) {

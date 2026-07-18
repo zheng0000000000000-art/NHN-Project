@@ -38,7 +38,7 @@ export class AIService {
     };
   }
 
-  async draftTask({ goal, tasks, profiles, projectContext = null }) {
+  async draftTask({ goal, tasks, profiles, projectContext = null, contextPack = null }) {
     const cleanGoal = requiredText(goal, 'Goal', 3, 4000);
     const profileIds = Object.keys(profiles ?? {});
     if (profileIds.length === 0) throw new HttpError(409, 'No verification profiles are configured.');
@@ -57,6 +57,7 @@ export class AIService {
       input: {
         goal: cleanGoal,
         projectContext: projectContextForAI(projectContext),
+        relevantProjectContext: contextPackForAI(contextPack),
         verificationProfiles: profileIds.map((id) => ({ id, ...profiles[id] })),
         currentBoard: boardSummary(tasks),
       },
@@ -64,7 +65,7 @@ export class AIService {
     return withMeta(response.value, this.model, response.provider);
   }
 
-  async suggestNextTasks({ objective, tasks, profiles, projectContext = null }) {
+  async suggestNextTasks({ objective, tasks, profiles, projectContext = null, contextPack = null }) {
     const cleanObjective = requiredText(objective, 'Project objective', 3, 6000);
     const profileIds = Object.keys(profiles ?? {});
     if (profileIds.length === 0) throw new HttpError(409, 'No verification profiles are configured.');
@@ -97,6 +98,7 @@ export class AIService {
       input: {
         objective: cleanObjective,
         projectContext: projectContextForAI(projectContext),
+        relevantProjectContext: contextPackForAI(contextPack),
         verificationProfiles: profileIds.map((id) => ({ id, ...profiles[id] })),
         currentBoard: boardSummary(tasks),
       },
@@ -104,7 +106,7 @@ export class AIService {
     return withMeta(response.value, this.model, response.provider);
   }
 
-  async taskBrief({ task, users, skills = [], projectContext = null }) {
+  async taskBrief({ task, users, skills = [], projectContext = null, contextPack = null }) {
     const response = await this.#structured({
       name: 'team_loop_task_brief',
       schema: {
@@ -129,6 +131,7 @@ export class AIService {
       ].join(' '),
       input: {
         projectContext: projectContextForAI(projectContext),
+        relevantProjectContext: contextPackForAI(contextPack),
         task: taskForAI(task),
         appliedSkills: skills.map((skill) => ({ id: skill.id, version: skill.version, label: skill.label, rules: skill.rules })),
         people: publicPeople(users),
@@ -137,7 +140,7 @@ export class AIService {
     return withMeta(response.value, this.model, response.provider);
   }
 
-  async verificationSummary({ task, users, projectContext = null }) {
+  async verificationSummary({ task, users, projectContext = null, contextPack = null }) {
     if (!task.verification) throw new HttpError(409, 'Run verification before requesting an AI verification summary.');
     const verification = verificationForAI(task.verification, this.includeCommandOutput);
     const response = await this.#structured({
@@ -164,6 +167,7 @@ export class AIService {
       ].join(' '),
       input: {
         projectContext: projectContextForAI(projectContext),
+        relevantProjectContext: contextPackForAI(contextPack),
         task: taskForAI(task),
         verification,
         people: publicPeople(users),
@@ -173,7 +177,7 @@ export class AIService {
     return withMeta(response.value, this.model, response.provider);
   }
 
-  async learningArtifactPlan({ failureCases, projectContext = null }) {
+  async learningArtifactPlan({ failureCases, projectContext = null, contextPack = null }) {
     const cases = Array.isArray(failureCases) ? failureCases.slice(0, 20) : [];
     if (cases.length === 0) throw new HttpError(400, 'Select at least one case.');
     const schema = {
@@ -202,6 +206,7 @@ export class AIService {
       ].join(' '),
       input: {
         projectContext: projectContextForAI(projectContext),
+        relevantProjectContext: contextPackForAI(contextPack),
         failureCases: cases.map((failure) => ({
           id: failure.id,
           status: failure.status,
@@ -217,7 +222,7 @@ export class AIService {
     return withMeta(response.value, this.model, response.provider);
   }
 
-  async discussionMemory({ messages, projectContext = null }) {
+  async discussionMemory({ messages, projectContext = null, contextPack = null }) {
     const cleanMessages = (Array.isArray(messages) ? messages : [])
       .filter((message) => String(message?.content || '').trim())
       .slice(-80)
@@ -252,6 +257,7 @@ export class AIService {
       ].join(' '),
       input: {
         projectContext: projectContextForAI(projectContext),
+        relevantProjectContext: contextPackForAI(contextPack),
         messages: cleanMessages,
       },
     });
@@ -536,6 +542,19 @@ function projectContextForAI(projectContext) {
   return {
     content: content.slice(0, 12_000),
     updatedAt: projectContext.updatedAt ?? null,
+  };
+}
+
+function contextPackForAI(contextPack) {
+  const sources = Array.isArray(contextPack?.sources) ? contextPack.sources : [];
+  if (sources.length === 0) return null;
+  return {
+    estimatedTokens: Math.max(0, Number(contextPack.estimatedTokens) || 0),
+    sources: sources.slice(0, 8).map((source) => ({
+      path: String(source.path || '').slice(0, 500),
+      chunk: Math.max(0, Number(source.chunk) || 0),
+      text: String(source.text || '').slice(0, 3_000),
+    })),
   };
 }
 

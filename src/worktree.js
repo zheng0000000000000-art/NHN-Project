@@ -71,8 +71,14 @@ export async function listTaskWorktrees(repoRoot) {
 // the worktree. Throws on merge conflict (caller reports; a human merges manually).
 export async function mergeTaskWorktree(repoRoot, taskId, { message, trailers } = {}) {
   const branch = worktreeBranch(taskId);
+  await commitTaskWorktree(repoRoot, taskId, { message, trailers });
+  return mergePreparedWorktree(repoRoot, taskId, { trailers });
+}
+
+export async function commitTaskWorktree(repoRoot, taskId, { message, trailers, remove = false } = {}) {
+  const branch = worktreeBranch(taskId);
   const dir = worktreePath(repoRoot, taskId);
-  const subject = message || `team-loop: land ${branch}`;
+  const subject = message || `team-loop: verify ${branch}`;
   const trailerLines = Object.entries(trailers || {}).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`);
   const commitMsg = trailerLines.length ? `${subject}\n\n${trailerLines.join('\n')}` : subject;
   await git(['add', '-A'], dir);
@@ -80,6 +86,14 @@ export async function mergeTaskWorktree(repoRoot, taskId, { message, trailers } 
   if (status.trim()) {
     await git(['-c', 'user.email=team-loop@local', '-c', 'user.name=team-loop', 'commit', '-m', commitMsg], dir);
   }
+  const commit = (await git(['rev-parse', 'HEAD'], dir)).trim();
+  if (remove) await removeTaskWorktree(repoRoot, taskId);
+  return { branch, commit, worktree: remove ? null : dir };
+}
+
+export async function mergePreparedWorktree(repoRoot, taskId, { trailers } = {}) {
+  const branch = worktreeBranch(taskId);
+  const trailerLines = Object.entries(trailers || {}).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`);
   const mergeMsg = trailerLines.length ? `Merge ${branch}\n\n${trailerLines.join('\n')}` : `Merge ${branch}`;
   await git(['merge', '--no-ff', branch, '-m', mergeMsg], repoRoot);
   const head = (await git(['rev-parse', 'HEAD'], repoRoot)).trim();
@@ -87,7 +101,7 @@ export async function mergeTaskWorktree(repoRoot, taskId, { message, trailers } 
   return { merged: true, branch, commit: head };
 }
 
-function sanitizeTaskId(taskId) {
+export function sanitizeTaskId(taskId) {
   const clean = String(taskId ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '');
   if (!clean) throw new Error('Task id is required for a worktree.');
   return clean;

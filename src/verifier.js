@@ -7,10 +7,12 @@ const MAX_CAPTURE_BYTES = 256 * 1024;
 const ACTIVE_WORKSPACES = new Set();
 
 export class Verifier {
-  constructor({ workspaceRoot, profilePath = null, harnessRegistry = null }) {
+  constructor({ workspaceRoot, profilePath = null, profilePaths = null, harnessRegistry = null, runtimeRoot = null }) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.profilePath = profilePath;
+    this.profilePaths = profilePaths || (profilePath ? [profilePath] : []);
     this.harnessRegistry = harnessRegistry;
+    this.runtimeRoot = runtimeRoot || this.workspaceRoot;
   }
 
   async profileNames() {
@@ -64,7 +66,9 @@ export class Verifier {
     const checks = [];
     for (const command of profile.commands ?? []) {
       const commandCwd = resolveCommandCwd(verifyRoot, command.cwd ?? '.');
-      const sandboxed = sandboxWrap(command.file, command.args ?? [], verifyRoot, commandCwd);
+      const commandFile = runtimeValue(command.file, this.runtimeRoot);
+      const commandArgs = (command.args ?? []).map((item) => runtimeValue(item, this.runtimeRoot));
+      const sandboxed = sandboxWrap(commandFile, commandArgs, verifyRoot, commandCwd);
       checks.push(await runProcess({
         file: sandboxed.file,
         args: sandboxed.args,
@@ -126,7 +130,8 @@ export class Verifier {
   }
 
   async #config() {
-    const config = await readJson(this.profilePath, { schemaVersion: 1, profiles: {} });
+    const config = { schemaVersion: 1, profiles: {} };
+    for (const profilePath of this.profilePaths) Object.assign(config.profiles, (await readJson(profilePath, { profiles: {} })).profiles || {});
     if (!config.profiles || typeof config.profiles !== 'object') throw new Error('Invalid verification profile configuration.');
     return config;
   }
@@ -136,6 +141,8 @@ export class Verifier {
     return result.actualExit === 0 && result.stdout.trim() === 'true';
   }
 }
+
+function runtimeValue(value, runtimeRoot) { return String(value ?? '').replaceAll('{teamLoopRoot}', runtimeRoot); }
 
 
 // Fail-closed: if the sandbox is required (a code-executing command will be wrapped) but

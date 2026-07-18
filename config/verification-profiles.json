@@ -31,6 +31,31 @@
         }
       ]
     },
+    "verified-run": {
+      "label": "Verified run E2E",
+      "description": "Runs tests, syntax checks, a temporary server health probe, dashboard shell probe, and Git patch checks.",
+      "commands": [
+        { "file": "node", "args": ["--test"], "expectedExit": 0, "timeoutMs": 180000 },
+        { "file": "node", "args": ["{teamLoopRoot}/tools/verification/check-runtime.mjs"], "expectedExit": 0, "timeoutMs": 120000 },
+        { "file": "git", "args": ["diff", "--check"], "expectedExit": 0, "timeoutMs": 60000 }
+      ]
+    },
+    "document-review": {
+      "label": "Document review",
+      "description": "Checks changed writing for structure, placeholders, merge markers, and relative links.",
+      "commands": [
+        { "file": "node", "args": ["{teamLoopRoot}/tools/verification/check-writing.mjs", "document"], "expectedExit": 0, "timeoutMs": 60000 },
+        { "file": "git", "args": ["diff", "--check"], "expectedExit": 0, "timeoutMs": 60000 }
+      ]
+    },
+    "brainstorm-review": {
+      "label": "Brainstorm review",
+      "description": "Checks brainstorm artifacts by role, including spec impact, recommendation status, and experiment separation.",
+      "commands": [
+        { "file": "node", "args": ["{teamLoopRoot}/tools/verification/check-writing.mjs", "brainstorm"], "expectedExit": 0, "timeoutMs": 60000 },
+        { "file": "git", "args": ["diff", "--check"], "expectedExit": 0, "timeoutMs": 60000 }
+      ]
+    },
     "failure-dedupe-regression": {
       "label": "Failure dedupe regression",
       "description": "Ensures repeated failure events do not explode into duplicate file-level cases.",
