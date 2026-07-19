@@ -28,7 +28,8 @@
       "rules": [
         "Browser entry modules may import only files reachable from the server static root; verify every relative import over HTTP, not only its source file with node --check.",
         "When server behavior changes, restart the real server process before UI verification; a refreshed browser with an old Node process is a mixed-version failure.",
-        "For permissions exposed as UI buttons, test both visibility and the matching API authorization using the same actor role."
+        "For permissions exposed as UI buttons, test both visibility and the matching API authorization using the same actor role.",
+        "After starting a server for a workspace path containing spaces, read bootstrap.workspace.root and compare it to the intended absolute path before running any verification."
       ]
     },
     "delivery-before-done": {
