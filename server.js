@@ -13,7 +13,8 @@ import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
 import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
-import { executionMode } from './src/task-execution.js';
+import { executionMode } from './public/task-execution.js';
+import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
 import { mergeTaskWorktree, worktreePath } from './src/worktree.js';
@@ -776,8 +777,10 @@ async function handleApi(request, response) {
     const current = await store.getTask(taskId);
     if (!current) throw new HttpError(404, 'Task not found.');
     if (current.status !== 'REVIEW') throw new HttpError(409, 'Task is not waiting for review.');
-    if (actor.id === current.assigneeUserId && !soloMode) throw new HttpError(403, 'Assignees cannot review their own task.');
-    if (current.reviewerUserId && current.reviewerUserId !== actor.id) throw new HttpError(403, 'This task has a different assigned reviewer.');
+    if (!canReviewTask(current, actor, { soloMode })) {
+      if (actor.id === current.assigneeUserId) throw new HttpError(403, 'Assignees cannot review their own task.');
+      throw new HttpError(403, 'This task has a different assigned reviewer.');
+    }
     const decision = String(body.decision || '').toUpperCase();
     if (!['APPROVE', 'REJECT'].includes(decision)) throw new HttpError(400, 'Decision must be APPROVE or REJECT.');
     if (decision === 'APPROVE' && !await verifier.fingerprintMatches(current.verification)) {
@@ -793,6 +796,7 @@ async function handleApi(request, response) {
         comment: String(body.comment ?? '').trim().slice(0, 2000),
         reviewedAt: nowIso(),
         solo: soloMode && actor.id === next.assigneeUserId,
+        adminOverride: actor.role === 'admin' && (actor.id === next.assigneeUserId || (next.reviewerUserId && next.reviewerUserId !== actor.id)),
       };
       if (decision === 'APPROVE') {
         next.status = 'DONE';
