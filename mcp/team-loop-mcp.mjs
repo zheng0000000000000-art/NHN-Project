@@ -12,7 +12,6 @@
 import readline from 'node:readline';
 import { CliClient } from '../src/cli/client.js';
 import { loadSession, normalizeServer } from '../src/cli/session.js';
-import { createTaskWorktree, removeTaskWorktree } from '../src/worktree.js';
 import { taskListView } from '../src/mcp-task-view.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
@@ -113,6 +112,32 @@ const TOOLS = {
       return (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/request-review`, { method: 'POST', body: { expectedVersion: task.version } })).task;
     },
   },
+  read_task_files: {
+    description: 'Read scoped UTF-8 project files for a claimed task. Returns the server baseCommit required for submission. Server paths are never exposed.',
+    inputSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string' }, paths: { type: 'array', items: { type: 'string' }, maxItems: 50 } },
+      required: ['taskId', 'paths'],
+    },
+    async run(client, args) {
+      return client.request(`/api/tasks/${encodeURIComponent(args.taskId)}/files`, { method: 'POST', body: { paths: args.paths } });
+    },
+  },
+  submit_task_result: {
+    description: 'Submit scoped UTF-8 file results to the server. The server applies them only inside its task worktree; call verify_task afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string' }, baseCommit: { type: 'string' }, summary: { type: 'string' }, learningDisposition: { type: 'string' },
+        files: { type: 'array', maxItems: 50, items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, deleted: { type: 'boolean' } }, required: ['path'] } },
+      },
+      required: ['taskId', 'baseCommit', 'summary', 'learningDisposition', 'files'],
+    },
+    async run(client, args) {
+      const task = await fetchTask(client, args.taskId);
+      return client.request(`/api/tasks/${encodeURIComponent(task.id)}/submit`, { method: 'POST', body: { expectedVersion: task.version, baseCommit: args.baseCommit, summary: args.summary, learningDisposition: args.learningDisposition, files: args.files } });
+    },
+  },
   list_skills: {
     description: 'List shared skills (failure-derived rules) available to all agents.',
     inputSchema: { type: 'object', properties: {} },
@@ -133,22 +158,7 @@ const TOOLS = {
     inputSchema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
     async run(client, args) { return (await client.request('/api/project-context', { method: 'PUT', body: { content: String(args.content ?? '') } })).projectContext; },
   },
-  create_worktree: {
-    description: 'Create an isolated git worktree for a task. Edit only inside it; verify_task then checks it. Physical isolation from other agents.',
-    inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, base: { type: 'string' } }, required: ['taskId'] },
-    async run(client, args) {
-      const b = await client.request('/api/bootstrap');
-      return createTaskWorktree(b.workspace?.root || process.cwd(), args.taskId, { base: args.base || 'HEAD' });
-    },
-  },
-  remove_worktree: {
-    description: 'Remove a task worktree checkout (the task/<id> branch stays in the repo).',
-    inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] },
-    async run(client, args) {
-      const b = await client.request('/api/bootstrap');
-      return removeTaskWorktree(b.workspace?.root || process.cwd(), args.taskId);
-    },
-  },};
+};
 
 function toolList() {
   return Object.entries(TOOLS).map(([name, def]) => ({ name, description: def.description, inputSchema: def.inputSchema }));
