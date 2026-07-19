@@ -1017,6 +1017,7 @@ function renderUsage() {
 
 function renderServerPrimaryUsage(usage) {
   const totals = usage.totals;
+  const context = usage.context || {};
   document.querySelector('#usage-kpis').innerHTML = [
     kpiCard('캐시 제외 토큰', formatTokens(totals.totalTokens), `${formatNumber(totals.requests)}회 요청`, 'token'),
     kpiCard('입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatTokens(totals.inputCachedTokens)}`, 'input'),
@@ -1024,6 +1025,7 @@ function renderServerPrimaryUsage(usage) {
     kpiCard('실패율', formatPercent(totals.failureRate), `${formatNumber(totals.failedRequests)}회 실패`, totals.failedRequests ? 'danger' : 'ok'),
     kpiCard('평균 응답', formatDuration(totals.averageDurationMs), `${formatNumber(totals.successfulRequests)}회 성공`, 'latency'),
     kpiCard('추정 비용', formatCost(totals), pricingCaption(totals), 'cost'),
+    kpiCard('선택 컨텍스트', formatTokens(context.averageSelectedTokens || 0), context.requests ? `${formatNumber(context.requests)}회 · 전체의 ${formatPercent(context.selectionRate || 0)}` : '측정 데이터 없음', 'input'),
   ].join('');
 
   document.querySelector('#usage-budgets').innerHTML = [

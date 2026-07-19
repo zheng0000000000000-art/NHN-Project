@@ -40,6 +40,7 @@ test('usage tracker aggregates by user, source, feature and budget', async (t) =
     actorUserId: 'usr_a', feature: 'task-draft', model: 'test-model', source: 'cli',
     usage: { inputTokens: 100, inputCachedTokens: 25, outputTokens: 50, totalTokens: 150 },
     durationMs: 200,
+    context: { selectedTokens: 900, sourceCount: 4, indexedTokens: 90_000 },
   });
   await tracker.record({
     actorUserId: 'usr_b', feature: 'task-brief', model: 'test-model', source: 'web',
@@ -60,6 +61,10 @@ test('usage tracker aggregates by user, source, feature and budget', async (t) =
   assert.equal(summary.recent.length, 2);
   assert.equal(summary.totals.pricedRequests, 2);
   assert.ok(summary.totals.estimatedCostUsd > 0);
+  assert.equal(summary.context.requests, 1);
+  assert.equal(summary.context.averageSelectedTokens, 900);
+  assert.equal(summary.context.sourceChunks, 4);
+  assert.equal(summary.context.selectionRate, 0.01);
 });
 
 test('usage summary can be limited to the current actor', async (t) => {

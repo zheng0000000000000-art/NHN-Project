@@ -229,7 +229,6 @@ function normalizeQuotaWindow(value, tool, index) {
 export function quotaFreshness(window, collectedAt, now = new Date(), freshnessMs = 15 * 60_000) {
   const ageMs = Math.max(0, now.getTime() - Date.parse(collectedAt));
   const lastKnownUsedPercent = clamp(Number(window.usedPercent) || 0, 0, 100);
-  if (ageMs <= freshnessMs) return { ...window, freshness: 'LIVE', effectiveUsedPercent: lastKnownUsedPercent, staleSinceMinutes: 0 };
   const staleSinceMinutes = Math.floor(ageMs / 60_000);
   if (window.resetsAt && now.getTime() >= Date.parse(window.resetsAt)) {
     return {
@@ -241,6 +240,7 @@ export function quotaFreshness(window, collectedAt, now = new Date(), freshnessM
       staleSinceMinutes,
     };
   }
+  if (ageMs <= freshnessMs) return { ...window, freshness: 'LIVE', effectiveUsedPercent: lastKnownUsedPercent, staleSinceMinutes: 0 };
   return { ...window, freshness: 'STALE', effectiveUsedPercent: lastKnownUsedPercent, lastKnownUsedPercent, staleSinceMinutes };
 }
 

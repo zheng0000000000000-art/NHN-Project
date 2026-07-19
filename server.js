@@ -538,7 +538,7 @@ async function handleApi(request, response) {
     assertPlainObject(body);
     const [tasks, profiles, context] = await Promise.all([store.listTasks(), verifier.publicProfiles(), projectContext.get()]);
     const contextPack = contextIndex.search(body.goal);
-    const draft = await runTrackedAI(request, actor, 'task-draft', () => ai.draftTask({ goal: body.goal, tasks, profiles, projectContext: context, contextPack }));
+    const draft = await runTrackedAI(request, actor, 'task-draft', () => ai.draftTask({ goal: body.goal, tasks, profiles, projectContext: context, contextPack }), { contextPack });
     await store.recordAudit(actor.id, 'AI_TASK_DRAFTED', {
       contentSha256: draft.aiMeta.contentSha256,
       model: draft.aiMeta.model,
@@ -553,7 +553,7 @@ async function handleApi(request, response) {
     assertPlainObject(body);
     const [tasks, profiles, context] = await Promise.all([store.listTasks(), verifier.publicProfiles(), projectContext.get()]);
     const contextPack = contextIndex.search(body.objective);
-    const result = await runTrackedAI(request, actor, 'next-tasks', () => ai.suggestNextTasks({ objective: body.objective, tasks, profiles, projectContext: context, contextPack }));
+    const result = await runTrackedAI(request, actor, 'next-tasks', () => ai.suggestNextTasks({ objective: body.objective, tasks, profiles, projectContext: context, contextPack }), { contextPack });
     await store.recordAudit(actor.id, 'AI_NEXT_TASKS_SUGGESTED', {
       contentSha256: result.aiMeta.contentSha256,
       suggestionCount: result.suggestions.length,
@@ -582,6 +582,7 @@ async function handleApi(request, response) {
       () => aiAction === 'brief'
         ? ai.taskBrief({ task: current, users, skills: appliedSkills, projectContext: context, contextPack })
         : ai.verificationSummary({ task: current, users, projectContext: context, contextPack }),
+      { contextPack },
     );
     const field = aiAction === 'brief' ? 'brief' : 'verificationSummary';
     const mutation = aiAction === 'brief' ? 'AI_TASK_BRIEF_SAVED' : 'AI_VERIFICATION_SUMMARY_SAVED';
@@ -870,6 +871,14 @@ async function handleApi(request, response) {
     if (decision === 'APPROVE' && task.status === 'DONE') {
       await store.finalizeSupersession(task, actor);
     }
+    if (decision === 'APPROVE' && merge?.merged) {
+      try {
+        const refreshed = await contextIndex.refresh();
+        await store.recordAudit(actor.id, 'CONTEXT_INDEX_AUTO_REFRESHED', { taskId, ...refreshed });
+      } catch (error) {
+        await store.recordAudit(actor.id, 'CONTEXT_INDEX_AUTO_REFRESH_FAILED', { taskId, error: error.message }).catch(() => {});
+      }
+    }
     sendJson(response, 200, { task, merge });
     return;
   }
@@ -928,7 +937,7 @@ async function handleApi(request, response) {
   }
 }
 
-async function runTrackedAI(request, actor, feature, work) {
+async function runTrackedAI(request, actor, feature, work, { contextPack = null } = {}) {
   const started = Date.now();
   try {
     const result = await work();
@@ -941,6 +950,7 @@ async function runTrackedAI(request, actor, feature, work) {
       usage: result.aiMeta?.usage,
       providerRequestId: result.aiMeta?.providerRequestId,
       durationMs: Date.now() - started,
+      context: contextUsage(contextPack),
     });
     return result;
   } catch (error) {
@@ -952,9 +962,19 @@ async function runTrackedAI(request, actor, feature, work) {
       status: 'FAILED',
       durationMs: Date.now() - started,
       error: error.message,
+      context: contextUsage(contextPack),
     });
     throw error;
   }
+}
+
+function contextUsage(contextPack) {
+  if (!contextPack) return null;
+  return {
+    selectedTokens: contextPack.estimatedTokens,
+    sourceCount: contextPack.sourceCount,
+    indexedTokens: contextIndex.status().estimatedTokens,
+  };
 }
 
 
