@@ -13,6 +13,7 @@ import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
 import { FailureLearningService } from './src/failure-learning.js';
 import { sanitizeExecutorInput } from './src/executor.js';
+import { executionMode } from './src/task-execution.js';
 import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
 import { mergeTaskWorktree, worktreePath } from './src/worktree.js';
@@ -622,7 +623,7 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(claim|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(queue-agent|cancel-agent|claim|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request);
@@ -642,6 +643,29 @@ async function handleApi(request, response) {
     const task = await store.mutateTask(taskId, actor, null, 'TASK_AGENT_ACTIVITY_UPDATED', async (next) => {
       requireTaskParticipantOrAdmin(next, actor);
       next.agentActivity = normalizeAgentActivity(body.activity ?? body, actor);
+    });
+    sendJson(response, 200, { task });
+    return;
+  }
+
+  if (action === 'queue-agent') {
+    const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_AGENT_QUEUED', async (next) => {
+      requireAssigneeOrAdmin(next, actor);
+      if (next.status !== 'READY') throw new HttpError(409, 'Only READY tasks can enter the agent queue.');
+      if (!next.assigneeUserId) throw new HttpError(409, 'Assign a human owner before queueing an agent.');
+      next.executionMode = 'AGENT';
+      next.executionState = 'QUEUED';
+    });
+    sendJson(response, 200, { task });
+    return;
+  }
+
+  if (action === 'cancel-agent') {
+    const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_AGENT_QUEUE_CANCELLED', async (next) => {
+      requireAssigneeOrAdmin(next, actor);
+      if (next.status !== 'READY' || next.executionState !== 'QUEUED') throw new HttpError(409, 'Task is not waiting in the agent queue.');
+      next.executionMode = 'HUMAN';
+      next.executionState = 'IDLE';
     });
     sendJson(response, 200, { task });
     return;
@@ -668,11 +692,15 @@ async function handleApi(request, response) {
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_STARTED', async (next) => {
       if (next.status !== 'READY') throw new HttpError(409, 'Only READY tasks can be started.');
       if (next.assigneeUserId && next.assigneeUserId !== actor.id) throw new HttpError(403, 'This task is assigned to another user.');
+      const mode = executionMode(body.executionMode, 'HUMAN');
+      if (mode === 'AGENT' && next.executionState !== 'QUEUED') throw new HttpError(409, 'Agent execution requires a queued task.');
       next.assigneeUserId = actor.id;
       if (next.reviewerUserId === actor.id) next.reviewerUserId = null;
       next.status = 'IN_PROGRESS';
       next.blocked = null;
       next.review = null;
+      next.executionMode = mode;
+      next.executionState = mode === 'AGENT' ? 'RUNNING' : 'IDLE';
       if (executor) next.executor = executor;
     });
     sendJson(response, 200, { task });
@@ -707,6 +735,7 @@ async function handleApi(request, response) {
           error: error.message,
         };
       }
+      verification.executor = runningTask.executor || null;
 
       const recordedFailures = verification.passed
         ? []
@@ -736,6 +765,7 @@ async function handleApi(request, response) {
         throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
       }
       next.status = 'REVIEW';
+      next.executionState = 'IDLE';
       next.review = { status: 'PENDING', requestedAt: nowIso(), requestedByUserId: actor.id };
     });
     sendJson(response, 200, { task });
@@ -766,9 +796,11 @@ async function handleApi(request, response) {
       };
       if (decision === 'APPROVE') {
         next.status = 'DONE';
+        next.executionState = 'IDLE';
         next.completedAt = nowIso();
       } else {
         next.status = 'IN_PROGRESS';
+        next.executionState = 'IDLE';
         next.verification = next.verification
           ? { ...next.verification, status: 'STALE', passed: false, staleAt: nowIso() }
           : null;
@@ -802,6 +834,7 @@ async function handleApi(request, response) {
       requireTaskParticipantOrAdmin(next, actor);
       if (next.status === 'DONE') throw new HttpError(409, 'Completed tasks cannot be blocked.');
       next.status = 'BLOCKED';
+      next.executionState = 'IDLE';
       next.blocked = { reason: reason.slice(0, 2000), byUserId: actor.id, at: nowIso() };
     });
     sendJson(response, 200, { task });
@@ -816,6 +849,8 @@ async function handleApi(request, response) {
       next.blocked = null;
       next.verification = null;
       next.review = null;
+      next.executionMode = 'HUMAN';
+      next.executionState = 'IDLE';
     });
     sendJson(response, 200, { task });
   }

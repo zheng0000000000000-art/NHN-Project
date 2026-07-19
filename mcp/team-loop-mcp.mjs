@@ -41,14 +41,15 @@ async function fetchTask(client, taskId) {
 const TOOLS = {
   list_tasks: {
     description: 'List board tasks (optionally filter by status or only mine). Archived tasks are excluded by default.',
-    inputSchema: { type: 'object', properties: { status: { type: 'string' }, mine: { type: 'boolean' }, includeArchived: { type: 'boolean' } } },
+    inputSchema: { type: 'object', properties: { status: { type: 'string' }, mine: { type: 'boolean' }, agentQueue: { type: 'boolean' }, includeArchived: { type: 'boolean' } } },
     async run(client, args) {
       const b = await client.request('/api/bootstrap');
       let tasks = b.tasks || [];
       if (!args.includeArchived) tasks = tasks.filter((t) => !t.archived);
       if (args.status) tasks = tasks.filter((t) => t.status === String(args.status).toUpperCase());
       if (args.mine) tasks = tasks.filter((t) => [t.creatorUserId, t.assigneeUserId, t.reviewerUserId].includes(b.user.id));
-      return tasks.map((t) => ({ id: t.id, status: t.status, title: t.title, allowedPaths: t.allowedPaths, assigneeUserId: t.assigneeUserId, version: t.version }));
+      if (args.agentQueue) tasks = tasks.filter((t) => t.status === 'READY' && t.executionMode === 'AGENT' && t.executionState === 'QUEUED' && t.assigneeUserId === b.user.id);
+      return tasks.map((t) => ({ id: t.id, status: t.status, title: t.title, allowedPaths: t.allowedPaths, assigneeUserId: t.assigneeUserId, executionState: t.executionState || 'IDLE', version: t.version }));
     },
   },
   show_task: {
@@ -79,11 +80,11 @@ const TOOLS = {
     },
   },
   claim_task: {
-    description: 'Claim a task to start work. Fails (scope lock) if an active task overlaps its path scope.',
+    description: 'Claim one of the current owner’s queued agent tasks. The human assignee remains responsible while the board shows only agent execution state.',
     inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] },
     async run(client, args) {
       const task = await fetchTask(client, args.taskId);
-      return (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, { method: 'POST', body: { expectedVersion: task.version } })).task;
+      return (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, { method: 'POST', body: { expectedVersion: task.version, executionMode: 'AGENT' } })).task;
     },
   },
   verify_task: {

@@ -1,5 +1,6 @@
 import { buildTaskSpecMarkdown, taskSpecFilename } from './task-spec.js';
 import { filterTasksByPeople } from './task-board-filter.js';
+import { publicExecutionLabel } from './task-execution.js';
 
 const state = {
   user: null,
@@ -602,6 +603,8 @@ board.addEventListener('click', async (event) => {
       return;
     }
     if (action === 'claim') await taskAction(task, 'claim');
+    if (action === 'queue-agent') await taskAction(task, 'queue-agent');
+    if (action === 'cancel-agent') await taskAction(task, 'cancel-agent');
     if (action === 'verify') {
       showToast('검증을 실행하고 있습니다…');
       await taskAction(task, 'verify');
@@ -2007,13 +2010,12 @@ function renderAgentActivityPanel() {
 function renderAgentActivityItem(task) {
   const activity = task.agentActivity || {};
   const attempt = activity.attempt && activity.maxAttempts ? `${activity.attempt}/${activity.maxAttempts}` : '';
-  const tool = [activity.tool, activity.model].filter(Boolean).join('/');
   const stateClass = activity.finishedAt ? (activity.passed ? 'done' : 'failed') : 'active';
   return `<button class="agent-activity-item ${stateClass}" type="button" data-agent-task="${escapeHtml(task.id)}">
     <span class="agent-activity-pulse"></span>
     <span>
       <strong>${escapeHtml(task.title)}</strong>
-      <small>${escapeHtml([activity.label || activity.phase || '작업 중', tool, attempt ? `시도 ${attempt}` : '', userName(task.assigneeUserId)].filter(Boolean).join(' · '))}</small>
+      <small>${escapeHtml(['에이전트 실행', attempt ? `시도 ${attempt}` : '', userName(task.assigneeUserId)].filter(Boolean).join(' · '))}</small>
     </span>
     <span class="muted">${escapeHtml(relativeTime(activity.updatedAt))}</span>
   </button>`;
@@ -2032,10 +2034,8 @@ function renderTask(task) {
   const review = task.review?.comment ? `<p class="muted">리뷰: ${escapeHtml(task.review.comment)}</p>` : '';
   const criteria = renderListSection('완료 조건', task.acceptanceCriteria);
   const aiDetails = renderTaskAI(task.ai);
-  const executorText = task.executor && task.executor.tool
-    ? (task.executor.model ? `${task.executor.tool}/${task.executor.model}` : task.executor.tool)
-    : '';
-  const executorBadge = executorText ? `<span class="badge">CLI ${escapeHtml(executorText)}</span>` : '';
+  const executionLabel = publicExecutionLabel(task);
+  const executionBadge = executionLabel ? `<span class="badge ${task.executionState === 'RUNNING' ? 'pass' : ''}">${escapeHtml(executionLabel)}</span>` : '';
   const agentActivity = renderTaskAgentActivity(task);
 
   return `
@@ -2050,7 +2050,7 @@ function renderTask(task) {
         <span class="badge">${escapeHtml(task.verificationProfile)}</span>
         ${(task.skillIds || []).map((id) => `<span class="badge">skill:${escapeHtml(id)}</span>`).join('')}
         ${verificationBadge}
-        ${executorBadge}
+        ${executionBadge}
       </div>
       <div class="task-meta">${scope}</div>
       ${agentActivity}
@@ -2064,12 +2064,9 @@ function renderTaskAgentActivity(task) {
   const activity = task.agentActivity;
   if (!activity) return '';
   const attempt = activity.attempt && activity.maxAttempts ? ` · 시도 ${activity.attempt}/${activity.maxAttempts}` : '';
-  const tool = [activity.tool, activity.model].filter(Boolean).join('/');
   const stateClass = activity.finishedAt ? (activity.passed ? 'done' : 'failed') : 'active';
   return `<section class="task-agent-activity ${stateClass}">
-    <div><strong>${escapeHtml(activity.label || activity.phase || 'AI/CLI 작업')}</strong><span>${escapeHtml([tool, relativeTime(activity.updatedAt)].filter(Boolean).join(' · '))}${escapeHtml(attempt)}</span></div>
-    ${activity.detail ? `<p>${escapeHtml(activity.detail)}</p>` : ''}
-    ${activity.failureCaseIds?.length ? `<small>실패사례 ${activity.failureCaseIds.map((id) => escapeHtml(id)).join(', ')}</small>` : ''}
+    <div><strong>에이전트 실행 중</strong><span>${escapeHtml(relativeTime(activity.updatedAt))}${escapeHtml(attempt)}</span></div>
   </section>`;
 }
 
@@ -2107,7 +2104,9 @@ function renderActions(task) {
   const participant = [task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(state.user.id) || admin;
   const actions = [];
   actions.push(actionButton(task, 'download-spec', '명세서 다운로드'));
-  if (task.status === 'READY' && (!task.assigneeUserId || mine)) actions.push(actionButton(task, 'claim', '시작'));
+  if (task.status === 'READY' && (!task.assigneeUserId || mine) && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'claim', '직접 시작'));
+  if (task.status === 'READY' && (mine || admin) && task.assigneeUserId && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'queue-agent', '에이전트 대기'));
+  if (task.status === 'READY' && (mine || admin) && task.executionState === 'QUEUED') actions.push(actionButton(task, 'cancel-agent', '대기 취소'));
   if (task.status === 'IN_PROGRESS' && (mine || admin)) {
     actions.push(actionButton(task, 'verify', task.verification?.status === 'RUNNING' ? '검증 중…' : '검증 실행', 'primary'));
     if (task.verification?.passed) actions.push(actionButton(task, 'request-review', '리뷰 요청'));

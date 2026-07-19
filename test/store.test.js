@@ -36,6 +36,8 @@ test('task mutations reject stale versions', async (t) => {
     next.assigneeUserId = alice.id;
   });
   assert.equal(task.acceptanceCriteria.length, 2);
+  assert.equal(task.executionMode, 'HUMAN');
+  assert.equal(task.executionState, 'IDLE');
   assert.equal(started.version, 2);
   await assert.rejects(
     () => store.mutateTask(task.id, alice, task.version, 'STALE', () => {}),

@@ -72,17 +72,20 @@ Auth reuses your `team-loop login` session (or set `TEAM_LOOP_SESSION_COOKIE`).
 1. **`get_project_context`** and **`list_skills`** — read the shared goals and the
    mandatory team rules (skills are lessons learned from past failures; follow them).
 2. **`create_task`** with `allowedPaths` = the **only** files you may change, as globs
-   (e.g. `["src/cli/**"]` or `["public/app.js"]`). Add clear `acceptanceCriteria`.
-3. **`claim_task`** — starts the task. If it fails with a **scope lock** error, an active
+   (e.g. `["src/cli/**"]` or `["public/app.js"]`). Add clear `acceptanceCriteria` and
+   assign a human owner.
+3. The human owner chooses **에이전트 대기** on the board. Agents discover only work
+   deliberately placed in this queue with `list_tasks({ agentQueue: true, mine: true })`.
+4. **`claim_task`** — starts a queued task. If it fails with a **scope lock** error, an active
    task overlaps your paths; choose a non-overlapping scope or wait.
-4. **`create_worktree`** — returns an isolated checkout dir (`.team-loop-worktrees/<id>`
+5. **`create_worktree`** — returns an isolated checkout dir (`.team-loop-worktrees/<id>`
    on branch `task/<id>`). This is your sandbox.
-5. **Edit only inside that worktree dir, and only files matching `allowedPaths`.** The
+6. **Edit only inside that worktree dir, and only files matching `allowedPaths`.** The
    main tree and other agents' files are physically off-limits.
-6. **`verify_task`** — the server runs the harness **inside your worktree** plus a scope
+7. **`verify_task`** — the server runs the harness **inside your worktree** plus a scope
    check. **You do not decide completion — the program does.** If it fails (harness or
    `SCOPE_VIOLATION`), fix inside the worktree and verify again.
-7. **`request_review_task`** — moves it to REVIEW. A **separate** reviewer (a human, or
+8. **`request_review_task`** — moves it to REVIEW. A **separate** reviewer (a human, or
    the reviewer bot) approves. On approval your branch **auto-merges** into the main
    branch, and the commits carry trailers:
    ```
@@ -90,6 +93,11 @@ Auth reuses your `team-loop login` session (or set `TEAM_LOOP_SESSION_COOKIE`).
    Executor: claude-code/<model>
    Reviewed-By: <reviewer>
    ```
+
+The board intentionally shows only `에이전트 대기` or `에이전트 실행 중`; it does not
+replace the human owner with a tool or model name. Detailed executor attribution is
+kept in the verification result and final commit metadata, where it is useful for
+auditing without turning the board into an agent-monitoring screen.
 
 ## 4. Hard rules
 

@@ -171,6 +171,8 @@ export class Store {
         review: null,
         blocked: null,
         executor: null,
+        executionMode: 'HUMAN',
+        executionState: 'IDLE',
         archived: false,
         archivedAt: null,
         archivedByUserId: null,
