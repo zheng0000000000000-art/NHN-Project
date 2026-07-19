@@ -121,6 +121,47 @@ export class FailureCaseStore {
     });
   }
 
+  async resolveCoveredByActiveArtifacts({ harnessIds = [], skillIds = [] } = {}, actorUserId = 'system') {
+    const active = new Set([
+      ...harnessIds.map((id) => `HARNESS:${id}`),
+      ...skillIds.map((id) => `SKILL:${id}`),
+    ]);
+    return this.#withLock(async () => {
+      const db = await readJson(this.path, EMPTY_DB);
+      const resolved = [];
+      for (const item of db.cases) {
+        if (item.status !== 'OPEN') continue;
+        const covering = (item.learningArtifacts || []).find((artifact) =>
+          active.has(`${artifact.type}:${artifact.id}`) && String(artifact.linkedAt || '') >= String(item.lastSeenAt || ''));
+        if (!covering) continue;
+        item.status = 'RESOLVED';
+        item.statusNote = `Covered by active ${covering.type.toLowerCase()} ${covering.id}.`;
+        item.statusChangedByUserId = actorUserId;
+        item.statusChangedAt = nowIso();
+        resolved.push(item.id);
+      }
+      if (resolved.length) await atomicWriteJson(this.path, db);
+      return resolved;
+    });
+  }
+
+  async resolveTaskFailuresOnPass(taskId, harnessId, actorUserId) {
+    return this.#withLock(async () => {
+      const db = await readJson(this.path, EMPTY_DB);
+      const resolved = [];
+      for (const item of db.cases) {
+        if (item.status !== 'OPEN' || item.harnessId !== harnessId || !(item.taskIds || []).includes(taskId)) continue;
+        item.status = 'RESOLVED';
+        item.statusNote = `Resolved by a passing ${harnessId} verification for ${taskId}.`;
+        item.statusChangedByUserId = actorUserId;
+        item.statusChangedAt = nowIso();
+        resolved.push(item.id);
+      }
+      if (resolved.length) await atomicWriteJson(this.path, db);
+      return resolved;
+    });
+  }
+
   async #record(observation, actorUserId) {
     return this.#withLock(async () => {
       const db = await readJson(this.path, EMPTY_DB);
