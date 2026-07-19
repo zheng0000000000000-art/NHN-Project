@@ -2,5 +2,7 @@ data/*.json
 data/*.jsonl
 data/*.key
 !data/.gitkeep
+.team-loop/
+.team-loop-worktrees/
 node_modules/
 .DS_Store
