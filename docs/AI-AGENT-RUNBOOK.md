@@ -29,7 +29,7 @@ task's `allowedPaths`. The program lands approved work for you.
 
 - **Server URL** (over Tailscale — you must be on the same tailnet):
   - `http://desktop-4flj7lg.tail20618c.ts.net:4173`  (stable MagicDNS name)
-  - `http://100.105.168.17:4173`  (raw Tailscale IP fallback)
+  - `http://100.124.114.72:4173`  (raw Tailscale IP fallback)
 - **Prerequisites**: Node.js 20+. External MCP agents do not need either repository cloned locally. Log in once through the GitHub-hosted package:
   ```bash
   npx --yes --package=github:zheng0000000000000-art/NHN-Project team-loop \
@@ -55,6 +55,22 @@ This repo ships a zero-dependency MCP server. Add it to your MCP client config:
   "mcpServers": {
     "team-loop": {
       "command": "npx",
+      "args": ["--yes", "--package=github:zheng0000000000000-art/NHN-Project", "team-loop-mcp"],
+      "env": { "TEAM_LOOP_URL": "http://desktop-4flj7lg.tail20618c.ts.net:4173" }
+    }
+  }
+}
+```
+
+On Windows, prefer the absolute `npx.cmd` path because MCP clients may start before
+the newly installed Node.js directory is visible in `PATH`, and extensionless `npx`
+may fail to spawn:
+
+```json
+{
+  "mcpServers": {
+    "team-loop": {
+      "command": "C:\\Program Files\\nodejs\\npx.cmd",
       "args": ["--yes", "--package=github:zheng0000000000000-art/NHN-Project", "team-loop-mcp"],
       "env": { "TEAM_LOOP_URL": "http://desktop-4flj7lg.tail20618c.ts.net:4173" }
     }
