@@ -42,7 +42,7 @@ export class UsageTracker {
     };
   }
 
-  async record({ actorUserId, feature, model, source = 'api', status = 'SUCCESS', usage = {}, providerRequestId = null, durationMs = 0, error = null }) {
+  async record({ actorUserId, feature, model, source = 'api', status = 'SUCCESS', usage = {}, providerRequestId = null, durationMs = 0, error = null, context = null }) {
     const normalizedUsage = normalizeUsage(usage);
     const estimatedCostUsd = normalizedUsage.totalTokens > 0
       ? estimateCost(model, normalizedUsage, this.config.modelPricingUsdPerMillionTokens)
@@ -60,6 +60,7 @@ export class UsageTracker {
       usage: normalizedUsage,
       estimatedCostUsd,
       error: error ? String(error).slice(0, 500) : null,
+      context: normalizeContextUsage(context),
     };
     return this.#withLock(async () => {
       const before = await fileMetadata(this.eventsPath);
@@ -132,6 +133,7 @@ export class UsageTracker {
         ...event,
         actorName: userMap.get(event.actorUserId)?.name || '알 수 없음',
       })),
+      context: aggregateContextUsage(periodEvents),
       config: {
         monthlyTokenBudget: this.config.monthlyTokenBudget,
         monthlyRequestBudget: this.config.monthlyRequestBudget,
@@ -213,6 +215,28 @@ export function normalizeUsage(value = {}) {
     outputTokens,
     reasoningTokens,
     totalTokens: suppliedTotal || inputTokens + outputTokens,
+  };
+}
+
+function normalizeContextUsage(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    selectedTokens: Math.max(0, Math.round(Number(value.selectedTokens) || 0)),
+    sourceCount: Math.max(0, Math.round(Number(value.sourceCount) || 0)),
+    indexedTokens: Math.max(0, Math.round(Number(value.indexedTokens) || 0)),
+  };
+}
+
+function aggregateContextUsage(events) {
+  const rows = events.filter((event) => event.context);
+  const selectedTokens = rows.reduce((sum, event) => sum + event.context.selectedTokens, 0);
+  const indexedTokens = rows.reduce((sum, event) => sum + event.context.indexedTokens, 0);
+  return {
+    requests: rows.length,
+    selectedTokens,
+    averageSelectedTokens: rows.length ? Math.round(selectedTokens / rows.length) : 0,
+    sourceChunks: rows.reduce((sum, event) => sum + event.context.sourceCount, 0),
+    selectionRate: indexedTokens > 0 ? selectedTokens / indexedTokens : 0,
   };
 }
 

@@ -101,5 +101,8 @@ test('quota freshness handles live, stale, inferred reset, and missing reset', (
   assert.equal(inferred.freshness, 'RESET_INFERRED');
   assert.equal(inferred.inferredUsedPercent, 0);
   assert.equal(inferred.lastKnownUsedPercent, 35);
+  const freshlyCollectedExpired = quotaFreshness({ ...base, resetsAt: '2026-07-15T09:59:00.000Z' }, '2026-07-15T09:59:30.000Z', now);
+  assert.equal(freshlyCollectedExpired.freshness, 'RESET_INFERRED');
+  assert.equal(freshlyCollectedExpired.effectiveUsedPercent, 0);
   assert.equal(quotaFreshness({ usedPercent: 35, resetsAt: null }, '2026-07-15T09:00:00.000Z', now).freshness, 'STALE');
 });
