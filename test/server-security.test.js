@@ -119,3 +119,55 @@ test('external usage endpoint requires authentication and rate limits collectors
   }
   assert.equal(status, 429);
 });
+
+test('agent work must be queued by its human owner before it can be claimed', async (t) => {
+  const base = await startServer(t);
+  const registration = await post(base, '/api/auth/register', {
+    name: 'QueueOwner', password: 'correct-password', signupCode: 'test-signup-code',
+  });
+  assert.equal(registration.status, 201);
+  const cookie = registration.headers.get('set-cookie').split(';', 1)[0];
+  const { user } = await registration.json();
+  const headers = { Cookie: cookie };
+
+  const creation = await post(base, '/api/tasks', {
+    title: 'Agent queue contract',
+    assigneeUserId: user.id,
+    allowedPaths: ['src/**'],
+    acceptanceCriteria: ['Agent execution keeps the human owner.'],
+    verificationProfile: 'repository-basic',
+  }, headers);
+  assert.equal(creation.status, 201);
+  const created = (await creation.json()).task;
+  assert.equal(created.executionMode, 'HUMAN');
+  assert.equal(created.executionState, 'IDLE');
+
+  const prematureClaim = await post(base, `/api/tasks/${created.id}/claim`, {
+    expectedVersion: created.version,
+    executionMode: 'AGENT',
+    executor: { tool: 'codex', model: 'test-model' },
+  }, headers);
+  assert.equal(prematureClaim.status, 409);
+
+  const queuedResponse = await post(base, `/api/tasks/${created.id}/queue-agent`, {
+    expectedVersion: created.version,
+  }, headers);
+  assert.equal(queuedResponse.status, 200);
+  const queued = (await queuedResponse.json()).task;
+  assert.equal(queued.assigneeUserId, user.id);
+  assert.equal(queued.executionMode, 'AGENT');
+  assert.equal(queued.executionState, 'QUEUED');
+
+  const claimResponse = await post(base, `/api/tasks/${created.id}/claim`, {
+    expectedVersion: queued.version,
+    executionMode: 'AGENT',
+    executor: { tool: 'codex', model: 'test-model' },
+  }, headers);
+  assert.equal(claimResponse.status, 200);
+  const claimed = (await claimResponse.json()).task;
+  assert.equal(claimed.status, 'IN_PROGRESS');
+  assert.equal(claimed.assigneeUserId, user.id);
+  assert.equal(claimed.executionState, 'RUNNING');
+  assert.equal(claimed.executor.tool, 'codex');
+  assert.equal(claimed.executor.model, 'test-model');
+});

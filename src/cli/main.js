@@ -606,8 +606,13 @@ async function runDispatch(client, positionals, options, json) {
 
   if (task.status === 'READY') {
     const executor = mergeCliExecutor(await loadConfig());
+    if (task.executionState !== 'QUEUED') {
+      task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/queue-agent`, {
+        method: 'POST', body: { expectedVersion: task.version },
+      })).task;
+    }
     task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
-      method: 'POST', body: { expectedVersion: task.version, ...(executor ? { executor } : {}) },
+      method: 'POST', body: { expectedVersion: task.version, executionMode: 'AGENT', ...(executor ? { executor } : {}) },
     })).task;
   }
   if (task.status !== 'IN_PROGRESS') throw new Error(`Task must be IN_PROGRESS to dispatch (now ${task.status}).`);
@@ -855,13 +860,17 @@ async function runOrchestrate(client, positionals, options, json) {
     allowedPaths: allowedPaths.length ? allowedPaths : ['**'],
     acceptanceCriteria: criteria,
     verificationProfile: stringOption(options, 'profile', 'repository-basic'),
+    assigneeUserId: worker.id,
   } })).task;
   log(`1) [worker ${worker.name}] created ${task.id}`);
 
   // WORKER: claim (attach personal CLI executor profile)
   const executor = mergeCliExecutor(await loadConfig());
+  task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/queue-agent`, {
+    method: 'POST', body: { expectedVersion: task.version },
+  })).task;
   task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
-    method: 'POST', body: { expectedVersion: task.version, ...(executor ? { executor } : {}) },
+    method: 'POST', body: { expectedVersion: task.version, executionMode: 'AGENT', ...(executor ? { executor } : {}) },
   })).task;
   log(`2) [worker] claimed -> ${task.status}${task.executor?.tool ? ` as ${task.executor.tool}${task.executor.model ? `/${task.executor.model}` : ''}` : ''}`);
 
@@ -971,14 +980,18 @@ async function runSolo(client, positionals, options, json) {
     allowedPaths: allowedPaths.length ? allowedPaths : (Array.isArray(draft?.allowedPaths) && draft.allowedPaths.length ? draft.allowedPaths : ['**']),
     acceptanceCriteria: criteria.length ? criteria : (Array.isArray(draft?.acceptanceCriteria) ? draft.acceptanceCriteria : []),
     verificationProfile: stringOption(options, 'profile', 'repository-basic'),
+    assigneeUserId: bootstrap.user.id,
   };
   let task = (await client.request('/api/tasks', { method: 'POST', body: createBody })).task;
   log(`1) created ${task.id} (${task.status})`);
 
   // 2) claim, attaching this machine's personal CLI executor profile
   const executor = mergeCliExecutor(await loadConfig());
+  task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/queue-agent`, {
+    method: 'POST', body: { expectedVersion: task.version },
+  })).task;
   task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
-    method: 'POST', body: { expectedVersion: task.version, ...(executor ? { executor } : {}) },
+    method: 'POST', body: { expectedVersion: task.version, executionMode: 'AGENT', ...(executor ? { executor } : {}) },
   })).task;
   log(`2) claimed -> ${task.status}${task.executor?.tool ? ` as ${task.executor.tool}${task.executor.model ? `/${task.executor.model}` : ''}` : ''}`);
 

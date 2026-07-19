@@ -70,6 +70,8 @@ export function materializeProjectPack(pack, users = [], { now = new Date().toIS
       review: null,
       blocked: null,
       executor: null,
+      executionMode: 'HUMAN',
+      executionState: 'IDLE',
       archived: false,
       archivedAt: null,
       archivedByUserId: null,
