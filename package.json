@@ -8,7 +8,8 @@
     "start": "node server.js",
     "test": "node --test --test-concurrency=1",
     "check": "node --check server.js && node --check public/app.js && node --test --test-concurrency=1",
-    "cli": "node bin/team-loop.js"
+    "cli": "node bin/team-loop.js",
+    "project:pack": "node tools/project-pack.mjs"
   },
   "engines": {
     "node": ">=20"
