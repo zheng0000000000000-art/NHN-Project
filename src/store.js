@@ -28,6 +28,7 @@ export class Store {
     await this.#withLock(async () => {
       const users = await readJson(this.usersPath, EMPTY_USERS);
       const tasks = await readJson(this.tasksPath, EMPTY_TASKS);
+      migrateLegacySupersessions(tasks.tasks);
       await atomicWriteJson(this.usersPath, users);
       await atomicWriteJson(this.tasksPath, tasks);
     });
@@ -173,6 +174,8 @@ export class Store {
         executor: null,
         executionMode: 'HUMAN',
         executionState: 'IDLE',
+        supersedesTaskId: input.supersedesTaskId || null,
+        supersededByTaskId: null,
         archived: false,
         archivedAt: null,
         archivedByUserId: null,
@@ -204,6 +207,28 @@ export class Store {
       await atomicWriteJson(this.tasksPath, db);
       await this.#audit(actor.id, mutationName, { taskId, from: current.status, to: next.status, version: next.version });
       return next;
+    });
+  }
+
+  async finalizeSupersession(replacement, actor) {
+    const originalId = replacement?.supersedesTaskId;
+    if (!originalId || replacement.status !== 'DONE') return null;
+    return this.#withLock(async () => {
+      const db = await readJson(this.tasksPath, EMPTY_TASKS);
+      const original = db.tasks.find((task) => task.id === originalId);
+      if (!original) throw new HttpError(409, 'Superseded task no longer exists.');
+      if (original.id === replacement.id) throw new HttpError(409, 'A task cannot supersede itself.');
+      const at = nowIso();
+      original.archived = true;
+      original.archivedAt = at;
+      original.archivedByUserId = actor.id;
+      original.supersededByTaskId = replacement.id;
+      original.supersededAt = at;
+      original.version = (Number(original.version) || 0) + 1;
+      original.updatedAt = at;
+      await atomicWriteJson(this.tasksPath, db);
+      await this.#audit(actor.id, 'TASK_SUPERSEDED', { taskId: original.id, replacementTaskId: replacement.id });
+      return structuredClone(original);
     });
   }
 
@@ -286,4 +311,22 @@ function normalizeDateOnly(value) {
     throw new HttpError(400, 'Schedule dates must use YYYY-MM-DD.');
   }
   return text;
+}
+
+function migrateLegacySupersessions(tasks = []) {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  for (const replacement of tasks) {
+    if (!replacement.supersedesTaskId) {
+      const match = String(replacement.description || '').match(/\b(tsk_[a-z0-9]+)\b[^\n]{0,80}재발행/i);
+      if (match && byId.has(match[1]) && match[1] !== replacement.id) replacement.supersedesTaskId = match[1];
+    }
+    if (!replacement.supersedesTaskId || replacement.status !== 'DONE') continue;
+    const original = byId.get(replacement.supersedesTaskId);
+    if (!original || original.id === replacement.id) continue;
+    original.archived = true;
+    original.archivedAt ||= replacement.completedAt || replacement.archivedAt || replacement.updatedAt || nowIso();
+    original.archivedByUserId ||= replacement.review?.reviewerUserId || replacement.creatorUserId || null;
+    original.supersededByTaskId = replacement.id;
+    original.supersededAt ||= original.archivedAt;
+  }
 }

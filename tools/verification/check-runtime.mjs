@@ -16,10 +16,28 @@ try {
   if (payload?.ok !== true) throw new Error('Health endpoint did not return ok=true');
   const page = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(5_000) });
   if (!page.ok || !(await page.text()).includes('<main id="app">')) throw new Error('Dashboard root did not render the app shell');
-  process.stdout.write(`runtime check passed: syntax + HTTP ${health.status} + dashboard ${page.status}\n`);
+  await verifyBrowserModuleTree(port, '/app.js');
+  process.stdout.write(`runtime check passed: syntax + HTTP ${health.status} + dashboard ${page.status} + browser modules\n`);
 } finally {
   child?.kill('SIGTERM');
   await rm(dataDirectory, { recursive: true, force: true });
+}
+
+async function verifyBrowserModuleTree(port, entry) {
+  const pending = [entry];
+  const visited = new Set();
+  while (pending.length) {
+    const pathname = pending.shift();
+    if (visited.has(pathname)) continue;
+    visited.add(pathname);
+    const response = await fetch(`http://127.0.0.1:${port}${pathname}`, { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) throw new Error(`Browser module ${pathname} returned HTTP ${response.status}`);
+    const source = await response.text();
+    for (const match of source.matchAll(/(?:import|export)\s+(?:[^'";]+?\s+from\s+)?['"](\.\.?\/[^'"]+)['"]/g)) {
+      const resolved = new URL(match[1], `http://127.0.0.1:${port}${pathname}`).pathname;
+      pending.push(resolved);
+    }
+  }
 }
 
 function run(file, args) {

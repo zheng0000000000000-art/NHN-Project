@@ -96,3 +96,19 @@ test('multiple scope violations from one verification are recorded as one event'
   assert.deepEqual(recorded[0].identity.paths, ['public/app.js', 'server.js']);
   assert.match(recorded[0].title, /2 paths/);
 });
+
+test('process failures are recorded and deduplicated without fake command output', async (t) => {
+  const store = await storeFixture(t);
+  const payload = {
+    harnessId: 'workflow-integrity',
+    kind: 'TASK_SUPERSESSION_MISSING',
+    title: 'Replacement completed while original remained active',
+    taskIds: ['tsk_old', 'tsk_new'],
+    identity: { originalTaskId: 'tsk_old', replacementTaskId: 'tsk_new' },
+    evidence: { originalStatus: 'READY', replacementStatus: 'DONE' },
+  };
+  const first = await store.recordProcessFailure(payload, 'usr_admin');
+  const second = await store.recordProcessFailure(payload, 'usr_admin');
+  assert.equal(first.id, second.id);
+  assert.equal((await store.get(first.id)).occurrences, 2);
+});
