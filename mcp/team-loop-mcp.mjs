@@ -13,6 +13,7 @@ import readline from 'node:readline';
 import { CliClient } from '../src/cli/client.js';
 import { loadSession, normalizeServer } from '../src/cli/session.js';
 import { createTaskWorktree, removeTaskWorktree } from '../src/worktree.js';
+import { taskListView } from '../src/mcp-task-view.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'team-loop', version: '0.7.0' };
@@ -40,8 +41,14 @@ async function fetchTask(client, taskId) {
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
   list_tasks: {
-    description: 'List board tasks (optionally filter by status or only mine). Archived tasks are excluded by default.',
-    inputSchema: { type: 'object', properties: { status: { type: 'string' }, mine: { type: 'boolean' }, agentQueue: { type: 'boolean' }, includeArchived: { type: 'boolean' } } },
+    description: 'List board tasks. Defaults to a compact id/title/status view; use detail="work" only when scope and ownership fields are needed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string' }, mine: { type: 'boolean' }, agentQueue: { type: 'boolean' }, includeArchived: { type: 'boolean' },
+        detail: { type: 'string', enum: ['brief', 'work'], default: 'brief' },
+      },
+    },
     async run(client, args) {
       const b = await client.request('/api/bootstrap');
       let tasks = b.tasks || [];
@@ -49,7 +56,7 @@ const TOOLS = {
       if (args.status) tasks = tasks.filter((t) => t.status === String(args.status).toUpperCase());
       if (args.mine) tasks = tasks.filter((t) => [t.creatorUserId, t.assigneeUserId, t.reviewerUserId].includes(b.user.id));
       if (args.agentQueue) tasks = tasks.filter((t) => t.status === 'READY' && t.executionMode === 'AGENT' && t.executionState === 'QUEUED' && t.assigneeUserId === b.user.id);
-      return tasks.map((t) => ({ id: t.id, status: t.status, title: t.title, allowedPaths: t.allowedPaths, assigneeUserId: t.assigneeUserId, executionState: t.executionState || 'IDLE', version: t.version }));
+      return tasks.map((task) => taskListView(task, args.detail));
     },
   },
   show_task: {

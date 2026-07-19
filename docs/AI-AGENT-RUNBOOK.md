@@ -67,6 +67,10 @@ Auth reuses your `team-loop login` session (or set `TEAM_LOOP_SESSION_COOKIE`).
 `verify_task`, `request_review_task`, `create_worktree`, `remove_worktree`,
 `list_skills`, `list_harnesses`, `get_project_context`, `set_project_context`.
 
+Keep discovery cheap: `list_tasks()` returns only task id, title, and status. Use
+`list_tasks({ detail: "work" })` when comparing scopes or ownership, then `show_task`
+only for the single task you intend to execute. Do not load every full task up front.
+
 ## 3. The workflow, step by step
 
 1. **`get_project_context`** and **`list_skills`** — read the shared goals and the
