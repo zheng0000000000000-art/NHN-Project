@@ -67,6 +67,18 @@
           "timeoutMs": 120000
         }
       ]
+    },
+    "task-supersession-regression": {
+      "label": "Task supersession regression",
+      "description": "Checks that completed replacement tasks archive their original task and retain explicit linkage.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["tools/learning/check-task-supersession.mjs"],
+          "expectedExit": 0,
+          "timeoutMs": 120000
+        }
+      ]
     }
   }
 }

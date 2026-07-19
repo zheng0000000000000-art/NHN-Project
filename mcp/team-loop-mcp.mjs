@@ -73,6 +73,7 @@ const TOOLS = {
         allowedPaths: { type: 'array', items: { type: 'string' } },
         acceptanceCriteria: { type: 'array', items: { type: 'string' } },
         verificationProfile: { type: 'string' }, priority: { type: 'number' },
+        supersedesTaskId: { type: 'string', description: 'Original task replaced by this reissued task.' },
       },
       required: ['title'],
     },
@@ -82,6 +83,7 @@ const TOOLS = {
         allowedPaths: Array.isArray(args.allowedPaths) && args.allowedPaths.length ? args.allowedPaths : ['**'],
         acceptanceCriteria: Array.isArray(args.acceptanceCriteria) ? args.acceptanceCriteria : [],
         verificationProfile: args.verificationProfile || 'repository-basic',
+        supersedesTaskId: args.supersedesTaskId || null,
       };
       return (await client.request('/api/tasks', { method: 'POST', body })).task;
     },

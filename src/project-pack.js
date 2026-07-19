@@ -1,6 +1,7 @@
 const TASK_FIELDS = [
   'title', 'description', 'priority', 'allowedPaths', 'acceptanceCriteria',
   'verificationProfile', 'schedule', 'skillIds',
+  'supersedesTaskId',
 ];
 
 function cleanId(value) {
@@ -72,6 +73,8 @@ export function materializeProjectPack(pack, users = [], { now = new Date().toIS
       executor: null,
       executionMode: 'HUMAN',
       executionState: 'IDLE',
+      supersedesTaskId: source.supersedesTaskId || null,
+      supersededByTaskId: null,
       archived: false,
       archivedAt: null,
       archivedByUserId: null,

@@ -738,6 +738,14 @@ function populateTaskForm() {
   assignee.value = currentAssignee;
   reviewer.value = currentReviewer;
 
+  const supersedes = form.elements.supersedesTaskId;
+  const currentSupersedes = supersedes.value;
+  supersedes.innerHTML = '<option value="">없음 · 새 작업</option>' + state.tasks
+    .filter((task) => !task.archived && task.status !== 'DONE')
+    .map((task) => `<option value="${escapeHtml(task.id)}">${escapeHtml(task.title)} · ${escapeHtml(statusLabel(task.status))}</option>`)
+    .join('');
+  if ([...supersedes.options].some((option) => option.value === currentSupersedes)) supersedes.value = currentSupersedes;
+
   const profile = form.elements.verificationProfile;
   const currentProfile = profile.value;
   profile.innerHTML = Object.values(state.profiles).map((item) =>
@@ -764,6 +772,7 @@ function resetTaskForm(form) {
   form.elements.plannedStart.value = '';
   form.elements.plannedEnd.value = '';
   form.elements.scheduleNote.value = '';
+  form.elements.supersedesTaskId.value = '';
   populateTaskForm();
 }
 
@@ -2052,6 +2061,8 @@ function renderTask(task) {
         ${(task.skillIds || []).map((id) => `<span class="badge">skill:${escapeHtml(id)}</span>`).join('')}
         ${verificationBadge}
         ${executionBadge}
+        ${task.supersedesTaskId ? `<span class="badge">대체 작업 · ${escapeHtml(task.supersedesTaskId)}</span>` : ''}
+        ${task.supersededByTaskId ? `<span class="badge">대체됨 · ${escapeHtml(task.supersededByTaskId)}</span>` : ''}
       </div>
       <div class="task-meta">${scope}</div>
       ${agentActivity}

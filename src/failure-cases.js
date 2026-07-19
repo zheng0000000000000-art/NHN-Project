@@ -59,6 +59,18 @@ export class FailureCaseStore {
     return this.recordVerification({ task, verification, actorUserId });
   }
 
+  async recordProcessFailure({ harnessId = 'workflow-integrity', kind, title, taskIds = [], identity = {}, evidence = {} }, actorUserId) {
+    if (!kind || !title) throw new HttpError(400, 'Process failure kind and title are required.');
+    return this.#record(makeCase({
+      harnessId,
+      kind: String(kind),
+      title: String(title),
+      taskIds: [...new Set(taskIds.map(String))],
+      identity: { harnessId, kind: String(kind), ...identity },
+      evidence,
+    }), actorUserId);
+  }
+
   async setStatus(id, actorUserId, status, note = '') {
     if (!STATUSES.has(status)) throw new HttpError(400, 'Invalid failure status.');
     return this.#withLock(async () => {

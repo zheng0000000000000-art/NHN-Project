@@ -9,6 +9,24 @@
         "Do not include volatile outcomes such as actual exit code, timestamps, or workspace fingerprint in the stable failure identity unless they change the root cause.",
         "In the Harness & Skill dashboard, group failures by the human-actionable event before showing counts, and use occurrences for repetition instead of duplicating rows."
       ]
+    },
+    "task-supersession-lifecycle": {
+      "label": "Task supersession lifecycle",
+      "description": "Prevent reissued replacement tasks from leaving the original work active on the board or milestone.",
+      "rules": [
+        "When reissuing a task because its scope or contract changed, set supersedesTaskId instead of relying on title suffixes such as R or words such as reissue.",
+        "Treat the replacement as the only executable task; when it reaches DONE, archive the original automatically and record supersededByTaskId for auditability.",
+        "Before reporting a milestone or board as correct, check for active tasks that have an archived or completed replacement with the same work contract."
+      ]
+    },
+    "runtime-boundary-consistency": {
+      "label": "Runtime boundary consistency",
+      "description": "Keep browser modules, server authorization, and the actually running process on the same verified revision.",
+      "rules": [
+        "Browser entry modules may import only files reachable from the server static root; verify every relative import over HTTP, not only its source file with node --check.",
+        "When server behavior changes, restart the real server process before UI verification; a refreshed browser with an old Node process is a mixed-version failure.",
+        "For permissions exposed as UI buttons, test both visibility and the matching API authorization using the same actor role."
+      ]
     }
   }
 }

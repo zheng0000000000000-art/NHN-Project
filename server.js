@@ -603,6 +603,11 @@ async function handleApi(request, response) {
     const body = await readBody(request);
     assertPlainObject(body);
     await validatePeople(body.assigneeUserId, body.reviewerUserId);
+    if (body.supersedesTaskId) {
+      const original = await store.getTask(String(body.supersedesTaskId));
+      if (!original) throw new HttpError(400, 'Superseded task not found.');
+      if (original.archived) throw new HttpError(409, 'Superseded task is already archived.');
+    }
     const profileNames = await verifier.profileNames();
     const explicitProfile = body.verificationProfile != null && String(body.verificationProfile).trim() !== '';
     const explicitSkills = Object.hasOwn(body, 'skillIds');
@@ -812,6 +817,7 @@ async function handleApi(request, response) {
     });
     let merge = null;
     if (decision === 'APPROVE' && task.status === 'DONE') {
+      await store.finalizeSupersession(task, actor);
       const wt = worktreePath(workspaceRoot, taskId);
       if (existsSync(wt)) {
         try {
