@@ -9,7 +9,8 @@
     "test": "node --test --test-concurrency=1",
     "check": "node --check server.js && node --check public/app.js && node --test --test-concurrency=1",
     "cli": "node bin/team-loop.js",
-    "project:pack": "node tools/project-pack.mjs"
+    "project:pack": "node tools/project-pack.mjs",
+    "workspace": "node tools/workspace.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -4,5 +4,6 @@ data/*.key
 !data/.gitkeep
 .team-loop/
 .team-loop-worktrees/
+workspaces/*/
 node_modules/
 .DS_Store
