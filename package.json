@@ -16,6 +16,7 @@
     "node": ">=20"
   },
   "bin": {
-    "team-loop": "./bin/team-loop.js"
+    "team-loop": "./bin/team-loop.js",
+    "team-loop-mcp": "./mcp/team-loop-mcp.mjs"
   }
 }

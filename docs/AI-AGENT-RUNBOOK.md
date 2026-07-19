@@ -28,11 +28,10 @@ task's `allowedPaths`. The program lands approved work for you.
 - **Server URL** (over Tailscale — you must be on the same tailnet):
   - `http://desktop-4flj7lg.tail20618c.ts.net:4173`  (stable MagicDNS name)
   - `http://100.105.168.17:4173`  (raw Tailscale IP fallback)
-- **Prerequisites**: Node.js 20+, git, and the `team-loop` CLI. To get the CLI:
+- **Prerequisites**: Node.js 20+. External MCP agents do not need either repository cloned locally. Log in once through the GitHub-hosted package:
   ```bash
-  git clone <this-repo-url>
-  cd <repo>/team-loop-lite-ai-learning   # the tool lives here
-  npm link                               # no external npm deps
+  npx --yes --package=github:zheng0000000000000-art/NHN-Project team-loop \
+    --server http://desktop-4flj7lg.tail20618c.ts.net:4173 login --name <you>
   ```
 - **Log in** (the server owner gives you the signup code if one is set):
   ```bash
@@ -53,8 +52,8 @@ This repo ships a zero-dependency MCP server. Add it to your MCP client config:
 {
   "mcpServers": {
     "team-loop": {
-      "command": "node",
-      "args": ["<repo>/team-loop-lite-ai-learning/mcp/team-loop-mcp.mjs"],
+      "command": "npx",
+      "args": ["--yes", "--package=github:zheng0000000000000-art/NHN-Project", "team-loop-mcp"],
       "env": { "TEAM_LOOP_URL": "http://desktop-4flj7lg.tail20618c.ts.net:4173" }
     }
   }
@@ -64,8 +63,10 @@ This repo ships a zero-dependency MCP server. Add it to your MCP client config:
 Auth reuses your `team-loop login` session (or set `TEAM_LOOP_SESSION_COOKIE`).
 
 **Tools available:** `list_tasks`, `show_task`, `create_task`, `claim_task`,
-`verify_task`, `request_review_task`, `create_worktree`, `remove_worktree`,
+`read_task_files`, `submit_task_result`, `verify_task`, `request_review_task`,
 `list_skills`, `list_harnesses`, `get_project_context`, `set_project_context`.
+
+External agents never receive a server filesystem path. `read_task_files` returns scoped UTF-8 content plus a base commit. `submit_task_result` sends changed files back to the server, which applies them inside its own isolated worktree.
 
 Keep discovery cheap: `list_tasks()` returns only task id, title, and status. Use
 `list_tasks({ detail: "work" })` when comparing scopes or ownership, then `show_task`
@@ -82,11 +83,9 @@ only for the single task you intend to execute. Do not load every full task up f
    deliberately placed in this queue with `list_tasks({ agentQueue: true, mine: true })`.
 4. **`claim_task`** — starts a queued task. If it fails with a **scope lock** error, an active
    task overlaps your paths; choose a non-overlapping scope or wait.
-5. **`create_worktree`** — returns an isolated checkout dir (`.team-loop-worktrees/<id>`
-   on branch `task/<id>`). This is your sandbox.
-6. **Edit only inside that worktree dir, and only files matching `allowedPaths`.** The
-   main tree and other agents' files are physically off-limits.
-7. **`verify_task`** — the server runs the harness **inside your worktree** plus a scope
+5. **`read_task_files`** — request only the scoped source files needed for the task and retain the returned `baseCommit`.
+6. Produce changed UTF-8 files locally, then call **`submit_task_result`** with a work summary and learning disposition. The server rejects traversal, binaries, stale bases, oversized submissions, and paths outside `allowedPaths`.
+7. **`verify_task`** — the server runs the harness **inside its worktree** plus a scope
    check. **You do not decide completion — the program does.** If it fails (harness or
    `SCOPE_VIOLATION`), fix inside the worktree and verify again.
 8. **Close the learning loop before review.** List failures encountered during diagnosis,
@@ -124,9 +123,8 @@ auditing without turning the board into an agent-monitoring screen.
 ## 5. Why this is safe (three layers)
 
 - **Pre — scope lock:** two tasks with overlapping paths can't be active at once.
-- **Physical — worktree:** each task is its own git checkout; you can't touch anything
-  outside it.
-- **Post — verify-in-worktree:** the harness + scope check run in your worktree, so your
+- **Physical — worktree:** each submitted task is applied to its own server-side git checkout; the external agent never writes the official tree directly.
+- **Post — verify-in-worktree:** the harness + scope check run in the server worktree, so your
   isolated changes are actually checked before anyone approves them.
 
 If you follow this loop, multiple agents (and humans) can build in parallel without

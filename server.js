@@ -18,6 +18,7 @@ import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
 import { mergeTaskWorktree, worktreeHasChanges, worktreePath } from './src/worktree.js';
+import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
@@ -633,12 +634,41 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(queue-agent|cancel-agent|claim|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(queue-agent|cancel-agent|claim|files|submit|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request);
   assertPlainObject(body);
   const expectedVersion = body.expectedVersion;
+
+  if (action === 'files') {
+    const task = await store.getTask(taskId);
+    if (!task) throw new HttpError(404, 'Task not found.');
+    requireTaskParticipantOrAdmin(task, actor);
+    sendJson(response, 200, await readRemoteTaskFiles(workspaceRoot, task, body.paths));
+    return;
+  }
+
+  if (action === 'submit') {
+    const current = await store.getTask(taskId);
+    if (!current) throw new HttpError(404, 'Task not found.');
+    requireAssigneeOrAdmin(current, actor);
+    if (expectedVersion != null && Number(expectedVersion) !== current.version) throw new HttpError(409, 'Task version conflict. Refresh and retry.');
+    const submission = await applyRemoteTaskSubmission(workspaceRoot, current, body);
+    const task = await store.mutateTask(taskId, actor, current.version, 'TASK_REMOTE_RESULT_SUBMITTED', async (next) => {
+      next.delivery = {
+        type: 'MCP_FILES',
+        submittedAt: nowIso(),
+        submittedByUserId: actor.id,
+        ...submission,
+      };
+      next.verification = null;
+      next.executionMode = 'AGENT';
+      next.executionState = 'IDLE';
+    });
+    sendJson(response, 200, { task, submission });
+    return;
+  }
 
   if (action === 'schedule') {
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_SCHEDULE_UPDATED', async (next) => {
