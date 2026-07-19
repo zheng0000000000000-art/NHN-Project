@@ -70,7 +70,10 @@ function requireSections(file, text, output, groups) {
 }
 
 async function changedWritingFiles(root, selectedMode) {
-  const commands = [['diff', '--name-only', 'HEAD'], ['diff', '--cached', '--name-only', 'HEAD'], ['ls-files', '--others', '--exclude-standard']];
+  // Deleted documents have no contents to review. Excluding D here also prevents
+  // replacement/consolidation changes from failing with ENOENT while keeping renamed,
+  // copied, modified, and newly added documents in the review set.
+  const commands = [['diff', '--diff-filter=ACMRTUXB', '--name-only', 'HEAD'], ['diff', '--cached', '--diff-filter=ACMRTUXB', '--name-only', 'HEAD'], ['ls-files', '--others', '--exclude-standard']];
   const names = [];
   for (const args of commands) {
     try { names.push(...(await execFile('git', args, { cwd: root, windowsHide: true })).stdout.split(/\r?\n/)); }
