@@ -30,6 +30,15 @@
         "When server behavior changes, restart the real server process before UI verification; a refreshed browser with an old Node process is a mixed-version failure.",
         "For permissions exposed as UI buttons, test both visibility and the matching API authorization using the same actor role."
       ]
+    },
+    "delivery-before-done": {
+      "label": "Delivery before DONE",
+      "description": "Prevent reviewed work from being marked complete before its verified worktree output reaches the main branch.",
+      "rules": [
+        "Keep a reviewed task in REVIEW until its worktree changes are committed and merged successfully; approval intent alone is not delivery.",
+        "If commit or merge fails, record TASK_MERGE_FAILED, preserve the worktree, and leave the task reviewable instead of marking it DONE.",
+        "Block archive while a task worktree contains unlanded changes, and remove completed worktrees only after confirming the files exist on the main branch."
+      ]
     }
   }
 }

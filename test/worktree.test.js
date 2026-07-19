@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createTaskWorktree, removeTaskWorktree, listTaskWorktrees, worktreeBranch } from '../src/worktree.js';
+import { createTaskWorktree, removeTaskWorktree, listTaskWorktrees, worktreeBranch, worktreeHasChanges } from '../src/worktree.js';
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-repo-'));
@@ -54,6 +54,20 @@ test('createTaskWorktree is idempotent (recreate resets cleanly)', async () => {
     const { dir } = await createTaskWorktree(repo, 'tsk_X');
     assert.ok(fs.existsSync(dir));
     await removeTaskWorktree(repo, 'tsk_X');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('detects unlanded worktree changes before archive', async () => {
+  const repo = gitRepo();
+  try {
+    const { dir } = await createTaskWorktree(repo, 'tsk_DIRTY');
+    assert.equal(await worktreeHasChanges(repo, 'tsk_DIRTY'), false);
+    fs.writeFileSync(path.join(dir, 'result.txt'), 'unlanded result');
+    assert.equal(await worktreeHasChanges(repo, 'tsk_DIRTY'), true);
+    await removeTaskWorktree(repo, 'tsk_DIRTY');
+    assert.equal(await worktreeHasChanges(repo, 'tsk_DIRTY'), false);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

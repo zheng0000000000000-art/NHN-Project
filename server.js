@@ -17,7 +17,7 @@ import { executionMode } from './public/task-execution.js';
 import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
-import { mergeTaskWorktree, worktreePath } from './src/worktree.js';
+import { mergeTaskWorktree, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
@@ -47,7 +47,7 @@ const externalUsageRateLimiter = new FixedWindowRateLimiter({ limit: 4, windowMs
 
 const store = new Store(dataDirectory, { signupCode, serverStartedAt });
 const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
-const verifier = new Verifier({ workspaceRoot, harnessRegistry });
+const verifier = new Verifier({ workspaceRoot, harnessRegistry, runtimeRoot: projectRoot });
 const failureCases = new FailureCaseStore(dataDirectory);
 const skillRegistry = new SkillRegistry({ dataDirectory, seedSkillPath: learningSeedPath });
 const learning = new FailureLearningService({ failureCases, harnessRegistry, skillRegistry });
@@ -61,6 +61,10 @@ const aiSessionLogs = new AISessionLogStore();
 const runDashboard = new RunDashboardStore({ workspaceRoot });
 const runScopes = new ScopeLeaseService({ workspaceRoot });
 await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), externalUsage.initialize(), contextIndex.initialize()]);
+await failureCases.resolveCoveredByActiveArtifacts({
+  harnessIds: (await harnessRegistry.list({ includeDisabled: false })).map((item) => item.id),
+  skillIds: (await skillRegistry.list({ includeDisabled: false })).map((item) => item.id),
+}, 'system');
 const sessionSecret = await loadOrCreateSecret(dataDirectory);
 
 const server = http.createServer(async (request, response) => {
@@ -746,6 +750,7 @@ async function handleApi(request, response) {
       const recordedFailures = verification.passed
         ? []
         : await failureCases.recordVerification({ task: runningTask, verification, actorUserId: actor.id });
+      if (verification.passed) await failureCases.resolveTaskFailuresOnPass(taskId, verification.profile, actor.id);
       verification.failureCaseIds = recordedFailures.map((item) => item.id);
       const task = await saveVerificationResult(taskId, actor, runningTask.version, verification);
       sendJson(response, 200, { task, failureCases: recordedFailures });
@@ -791,6 +796,23 @@ async function handleApi(request, response) {
     if (decision === 'APPROVE' && !await verifier.fingerprintMatches(current.verification)) {
       throw new HttpError(409, 'Workspace changed after verification. Approval is blocked.');
     }
+    let merge = null;
+    if (decision === 'APPROVE') {
+      const wt = worktreePath(workspaceRoot, taskId);
+      if (existsSync(wt)) {
+        try {
+          const executorLabel = current.executor?.tool ? (current.executor.model ? `${current.executor.tool}/${current.executor.model}` : current.executor.tool) : null;
+          merge = await mergeTaskWorktree(workspaceRoot, taskId, {
+            message: current.title,
+            trailers: { 'Team-Loop-Task': taskId, Executor: executorLabel, 'Reviewed-By': actor.name || actor.id },
+          });
+          await store.recordAudit(actor.id, 'TASK_MERGED', { taskId, commit: merge.commit, branch: merge.branch });
+        } catch (error) {
+          await store.recordAudit(actor.id, 'TASK_MERGE_FAILED', { taskId, error: error.message });
+          throw new HttpError(409, `Review remains pending because delivery failed: ${error.message}`);
+        }
+      }
+    }
     const task = await store.mutateTask(taskId, actor, expectedVersion, decision === 'APPROVE' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED', async (next) => {
       if (decision === 'APPROVE' && !await verifier.fingerprintMatches(next.verification)) {
         throw new HttpError(409, 'Workspace changed after verification. Approval is blocked.');
@@ -815,23 +837,8 @@ async function handleApi(request, response) {
           : null;
       }
     });
-    let merge = null;
     if (decision === 'APPROVE' && task.status === 'DONE') {
       await store.finalizeSupersession(task, actor);
-      const wt = worktreePath(workspaceRoot, taskId);
-      if (existsSync(wt)) {
-        try {
-          const executorLabel = task.executor?.tool ? (task.executor.model ? `${task.executor.tool}/${task.executor.model}` : task.executor.tool) : null;
-          merge = await mergeTaskWorktree(workspaceRoot, taskId, {
-            message: task.title,
-            trailers: { 'Team-Loop-Task': taskId, Executor: executorLabel, 'Reviewed-By': actor.name || actor.id },
-          });
-          await store.recordAudit(actor.id, 'TASK_MERGED', { taskId, commit: merge.commit, branch: merge.branch });
-        } catch (error) {
-          merge = { merged: false, error: error.message };
-          await store.recordAudit(actor.id, 'TASK_MERGE_FAILED', { taskId, error: error.message });
-        }
-      }
     }
     sendJson(response, 200, { task, merge });
     return;
@@ -866,6 +873,9 @@ async function handleApi(request, response) {
   }
 
   if (action === 'archive' || action === 'unarchive') {
+    if (action === 'archive' && await worktreeHasChanges(workspaceRoot, taskId)) {
+      throw new HttpError(409, 'Archive blocked: this task still has unlanded worktree changes.');
+    }
     const task = await store.mutateTask(taskId, actor, expectedVersion, action === 'archive' ? 'TASK_ARCHIVED' : 'TASK_UNARCHIVED', async (next) => {
       requireTaskParticipantOrAdmin(next, actor);
       if (action === 'archive') {

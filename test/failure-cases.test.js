@@ -112,3 +112,26 @@ test('process failures are recorded and deduplicated without fake command output
   assert.equal(first.id, second.id);
   assert.equal((await store.get(first.id)).occurrences, 2);
 });
+
+test('active linked artifacts resolve only failures they cover after the latest occurrence', async (t) => {
+  const store = await storeFixture(t);
+  const failure = await store.recordProcessFailure({ kind: 'DELIVERY_MISSING', title: 'Output not delivered' }, 'usr_1');
+  await store.linkLearningArtifact(failure.id, 'usr_1', { type: 'SKILL', id: 'delivery-before-done', version: 1 });
+  const resolved = await store.resolveCoveredByActiveArtifacts({ skillIds: ['delivery-before-done'] }, 'system');
+  assert.deepEqual(resolved, [failure.id]);
+  assert.equal((await store.get(failure.id)).status, 'RESOLVED');
+});
+
+test('a later passing task verification resolves its open failures', async (t) => {
+  const store = await storeFixture(t);
+  const [failure] = await store.recordVerification({
+    task: { id: 'tsk_retry', verificationProfile: 'node-project' },
+    verification: { profile: 'node-project', status: 'FAILED', passed: false, changedPaths: [], scopeViolations: [], checks: [
+      { file: 'node', args: ['--test'], expectedExit: 0, actualExit: 1, passed: false },
+    ] },
+    actorUserId: 'usr_1',
+  });
+  const resolved = await store.resolveTaskFailuresOnPass('tsk_retry', 'node-project', 'usr_1');
+  assert.deepEqual(resolved, [failure.id]);
+  assert.equal((await store.get(failure.id)).status, 'RESOLVED');
+});

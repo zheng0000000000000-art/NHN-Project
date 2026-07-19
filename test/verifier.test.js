@@ -71,6 +71,27 @@ test('verifier binds command pass to git scope', async (t) => {
   assert.deepEqual(fail.scopeViolations, ['game.js']);
 });
 
+test('teamLoopRoot placeholders resolve to the tool runtime rather than an external workspace', async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'team-loop-external-workspace-'));
+  const runtime = await mkdtemp(path.join(os.tmpdir(), 'team-loop-runtime-root-'));
+  t.after(() => Promise.all([rm(workspace, { recursive: true, force: true }), rm(runtime, { recursive: true, force: true })]));
+  await execFile('git', ['init', '-q'], { cwd: workspace });
+  await execFile('git', ['config', 'user.name', 'Test'], { cwd: workspace });
+  await execFile('git', ['config', 'user.email', 'test@example.invalid'], { cwd: workspace });
+  await writeFile(path.join(workspace, 'README.md'), 'external workspace\n');
+  await writeFile(path.join(runtime, 'check.mjs'), 'process.exit(0);\n');
+  const profiles = path.join(runtime, 'profiles.json');
+  await writeFile(profiles, JSON.stringify({ schemaVersion: 1, profiles: { test: { commands: [
+    { file: process.execPath, args: ['{teamLoopRoot}/check.mjs'], expectedExit: 0, timeoutMs: 5000 },
+  ] } } }));
+  await execFile('git', ['add', '.'], { cwd: workspace });
+  await execFile('git', ['commit', '-qm', 'initial'], { cwd: workspace });
+  const verifier = new Verifier({ workspaceRoot: workspace, runtimeRoot: runtime, profilePath: profiles });
+  const result = await verifier.run({ verificationProfile: 'test', allowedPaths: ['**'] });
+  assert.equal(result.passed, true);
+  assert.equal(result.checks[0].args[0].replaceAll('\\', '/'), path.join(runtime, 'check.mjs').replaceAll('\\', '/'));
+});
+
 test('workspace verification mutex rejects a concurrent verification instead of queueing', async () => {
   const verifier = new Verifier({ workspaceRoot: process.cwd(), profilePath: path.join(process.cwd(), 'config', 'verification-profiles.json') });
   let releaseFirst;

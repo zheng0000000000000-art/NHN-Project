@@ -66,6 +66,16 @@ export async function listTaskWorktrees(repoRoot) {
   return entries.filter((entry) => entry.path.includes(WORKTREE_DIRNAME) || entry.path.includes(marker));
 }
 
+export async function worktreeHasChanges(repoRoot, taskId) {
+  const dir = worktreePath(repoRoot, taskId);
+  try {
+    return Boolean((await git(['status', '--porcelain'], dir)).trim());
+  } catch (error) {
+    if (error?.code === 'ENOENT' || /cannot change to|not a working tree|No such file/i.test(error.message)) return false;
+    throw error;
+  }
+}
+
 // Land a task's verified worktree changes into the repo's current branch: commit the
 // working-tree changes onto task/<id>, merge (no-ff) into the main branch, then remove
 // the worktree. Throws on merge conflict (caller reports; a human merges manually).
