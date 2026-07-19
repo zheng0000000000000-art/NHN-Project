@@ -73,6 +73,17 @@ textarea { resize: vertical; }
 .details { margin-top: .7rem; border-top: 1px solid var(--line); padding-top: .6rem; }
 .details summary { cursor: pointer; color: #cbd5e1; font-size: .8rem; }
 .details pre { white-space: pre-wrap; font-size: .72rem; color: #aeb9c7; background: #0d1117; padding: .6rem; border-radius: 8px; max-height: 220px; overflow: auto; }
+.task-result { margin-top:.75rem; padding:.75rem; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px; background:color-mix(in srgb, var(--panel) 88%, var(--accent)); }
+.task-result.failed { border-left-color:var(--danger); }
+.task-result-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem; }
+.task-result-heading .eyebrow { margin:0 0 .2rem; }
+.task-result-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; margin-top:.65rem; }
+.task-result-grid small { color:var(--muted); }
+.task-result-grid ul { margin:.3rem 0 0; padding-left:1.1rem; }
+.task-result-grid li { margin:.22rem 0; overflow-wrap:anywhere; }
+.pass-text { color:var(--success); }
+.fail-text { color:var(--danger); }
+@media (max-width:720px) { .task-result-grid { grid-template-columns:1fr; } }
 .empty { color: #64748b; text-align: center; padding: 2rem .5rem; font-size: .85rem; }
 .toast { position: fixed; right: 1rem; bottom: 1rem; max-width: 420px; background: #202a36; border: 1px solid #425065; border-radius: 12px; padding: .8rem 1rem; box-shadow: 0 12px 32px rgba(0,0,0,.4); }
 

@@ -1,4 +1,5 @@
 import { buildTaskSpecMarkdown, taskSpecFilename } from './task-spec.js';
+import { buildTaskResultMarkdown, taskResultFilename, taskResultSummary } from './task-result.js';
 import { filterTasksByPeople } from './task-board-filter.js';
 import { publicExecutionLabel } from './task-execution.js';
 import { canReviewTask } from './review-policy.js';
@@ -595,6 +596,10 @@ board.addEventListener('click', async (event) => {
   const action = button.dataset.action;
   if (action === 'download-spec') {
     downloadTaskSpec(task);
+    return;
+  }
+  if (action === 'download-result') {
+    downloadTaskResult(task);
     return;
   }
   button.disabled = true;
@@ -2040,6 +2045,7 @@ function renderTask(task) {
     : '<span class="badge">미검증</span>';
   const scope = (task.allowedPaths || []).map((item) => `<span class="badge mono">${escapeHtml(item)}</span>`).join('');
   const details = verification ? `<details class="details"><summary>검증 원문</summary><pre>${escapeHtml(JSON.stringify(verification, null, 2))}</pre></details>` : '';
+  const result = renderTaskResult(task);
   const blocked = task.blocked ? `<p class="error">막힘: ${escapeHtml(task.blocked.reason)}</p>` : '';
   const review = task.review?.comment ? `<p class="muted">리뷰: ${escapeHtml(task.review.comment)}</p>` : '';
   const criteria = renderListSection('완료 조건', task.acceptanceCriteria);
@@ -2066,10 +2072,29 @@ function renderTask(task) {
       </div>
       <div class="task-meta">${scope}</div>
       ${agentActivity}
+      ${result}
       ${blocked}${review}
       <div class="task-actions">${renderActions(task)}</div>
       ${aiDetails}${details}
     </article>`;
+}
+
+function renderTaskResult(task) {
+  const verification = task.verification;
+  if (!verification) return '';
+  const executor = verification.executor || task.executor;
+  const changedPaths = verification.changedPaths || [];
+  const checks = verification.checks || [];
+  return `<section class="task-result ${verification.passed ? 'passed' : 'failed'}">
+    <div class="task-result-heading">
+      <div><p class="eyebrow">작업 결과</p><strong>${escapeHtml(taskResultSummary(task))}</strong></div>
+      ${executor ? `<span class="badge">${escapeHtml([executor.tool, executor.model].filter(Boolean).join(' / '))}</span>` : ''}
+    </div>
+    <div class="task-result-grid">
+      <div><small>변경 파일</small>${changedPaths.length ? `<ul>${changedPaths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join('')}</ul>` : '<p class="muted">기록 없음</p>'}</div>
+      <div><small>검증</small>${checks.length ? `<ul>${checks.map((check) => `<li class="${check.passed ? 'pass-text' : 'fail-text'}">${check.passed ? '통과' : '실패'} · <code>${escapeHtml([check.file, ...(check.args || [])].filter(Boolean).join(' '))}</code></li>`).join('')}</ul>` : '<p class="muted">실행 기록 없음</p>'}</div>
+    </div>
+  </section>`;
 }
 
 function renderTaskAgentActivity(task) {
@@ -2115,7 +2140,9 @@ function renderActions(task) {
   const admin = state.user.role === 'admin';
   const participant = [task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(state.user.id) || admin;
   const actions = [];
-  actions.push(actionButton(task, 'download-spec', '명세서 다운로드'));
+  actions.push(task.verification
+    ? actionButton(task, 'download-result', '결과 다운로드')
+    : actionButton(task, 'download-spec', '명세서 다운로드'));
   if (task.status === 'READY' && (!task.assigneeUserId || mine) && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'claim', '직접 시작'));
   if (task.status === 'READY' && (mine || admin) && task.assigneeUserId && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'queue-agent', '에이전트 대기'));
   if (task.status === 'READY' && (mine || admin) && task.executionState === 'QUEUED') actions.push(actionButton(task, 'cancel-agent', '대기 취소'));
@@ -2228,6 +2255,20 @@ function downloadTaskSpec(task) {
   link.remove();
   URL.revokeObjectURL(url);
   showToast('작업 명세서를 다운로드했습니다.');
+}
+
+function downloadTaskResult(task) {
+  const markdown = buildTaskResultMarkdown(task, state.users);
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = taskResultFilename(task);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast('작업 결과를 다운로드했습니다.');
 }
 
 function cssEscape(value) {
