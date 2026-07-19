@@ -1,5 +1,7 @@
 # Team Loop — AI Agent Connect & Work Runbook
 
+외부 PC 연결과 결과 제출의 전체 설정은 [`EXTERNAL-MCP-GUIDE.md`](./EXTERNAL-MCP-GUIDE.md)를 기준으로 한다.
+
 **You are an AI coding agent (Claude, Codex, or similar). Read this before doing any
 work in this repository.** Team Loop is a shared, AI-first work board. You do **not**
 edit files freely. You work **through the board** so that three safety layers apply

@@ -17,6 +17,20 @@ test('writing verifier accepts a grounded document', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('writing verifier ignores a deleted document when it is consolidated into a replacement', async () => {
+  const root = await repository();
+  try {
+    await write(root, 'docs/old.md', '# Old guide\n\nThis tracked guide contains enough material to be reviewed before consolidation.\n');
+    await execFile('git', ['add', '-A'], { cwd: root });
+    await execFile('git', ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'seed'], { cwd: root });
+    await rm(path.join(root, 'docs', 'old.md'));
+    await write(root, 'docs/combined.md', '# Combined guide\n\nThis replacement consolidates the complete external connection workflow and its verification rules.\n');
+    const result = await execFile(process.execPath, [checker, 'document'], { cwd: root });
+    assert.match(result.stdout, /combined\.md/);
+    assert.doesNotMatch(result.stdout, /old\.md/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('brainstorm verifier validates candidate, comparison, recommendation, decision, and run by role', async () => {
   const root = await repository();
   try {
