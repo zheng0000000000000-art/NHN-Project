@@ -438,6 +438,10 @@ async function handleApi(request, response) {
     const body = await readBody(request);
     assertPlainObject(body);
     const result = await learning.craft(actor, body);
+    if (result.type === 'SKILL' && result.skill?.status === 'DRAFT') {
+      result.skill = await skillRegistry.setStatus(result.skill.id, actor.id, result.skill.version, 'ACTIVE');
+      await resolveArtifactCases(actor, result.skill, 'SKILL');
+    }
     await store.recordAudit(actor.id, 'FAILURE_LEARNING_CRAFTED', {
       type: result.type,
       harnessId: result.harness?.id ?? null,
@@ -456,6 +460,10 @@ async function handleApi(request, response) {
     const context = await projectContext.get();
     const plan = await planLearningArtifact({ cases, context });
     const result = await learning.craft(actor, { ...plan, failureCaseIds: cases.map((item) => item.id) });
+    if (result.type === 'SKILL' && result.skill?.status === 'DRAFT') {
+      result.skill = await skillRegistry.setStatus(result.skill.id, actor.id, result.skill.version, 'ACTIVE');
+      await resolveArtifactCases(actor, result.skill, 'SKILL');
+    }
     await store.recordAudit(actor.id, 'LEARNING_ARTIFACT_AUTO_CRAFTED', {
       type: result.type,
       harnessId: result.harness?.id ?? null,
@@ -630,6 +638,7 @@ async function handleApi(request, response) {
     const task = await store.createTask(actor, body, profileNames, {
       defaultProfile: explicitProfile ? null : selectedLearning.verificationProfile,
       autoSkillIds: body.noAutoLearning || explicitSkills ? [] : selectedLearning.skillIds,
+      autoLearningRationale: body.noAutoLearning || (explicitProfile && explicitSkills) ? null : selectedLearning.rationale,
     });
     sendJson(response, 201, { task });
     return;

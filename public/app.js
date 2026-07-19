@@ -1619,7 +1619,7 @@ function renderHarnessCard(harness) {
     <p>${escapeHtml(harness.description || commandSummary || '설명 없음')}</p>
     <div class="task-meta">${test}<span class="badge">fixture 후보 ${fixtures}</span><span class="badge mono">${escapeHtml(harness.definitionSha256.slice(0, 12))}</span></div>
     ${auditNote}
-    <div class="task-actions">${actions}</div>
+    ${actions ? `<details class="details"><summary>관리자 고급 관리</summary><div class="task-actions">${actions}</div></details>` : ''}
     <details class="details"><summary>명령 ${formatNumber(harness.commands.length)}개</summary><ul class="command-list">${commands}</ul></details>
     ${(harness.fixtureCandidates || []).length ? `<details class="details"><summary>Fixture 후보</summary><pre>${escapeHtml(JSON.stringify(harness.fixtureCandidates, null, 2))}</pre></details>` : ''}
   </article>`;
@@ -1638,7 +1638,7 @@ function renderSkillCard(skill) {
     ${(skill.rules || []).slice(0, 2).map((rule) => `<p class="compact-rule">${escapeHtml(rule)}</p>`).join('')}
     <div class="task-meta"><span class="badge">사례 ${skill.sourceFailureCaseIds?.length || 0}건</span><span class="badge mono">${escapeHtml(skill.definitionSha256.slice(0, 12))}</span></div>
     ${auditNote}
-    <div class="task-actions">${actions}</div>
+    ${actions ? `<details class="details"><summary>관리자 고급 관리</summary><div class="task-actions">${actions}</div></details>` : ''}
     ${(skill.rules || []).length > 2 ? `<details class="details"><summary>규칙 ${formatNumber(skill.rules.length)}개 전체</summary><ol class="command-list">${(skill.rules || []).map((rule) => `<li>${escapeHtml(rule)}</li>`).join('')}</ol></details>` : ''}
   </article>`;
 }

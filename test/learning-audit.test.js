@@ -20,6 +20,8 @@ test('learning audit keeps core artifacts and flags duplicate failing drafts', (
   assert.equal(find(audit.harnesses, 'duplicate-node').action, 'ARCHIVE');
   assert.equal(find(audit.harnesses, 'judging-repository-history').category, 'CONDITIONAL');
   assert.equal(find(audit.skills, 'execution-verification').category, 'KEEP');
+  assert.equal(find(audit.skills, 'scope-guard').category, 'KEEP');
+  assert.equal(find(audit.skills, 'scope-guard').action, 'KEEP');
   assert.equal(find(audit.skills, 'scope-violation-review-a29aa3bf').action, 'ARCHIVE');
   assert.ok(audit.actions.some((item) => item.id === 'duplicate-node'));
   assert.ok(audit.actions.some((item) => item.id === 'scope-violation-review-a29aa3bf'));

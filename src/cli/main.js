@@ -508,11 +508,12 @@ async function autoLearnFromFailures(client, taskId, failureCases, { json }) {
       body: { taskId, failureCaseIds },
     });
     if (crafted.type === 'SKILL' && crafted.skill?.id) {
-      const current = await client.request(`/api/skills/${encodeURIComponent(crafted.skill.id)}`);
-      const activated = await client.request(`/api/skills/${encodeURIComponent(crafted.skill.id)}/activate`, {
-        method: 'POST',
-        body: { expectedVersion: current.skill.version },
-      });
+      const activated = crafted.skill.status === 'ACTIVE'
+        ? { skill: crafted.skill }
+        : await client.request(`/api/skills/${encodeURIComponent(crafted.skill.id)}/activate`, {
+          method: 'POST',
+          body: { expectedVersion: crafted.skill.version },
+        });
       const task = findTask((await client.request('/api/bootstrap')).tasks, taskId);
       await client.request(`/api/tasks/${encodeURIComponent(task.id)}/apply-learning`, {
         method: 'POST',

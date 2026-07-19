@@ -127,7 +127,10 @@ function recommendedAction(artifact, category, duplicateOf) {
   if (category === CONDITIONAL) return 'HIDE_BY_DEFAULT';
   if (artifact.status === 'ARCHIVED') return 'HIDE_BY_DEFAULT';
   if (artifact.status === 'DISABLED') return 'ARCHIVE';
-  if (duplicateOf || artifact.status === 'DRAFT' || artifact.source === 'FAILURE_DERIVED' || artifact.lastTest?.passed === false) return 'ARCHIVE';
+  // Failure-derived artifacts are the reusable memory of the loop. Keep a unique,
+  // passing ACTIVE artifact selectable regardless of its source; archive only drafts,
+  // duplicates, disabled items, or artifacts whose latest test failed.
+  if (duplicateOf || artifact.status === 'DRAFT' || artifact.lastTest?.passed === false) return 'ARCHIVE';
   return 'REVIEW';
 }
 

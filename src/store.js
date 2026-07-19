@@ -122,7 +122,7 @@ export class Store {
     return db.tasks.find((task) => task.id === taskId) ?? null;
   }
 
-  async createTask(actor, input, profileNames, { defaultProfile = null, autoSkillIds = [] } = {}) {
+  async createTask(actor, input, profileNames, { defaultProfile = null, autoSkillIds = [], autoLearningRationale = null } = {}) {
     const title = String(input.title ?? '').trim();
     if (title.length < 3 || title.length > 120) throw new HttpError(400, 'Title must be 3-120 characters.');
     const requestedProfile = input.verificationProfile == null || input.verificationProfile === ''
@@ -165,6 +165,7 @@ export class Store {
               skillVersions: {},
               sourceFailureCaseIds: [],
               automatic: true,
+              selectionRationale: autoLearningRationale,
             }]
             : [],
         },
