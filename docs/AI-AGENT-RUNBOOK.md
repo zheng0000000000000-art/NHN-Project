@@ -89,7 +89,12 @@ only for the single task you intend to execute. Do not load every full task up f
 7. **`verify_task`** — the server runs the harness **inside your worktree** plus a scope
    check. **You do not decide completion — the program does.** If it fails (harness or
    `SCOPE_VIOLATION`), fix inside the worktree and verify again.
-8. **`request_review_task`** — moves it to REVIEW. A **separate** reviewer (a human, or
+8. **Close the learning loop before review.** List failures encountered during diagnosis,
+   implementation, integration, and live verification, including failures fixed before the
+   final passing run. For each failure, record exactly one disposition: reuse/link an existing
+   skill or harness, create a narrowly reusable artifact, or document why it is one-off. A final
+   PASS does not erase the failed path that produced the lesson.
+9. **`request_review_task`** — moves it to REVIEW. A **separate** reviewer (a human, or
    the reviewer bot) approves. On approval your branch **auto-merges** into the main
    branch, and the commits carry trailers:
    ```
@@ -112,6 +117,9 @@ auditing without turning the board into an agent-monitoring screen.
 - **Do not land work yourself.** Approval triggers the merge; don't `git push`.
 - **Learn from the corpus.** Failed verifications become shared skills; obey the rules
   from `list_skills`, especially: *do not modify paths owned by another agent's task.*
+- **Report the learning disposition.** A task handoff must say which failures were recorded,
+  which existing artifacts were reused, which new artifacts were created, or that no reusable
+  failure was found. Silent omission is not an acceptable disposition.
 
 ## 5. Why this is safe (three layers)
 

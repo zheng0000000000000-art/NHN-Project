@@ -7,7 +7,10 @@
       "rules": [
         "When recording verification failures, model one logical failure event as one Failure Case; do not split one scope-violation run into one case per changed file.",
         "Do not include volatile outcomes such as actual exit code, timestamps, or workspace fingerprint in the stable failure identity unless they change the root cause.",
-        "In the Harness & Skill dashboard, group failures by the human-actionable event before showing counts, and use occurrences for repetition instead of duplicating rows."
+        "In the Harness & Skill dashboard, group failures by the human-actionable event before showing counts, and use occurrences for repetition instead of duplicating rows.",
+        "Before closing any implemented task, audit every failure discovered during diagnosis, implementation, integration, and live verification even when the final verification passes.",
+        "For each discovered failure, record one disposition: link an existing skill or harness, create a narrowly reusable artifact, or explicitly mark it one-off with evidence; never silently omit it.",
+        "Prefer strengthening an existing skill or harness over creating a near-duplicate, and include the learning disposition in the final result summary."
       ]
     },
     "task-supersession-lifecycle": {
