@@ -1,6 +1,7 @@
 import { buildTaskSpecMarkdown, taskSpecFilename } from './task-spec.js';
 import { filterTasksByPeople } from './task-board-filter.js';
 import { publicExecutionLabel } from './task-execution.js';
+import { canReviewTask } from './review-policy.js';
 
 const state = {
   user: null,
@@ -2111,7 +2112,7 @@ function renderActions(task) {
     actions.push(actionButton(task, 'verify', task.verification?.status === 'RUNNING' ? '검증 중…' : '검증 실행', 'primary'));
     if (task.verification?.passed) actions.push(actionButton(task, 'request-review', '리뷰 요청'));
   }
-  if (task.status === 'REVIEW' && !mine && (!task.reviewerUserId || task.reviewerUserId === state.user.id)) {
+  if (canReviewTask(task, state.user)) {
     actions.push(actionButton(task, 'approve', '승인', 'primary'));
     actions.push(actionButton(task, 'reject', '반려', 'danger'));
   }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { executionMode, executionState, publicExecutionLabel } from '../src/task-execution.js';
+import { executionMode, executionState, publicExecutionLabel } from '../public/task-execution.js';
 
 test('execution values fail back to simple human and idle states', () => {
   assert.equal(executionMode('agent'), 'AGENT');
