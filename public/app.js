@@ -1,3 +1,6 @@
+import { buildTaskSpecMarkdown, taskSpecFilename } from './task-spec.js';
+import { filterTasksByPeople } from './task-board-filter.js';
+
 const state = {
   user: null,
   users: [],
@@ -13,6 +16,7 @@ const state = {
   usageDays: 30,
   milestoneMonth: new Date().toISOString().slice(0, 7),
   milestoneFilter: { type: '', userId: '', query: '', date: '' },
+  boardFilter: { assigneeUserId: '', reviewerUserId: '' },
   showLearningCreate: false,
   showHarnessCreate: false,
   activeView: 'loop',
@@ -279,6 +283,19 @@ document.querySelector('#milestone-panel').addEventListener('click', (event) => 
   form.elements.taskId.value = taskId;
   populateScheduleForm(taskId);
   form.elements.plannedStart.focus();
+});
+document.querySelector('#board-assignee-filter').addEventListener('change', (event) => {
+  state.boardFilter.assigneeUserId = event.target.value;
+  render();
+});
+document.querySelector('#board-reviewer-filter').addEventListener('change', (event) => {
+  state.boardFilter.reviewerUserId = event.target.value;
+  render();
+});
+document.querySelector('#board-clear-filter').addEventListener('click', () => {
+  state.boardFilter = { assigneeUserId: '', reviewerUserId: '' };
+  populateBoardFilters();
+  render();
 });
 agentActivityPanel?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-agent-task]');
@@ -574,6 +591,10 @@ board.addEventListener('click', async (event) => {
   const task = state.tasks.find((item) => item.id === button.dataset.taskId);
   if (!task) return;
   const action = button.dataset.action;
+  if (action === 'download-spec') {
+    downloadTaskSpec(task);
+    return;
+  }
   button.disabled = true;
   try {
     if (action === 'dispatch-command') {
@@ -679,6 +700,7 @@ async function bootstrap({ quiet = true } = {}) {
     document.querySelector('#current-user').textContent = `${state.user.name} · ${state.user.role}`;
     document.querySelector('#workspace-root').textContent = state.workspace.root;
     populateTaskForm();
+    populateBoardFilters();
     renderAIStatus();
     renderProjectContext();
     render();
@@ -808,6 +830,16 @@ async function refreshCurrentView(quiet = true) {
   if (state.activeView === 'harnesses') await loadLearningAudit({ quiet: true });
   if (state.activeView === 'ai-logs') await loadAISessions({ quiet: true });
   if (!quiet) showToast(state.activeView === 'usage' ? '사용량을 갱신했습니다.' : state.activeView === 'harnesses' ? '하네스를 갱신했습니다.' : state.activeView === 'case-wiki' ? 'WIKI를 갱신했습니다.' : state.activeView === 'discussion' ? '대화를 갱신했습니다.' : '최신 상태를 불러왔습니다.');
+}
+
+function populateBoardFilters() {
+  const assignee = document.querySelector('#board-assignee-filter');
+  const reviewer = document.querySelector('#board-reviewer-filter');
+  if (!assignee || !reviewer) return;
+  assignee.innerHTML = '<option value="">전체 작업자</option>' + state.users.map(userOption).join('');
+  reviewer.innerHTML = '<option value="">전체 리뷰어</option>' + state.users.map(userOption).join('');
+  assignee.value = state.boardFilter.assigneeUserId;
+  reviewer.value = state.boardFilter.reviewerUserId;
 }
 
 function switchView(view) {
@@ -1704,14 +1736,15 @@ function render() {
   renderSummary();
   renderMilestonePlanner();
   renderAgentActivityPanel();
+  const filteredTasks = filterTasksByPeople(state.tasks, state.boardFilter);
   board.innerHTML = columns.map(([status, label]) => {
-    const tasks = state.tasks.filter((task) => task.status === status && !task.archived);
+    const tasks = filteredTasks.filter((task) => task.status === status && !task.archived);
     return `
       <section class="column" data-status="${status}">
         <div class="column-header"><h2>${label}</h2><span class="count">${tasks.length}</span></div>
         <div class="card-list">${tasks.length ? tasks.map(renderTask).join('') : '<div class="empty">작업 없음</div>'}</div>
       </section>`;
-  }).join('') + renderArchivedSection();
+  }).join('') + renderArchivedSection(filteredTasks);
 }
 
 function renderMilestonePlanner() {
@@ -1938,8 +1971,8 @@ function populateScheduleForm(taskId) {
   form.elements.note.value = task.schedule?.note || '';
 }
 
-function renderArchivedSection() {
-  const archived = state.tasks.filter((task) => task.archived);
+function renderArchivedSection(tasks = state.tasks) {
+  const archived = tasks.filter((task) => task.archived);
   if (!archived.length) return '';
   return `<details class="details" style="grid-column:1/-1"><summary>아카이브 (${archived.length})</summary><div class="card-list">${archived.map(renderTask).join('')}</div></details>`;
 }
@@ -2073,6 +2106,7 @@ function renderActions(task) {
   const admin = state.user.role === 'admin';
   const participant = [task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(state.user.id) || admin;
   const actions = [];
+  actions.push(actionButton(task, 'download-spec', '명세서 다운로드'));
   if (task.status === 'READY' && (!task.assigneeUserId || mine)) actions.push(actionButton(task, 'claim', '시작'));
   if (task.status === 'IN_PROGRESS' && (mine || admin)) {
     actions.push(actionButton(task, 'verify', task.verification?.status === 'RUNNING' ? '검증 중…' : '검증 실행', 'primary'));
@@ -2166,6 +2200,23 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function downloadTaskSpec(task) {
+  const markdown = buildTaskSpecMarkdown(task, state.users, new Date(), {
+    profiles: state.profiles,
+    skills: state.skills,
+  });
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = taskSpecFilename(task);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast('작업 명세서를 다운로드했습니다.');
 }
 
 function cssEscape(value) {

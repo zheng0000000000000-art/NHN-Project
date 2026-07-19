@@ -146,6 +146,11 @@
           <div class="toolbar-actions"><button id="new-task-button" class="primary" type="button">새 작업</button><button id="ai-assistant-button" class="ghost" type="button">AI 도우미</button><button id="milestone-toggle" class="ghost" type="button">마일스톤</button><span id="ai-status" class="badge"></span></div>
           <div id="summary" class="summary"></div>
         </section>
+        <section class="board-filters" aria-label="작업 보드 필터">
+          <label>작업자<select id="board-assignee-filter"><option value="">전체 작업자</option></select></label>
+          <label>리뷰어<select id="board-reviewer-filter"><option value="">전체 리뷰어</option></select></label>
+          <button id="board-clear-filter" class="ghost compact" type="button">필터 초기화</button>
+        </section>
         <section id="agent-activity-panel" class="agent-activity-panel"></section>
 
         <section id="milestone-panel" class="panel milestone-panel hidden">

@@ -90,6 +90,9 @@ textarea { resize: vertical; }
 }
 
 .toolbar-actions { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; }
+.board-filters { display: flex; align-items: end; gap: .55rem; flex-wrap: wrap; margin: -.25rem 0 1rem; }
+.board-filters label { min-width: 180px; }
+.board-filters select { padding: .58rem .7rem; }
 .agent-activity-panel { margin: -.25rem 0 1rem; }
 .agent-activity-head { display: flex; justify-content: space-between; align-items: center; gap: .8rem; margin-bottom: .45rem; }
 .agent-activity-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .55rem; }
