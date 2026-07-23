@@ -54,7 +54,8 @@ export class ContextIndex {
       }
       const relativePath = path.relative(this.workspaceRoot, absolutePath).replaceAll('\\', '/');
       const fileChunks = chunkText(content, this.chunkChars);
-      fileChunks.forEach((text, index) => chunks.push(makeChunk(relativePath, index, text)));
+      const fileSha256 = sha256(content);
+      fileChunks.forEach((text, index) => chunks.push(makeChunk(relativePath, index, text, fileSha256)));
       indexedFiles += 1;
       indexedCharacters += content.length;
     }
@@ -99,6 +100,8 @@ export class ContextIndex {
         chunk: item.chunk.index,
         score: item.score,
         text,
+        fileSha256: item.chunk.fileSha256,
+        contentSha256: item.chunk.sha256,
         truncated: text.length < item.chunk.text.length,
       });
       selectedPerFile.set(item.chunk.path, (selectedPerFile.get(item.chunk.path) || 0) + 1);
@@ -151,10 +154,10 @@ function chunkText(content, maxChars) {
   return chunks.filter(Boolean);
 }
 
-function makeChunk(relativePath, index, text) {
+function makeChunk(relativePath, index, text, fileSha256) {
   const pathTokens = tokenize(relativePath.replaceAll('/', ' '));
   const textTokens = tokenize(text);
-  return { path: relativePath, index, text, pathTokens, textTokens, sha256: sha256(text) };
+  return { path: relativePath, index, text, pathTokens, textTokens, sha256: sha256(text), fileSha256 };
 }
 
 function scoreChunk(chunk, queryTokens) {

@@ -2,7 +2,7 @@
   "name": "team-loop-lite-ai",
   "version": "0.7.0",
   "private": true,
-  "description": "Multi-user verified work loop with failure learning and external Claude Code/Codex usage collection.",
+  "description": "Local-first AI loop orchestration, balancing, verification and portable workboard engine.",
   "type": "module",
   "scripts": {
     "start": "node server.js",

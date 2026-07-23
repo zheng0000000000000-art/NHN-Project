@@ -47,6 +47,20 @@ export async function appendJsonLine(filePath, value) {
   await appendFile(filePath, `${JSON.stringify(value)}\n`, 'utf8');
 }
 
+export async function readJsonLines(filePath) {
+  try {
+    return (await readFile(filePath, 'utf8'))
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .flatMap((line) => {
+        try { return [JSON.parse(line)]; } catch { return []; }
+      });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
 export function normalizeRelativePath(value) {
   return String(value ?? '').replaceAll('\\', '/').replace(/^\.\//, '').replace(/^\/+/, '');
 }

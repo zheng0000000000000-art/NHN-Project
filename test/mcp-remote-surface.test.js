@@ -22,6 +22,11 @@ test('MCP exposes remote file exchange and no client-side worktree tools', async
   const names = response.result.tools.map((tool) => tool.name);
   assert.ok(names.includes('read_task_files'));
   assert.ok(names.includes('submit_task_result'));
+  assert.ok(names.includes('experience_prepare'));
+  assert.ok(names.includes('experience_contracts'));
+  assert.ok(names.includes('experience_reflect'));
+  assert.ok(names.includes('wiki_search'));
+  assert.ok(names.includes('wiki_propose'));
   assert.ok(!names.includes('create_worktree'));
   assert.ok(!names.includes('remove_worktree'));
 });

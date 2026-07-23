@@ -1,5 +1,5 @@
 import { buildTaskSpecMarkdown, taskSpecFilename } from './task-spec.js';
-import { buildTaskResultMarkdown, taskResultFilename, taskResultSummary } from './task-result.js';
+import { taskResultSummary } from './task-result.js';
 import { filterTasksByPeople } from './task-board-filter.js';
 import { publicExecutionLabel } from './task-execution.js';
 import { canReviewTask } from './review-policy.js';
@@ -598,10 +598,6 @@ board.addEventListener('click', async (event) => {
     downloadTaskSpec(task);
     return;
   }
-  if (action === 'download-result') {
-    downloadTaskResult(task);
-    return;
-  }
   button.disabled = true;
   try {
     if (action === 'dispatch-command') {
@@ -652,6 +648,46 @@ board.addEventListener('click', async (event) => {
     await bootstrap({ quiet: true });
   } finally {
     button.disabled = false;
+  }
+});
+
+board.addEventListener('change', async (event) => {
+  const artifactInput = event.target.closest('input[data-artifact-task]');
+  if (artifactInput) {
+    const task = state.tasks.find((item) => item.id === artifactInput.dataset.artifactTask);
+    const file = artifactInput.files?.[0];
+    if (!task || !file) return;
+    artifactInput.disabled = true;
+    try {
+      if (file.size > 8 * 1024 * 1024) throw new Error('결과물은 8 MB 이하만 업로드할 수 있습니다.');
+      const data = await fileAsBase64(file);
+      await taskAction(task, 'artifact', { name: file.name, contentType: file.type, data });
+      await bootstrap({ quiet: true });
+      showToast('결과물을 업로드했습니다.');
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      artifactInput.value = '';
+      artifactInput.disabled = false;
+    }
+    return;
+  }
+  const select = event.target.closest('select[data-assignee-task]');
+  if (!select) return;
+  const task = state.tasks.find((item) => item.id === select.dataset.assigneeTask);
+  if (!task) return;
+  const previous = task.assigneeUserId || '';
+  select.disabled = true;
+  try {
+    await taskAction(task, 'assign', { assigneeUserId: select.value || null });
+    await bootstrap({ quiet: true });
+    showToast('담당자를 변경했습니다.');
+  } catch (error) {
+    select.value = previous;
+    showToast(error.message, true);
+    await bootstrap({ quiet: true });
+  } finally {
+    select.disabled = false;
   }
 });
 
@@ -1002,17 +1038,11 @@ async function loadLearningAudit({ quiet = true } = {}) {
 function renderUsage() {
   const usage = state.usage;
   if (!usage) return;
-  const externalPrimary = usage.totals.requests === 0 && usage.external?.totals?.totalTokens > 0;
-  document.querySelector('#usage-scope').textContent = externalPrimary
-    ? 'OpenAI API 없이 로컬 Codex/Claude CLI 사용량과 잔여 한도를 메인 지표로 표시합니다.'
-    : usage.scope.description;
+  document.querySelector('#usage-scope').textContent = usage.scope.description;
   document.querySelector('#usage-period-label').textContent = `${usage.period.days}일 · ${usage.period.timeZone}`;
   document.querySelector('#usage-updated').textContent = `${formatDateTime(usage.generatedAt)} 갱신`;
 
-  if (externalPrimary) renderExternalPrimaryUsage(usage);
-  else renderServerPrimaryUsage(usage);
-
-  renderExternalUsage(usage.external);
+  renderServerPrimaryUsage(usage);
 }
 
 function renderServerPrimaryUsage(usage) {
@@ -1034,7 +1064,6 @@ function renderServerPrimaryUsage(usage) {
     budgetCard('월간 비용', usage.budget.costUsd, (value) => `$${Number(value || 0).toFixed(2)}`),
   ].join('');
 
-  document.querySelector('#usage-budgets').insertAdjacentHTML('beforeend', weeklyQuotaCards(usage.external).join(''));
   renderUsageAlert(usage);
   renderUsageChart(usage.daily);
   renderRankList('#usage-sources', usage.bySource, 'source', sourceLabel);
@@ -1042,179 +1071,6 @@ function renderServerPrimaryUsage(usage) {
   renderRankList('#usage-models', usage.byModel, 'model', (value) => value);
   renderUsageUsers(usage.byUser);
   renderRecentUsage(usage.recent);
-}
-
-function renderExternalPrimaryUsage(usage) {
-  const external = usage.external;
-  const totals = external.totals;
-  const quota = firstExternalQuota(external);
-  document.querySelector('#usage-kpis').innerHTML = [
-    kpiCard('CLI 캐시 제외', formatTokens(totals.totalTokens), `${formatNumber(totals.windows)}개 수집 창`, 'token'),
-    kpiCard('CLI 입력 토큰', formatTokens(totals.inputTokens), `캐시 ${formatTokens(totals.inputCachedTokens)}`, 'input'),
-    kpiCard('CLI 캐시 절약', formatTokens(totals.inputCachedTokens), `${formatPercent(cacheRate(totals))} 입력 캐시`, 'ok'),
-    kpiCard('CLI 출력 토큰', formatTokens(totals.outputTokens), `추론 ${formatTokens(totals.reasoningTokens)}`, 'output'),
-    kpiCard('주간 할당량', quota ? `${externalQuotaPercent(quota)}%` : '없음', quota ? `${quota.toolLabel} · ${quota.label}` : 'usage push 필요', quota ? quotaTone(quota) : 'latency'),
-    kpiCard('연결 도구', formatNumber(external.byTool.length), external.byTool.map((item) => externalToolLabel(item.tool)).join(', ') || '없음', 'latency'),
-    kpiCard('API 비용', '미사용', 'OpenAI API 키 없음', 'cost'),
-  ].join('');
-
-  document.querySelector('#usage-budgets').innerHTML = [
-    `<article class="budget-card unconfigured"><div><p>서버 API 모드</p><strong>꺼짐</strong></div><p class="muted">현재 화면은 로컬 CLI 사용량을 보여줍니다.</p></article>`,
-    `<article class="budget-card unconfigured"><div><p>Codex 주간 한도</p><strong>${quota ? `${externalQuotaPercent(quota)}% 사용` : '없음'}</strong></div><p class="muted">${quota?.resetsAt ? `리셋 ${formatDateTime(quota.resetsAt)}` : 'team-loop usage push로 갱신하세요.'}</p></article>`,
-    `<article class="budget-card unconfigured"><div><p>수집 범위</p><strong>외부 도구</strong></div><p class="muted">서버 예산에는 합산하지 않는 참고 집계입니다.</p></article>`,
-  ].join('');
-
-  document.querySelector('#usage-budgets').innerHTML = [
-    `<article class="budget-card unconfigured"><div><p>서버 API 모드</p><strong>꺼짐</strong></div><p class="muted">현재 화면은 로컬 CLI 사용량과 할당량을 보여줍니다.</p></article>`,
-    ...weeklyQuotaCards(external),
-    `<article class="budget-card unconfigured"><div><p>집계 범위</p><strong>외부 도구</strong></div><p class="muted">서버 예산에는 합산하지 않는 참고 지표입니다.</p></article>`,
-  ].join('');
-  renderUsageAlert({ ...usage, budget: { tokens: { status: 'UNCONFIGURED' }, requests: { status: 'UNCONFIGURED' }, costUsd: { status: 'UNCONFIGURED' } } });
-  renderUsageChart(external.daily || []);
-  renderExternalRankList('#usage-sources', external.byTool, 'tool', externalToolLabel);
-  renderExternalRankList('#usage-models', external.byModel, 'model', (value) => value);
-  renderExternalPrimaryUsers(external.byUser);
-  document.querySelector('#usage-features').innerHTML = '<div class="empty">서버 AI 기능을 쓰지 않는 CLI 모드입니다.</div>';
-  document.querySelector('#usage-recent').innerHTML = '<div class="empty">서버 API 호출 기록은 없습니다. CLI 사용량은 위 지표와 외부 도구 토큰에 집계됩니다.</div>';
-}
-
-function firstExternalQuota(external) {
-  return primaryExternalQuota(external);
-}
-
-function primaryExternalQuota(external) {
-  const weekly = weeklyQuotaWindows(external);
-  return weekly.find((quota) => quota.tool === 'codex')
-    || weekly.find((quota) => quota.tool === 'claude-code')
-    || externalQuotaWindows(external)[0]
-    || null;
-}
-
-function externalQuotaWindows(external) {
-  return (external?.quota || []).flatMap((entry) => (entry.windows || []).map((window) => ({
-    ...window,
-    tool: entry.tool,
-    toolLabel: externalToolLabel(entry.tool),
-    actorName: entry.actorName,
-    source: entry.source,
-  })));
-}
-
-function weeklyQuotaWindows(external) {
-  return externalQuotaWindows(external)
-    .filter((window) => Number(window.windowDurationMinutes) >= 7 * 24 * 60 || /week|7|seven/i.test(`${window.windowId} ${window.label}`))
-    .sort((a, b) => (a.tool === 'codex' ? -1 : b.tool === 'codex' ? 1 : a.toolLabel.localeCompare(b.toolLabel)));
-}
-
-function weeklyQuotaCards(external) {
-  const weekly = weeklyQuotaWindows(external);
-  if (!weekly.length) {
-    return [`<article class="budget-card unconfigured"><div><p>주간 할당량</p><strong>없음</strong></div><p class="muted">team-loop usage push를 실행하면 Codex/Claude 주간 한도가 표시됩니다.</p></article>`];
-  }
-  return weekly.map((quota) => {
-    const used = Number(quota.effectiveUsedPercent ?? quota.usedPercent) || 0;
-    const remaining = Math.max(0, 100 - used);
-    const reset = quota.resetsAt ? `리셋 ${formatDateTime(quota.resetsAt)}` : '리셋 시각 없음';
-    return `<article class="budget-card status-${quotaStatus(quota)}">
-      <div class="budget-top"><div><p>${escapeHtml(`${quota.toolLabel} 주간 할당량`)}</p><strong>${escapeHtml(`${used.toFixed(1)}% 사용`)}</strong></div><span>${escapeHtml(`${remaining.toFixed(1)}% 남음`)}</span></div>
-      <div class="progress"><i style="width:${Math.min(100, Math.max(0, used))}%"></i></div>
-      <p class="muted">${escapeHtml(`${quota.label} · ${reset}`)}</p>
-    </article>`;
-  });
-}
-
-function externalQuotaPercent(quota) {
-  return Number(quota.effectiveUsedPercent ?? quota.usedPercent ?? 0).toFixed(1);
-}
-
-function quotaStatus(quota) {
-  const used = Number(quota.effectiveUsedPercent ?? quota.usedPercent) || 0;
-  if (used >= 100) return 'exceeded';
-  if (used >= 85) return 'critical';
-  if (used >= 65) return 'warning';
-  return 'ok';
-}
-
-function quotaTone(quota) {
-  const status = quotaStatus(quota);
-  return ['exceeded', 'critical'].includes(status) ? 'danger' : 'ok';
-}
-
-function renderExternalPrimaryUsers(users) {
-  const target = document.querySelector('#usage-users');
-  if (!users.length) {
-    target.innerHTML = '<div class="empty">아직 사용자별 CLI 사용량 기록이 없습니다.</div>';
-    return;
-  }
-  target.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>캐시</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${users.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.inputCachedTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
-}
-
-function renderExternalUsage(external) {
-  const quotaTarget = document.querySelector('#external-quota');
-  const toolTarget = document.querySelector('#external-tools');
-  const userTarget = document.querySelector('#external-users');
-  const modelTarget = document.querySelector('#external-models');
-  if (!external) return;
-
-  if (!external.quota.length) {
-    quotaTarget.innerHTML = '<div class="empty">`team-loop usage push`를 cron 또는 작업 스케줄러에 등록하면 표시됩니다.</div>';
-  } else {
-    quotaTarget.innerHTML = external.quota.map((entry) => `<article class="quota-owner-card">
-      <div class="quota-owner-heading"><strong>${escapeHtml(entry.actorName)}</strong><span class="badge">${escapeHtml(externalToolLabel(entry.tool))}</span></div>
-      ${entry.windows.map((window) => quotaWindow(entry, window)).join('')}
-    </article>`).join('');
-  }
-
-  renderExternalRankList('#external-tools', external.byTool, 'tool', externalToolLabel);
-  renderExternalRankList('#external-models', external.byModel, 'model', (value) => value);
-  if (!external.byUser.length) {
-    userTarget.innerHTML = '<div class="empty">외부 토큰 기록이 없습니다.</div>';
-  } else {
-    userTarget.innerHTML = `<table><thead><tr><th>사용자</th><th>윈도우</th><th>입력</th><th>캐시</th><th>출력</th><th>캐시 제외</th></tr></thead><tbody>${external.byUser.map((item) => `<tr><td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.role || '')}</small></td><td>${formatNumber(item.windows)}</td><td>${formatTokens(item.inputTokens)}</td><td>${formatTokens(item.inputCachedTokens)}</td><td>${formatTokens(item.outputTokens)}</td><td>${formatTokens(item.totalTokens)}</td></tr>`).join('')}</tbody></table>`;
-  }
-}
-
-function renderExternalRankList(selector, values, key, labeler) {
-  const target = document.querySelector(selector);
-  if (!values.length) {
-    target.innerHTML = '<div class="empty">외부 토큰 기록이 없습니다.</div>';
-    return;
-  }
-  const max = Math.max(1, ...values.map((item) => item.totalTokens));
-  target.innerHTML = values.slice(0, 10).map((item) => `<div class="rank-item">
-    <div class="rank-copy"><strong>${escapeHtml(labeler(item[key]))}</strong><span>${escapeHtml(externalRankCaption(item))}</span></div>
-    <div class="mini-progress"><i style="width:${Math.round(item.totalTokens / max * 100)}%"></i></div>
-  </div>`).join('');
-}
-
-function externalRankCaption(item) {
-  const parts = [`${formatNumber(item.windows)}개 창`, formatTokens(item.totalTokens)];
-  if (item.inputCachedTokens) parts.push(`캐시 ${formatTokens(item.inputCachedTokens)}`);
-  return parts.join(' · ');
-}
-
-function cacheRate(item) {
-  return item.inputTokens ? item.inputCachedTokens / item.inputTokens : 0;
-}
-
-function quotaWindow(entry, window) {
-  const used = Number(window.effectiveUsedPercent ?? window.usedPercent) || 0;
-  const freshness = window.freshness || 'STALE';
-  const badge = freshness === 'LIVE'
-    ? '실시간'
-    : freshness === 'RESET_INFERRED'
-      ? `리셋 추정 · 마지막 확인 ${Number(window.lastKnownUsedPercent || 0).toFixed(1)}%`
-      : `마지막 확인 ${formatNumber(window.staleSinceMinutes)}분 전`;
-  const reset = window.resetsAt ? ` · 리셋 ${formatDateTime(window.resetsAt)}` : '';
-  return `<div class="quota-window freshness-${escapeHtml(freshness.toLowerCase())}">
-    <div><span>${escapeHtml(window.label)}</span><strong>${escapeHtml(`${used.toFixed(1)}%`)}</strong></div>
-    <div class="progress"><i style="width:${Math.min(100, Math.max(0, used))}%"></i></div>
-    <small>${escapeHtml(badge + reset)}</small>
-  </div>`;
-}
-
-function externalToolLabel(value) {
-  return ({ 'claude-code': 'Claude Code', codex: 'Codex', other: '기타' })[value] || value;
 }
 
 function kpiCard(label, value, caption, tone) {
@@ -2055,6 +1911,17 @@ function renderTask(task) {
   const executionLabel = publicExecutionLabel(task);
   const executionBadge = executionLabel ? `<span class="badge ${task.executionState === 'RUNNING' ? 'pass' : ''}">${escapeHtml(executionLabel)}</span>` : '';
   const agentActivity = renderTaskAgentActivity(task);
+  const artifacts = renderTaskArtifacts(task);
+  const canAssign = (task.creatorUserId === state.user.id || state.user.role === 'admin')
+    && ['READY', 'BLOCKED'].includes(task.status);
+  const assigneeControl = canAssign
+    ? `<label class="task-assignee-control">담당자
+        <select data-assignee-task="${escapeHtml(task.id)}" aria-label="${escapeHtml(task.title)} 담당자 변경">
+          <option value="">미지정</option>
+          ${state.users.map((user) => `<option value="${escapeHtml(user.id)}"${user.id === task.assigneeUserId ? ' selected' : ''}>${escapeHtml(user.name)}</option>`).join('')}
+        </select>
+      </label>`
+    : `<span class="badge">담당 ${escapeHtml(assignee)}</span>`;
 
   return `
     <article class="task-card" data-task-card="${escapeHtml(task.id)}">
@@ -2063,7 +1930,7 @@ function renderTask(task) {
       <p class="task-description">${escapeHtml(task.description || '설명 없음')}</p>
       ${criteria}
       <div class="task-meta">
-        <span class="badge">담당 ${escapeHtml(assignee)}</span>
+        ${assigneeControl}
         <span class="badge">리뷰 ${escapeHtml(reviewer)}</span>
         <span class="badge">${escapeHtml(task.verificationProfile)}</span>
         ${(task.skillIds || []).map((id) => `<span class="badge">skill:${escapeHtml(id)}</span>`).join('')}
@@ -2074,6 +1941,7 @@ function renderTask(task) {
       </div>
       <div class="task-meta">${scope}</div>
       ${agentActivity}
+      ${artifacts}
       ${result}
       ${blocked}${review}
       <div class="task-actions">${renderActions(task)}</div>
@@ -2096,6 +1964,15 @@ function renderTaskResult(task) {
       <div><small>변경 파일</small>${changedPaths.length ? `<ul>${changedPaths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join('')}</ul>` : '<p class="muted">기록 없음</p>'}</div>
       <div><small>검증</small>${checks.length ? `<ul>${checks.map((check) => `<li class="${check.passed ? 'pass-text' : 'fail-text'}">${check.passed ? '통과' : '실패'} · <code>${escapeHtml([check.file, ...(check.args || [])].filter(Boolean).join(' '))}</code></li>`).join('')}</ul>` : '<p class="muted">실행 기록 없음</p>'}</div>
     </div>
+  </section>`;
+}
+
+function renderTaskArtifacts(task) {
+  const artifacts = task.artifacts || [];
+  const canUpload = task.assigneeUserId === state.user.id || state.user.role === 'admin';
+  return `<section class="task-artifacts">
+    <div class="task-artifacts-heading"><strong>업로드 결과물</strong>${canUpload ? `<label class="ghost artifact-upload">파일 업로드<input type="file" data-artifact-task="${escapeHtml(task.id)}"></label>` : ''}</div>
+    ${artifacts.length ? `<ul>${artifacts.map((artifact) => `<li><a href="/api/tasks/${encodeURIComponent(task.id)}/artifacts/${encodeURIComponent(artifact.id)}" download>${escapeHtml(artifact.name)}</a><span class="muted">${escapeHtml(formatFileSize(artifact.size))} · ${escapeHtml(userName(artifact.uploadedByUserId) || '업로더 미상')}</span></li>`).join('')}</ul>` : '<p class="muted">아직 업로드된 결과물이 없습니다.</p>'}
   </section>`;
 }
 
@@ -2142,9 +2019,7 @@ function renderActions(task) {
   const admin = state.user.role === 'admin';
   const participant = [task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(state.user.id) || admin;
   const actions = [];
-  actions.push(task.verification
-    ? actionButton(task, 'download-result', '결과 다운로드')
-    : actionButton(task, 'download-spec', '명세서 다운로드'));
+  if (!task.verification) actions.push(actionButton(task, 'download-spec', '명세서 다운로드'));
   if (task.status === 'READY' && (!task.assigneeUserId || mine) && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'claim', '직접 시작'));
   if (task.status === 'READY' && (mine || admin) && task.assigneeUserId && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'queue-agent', '에이전트 대기'));
   if (task.status === 'READY' && (mine || admin) && task.executionState === 'QUEUED') actions.push(actionButton(task, 'cancel-agent', '대기 취소'));
@@ -2259,18 +2134,20 @@ function downloadTaskSpec(task) {
   showToast('작업 명세서를 다운로드했습니다.');
 }
 
-function downloadTaskResult(task) {
-  const markdown = buildTaskResultMarkdown(task, state.users);
-  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = taskResultFilename(task);
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  showToast('작업 결과를 다운로드했습니다.');
+function fileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || '');
+    reader.onerror = () => reject(new Error('파일을 읽지 못했습니다.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function cssEscape(value) {

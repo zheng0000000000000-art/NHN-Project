@@ -1,6 +1,102 @@
 {
   "schemaVersion": 1,
   "skills": {
+    "powershell-encoding": {
+      "label": "PowerShell encoding integrity",
+      "description": "Preserve Korean and structured text across PowerShell, cmd, files, and child-process boundaries.",
+      "manifest": {
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": ["Review byte-level or round-trip evidence before accepting repaired text."],
+        "sideEffectScope": [],
+        "requiredCapabilities": ["Inspect encoding metadata and verify a UTF-8 round trip."]
+      },
+      "rules": [
+        "Treat Windows PowerShell 5.1 defaults as ambiguous; specify UTF-8 explicitly for every file and process boundary.",
+        "Do not infer correctness from terminal appearance alone; verify saved bytes and decode the value again.",
+        "Prefer passing structured input through a UTF-8 file or stdin over shell interpolation."
+      ]
+    },
+    "root-cause-diagnosis": {
+      "label": "Direct-evidence root cause diagnosis",
+      "description": "Separate direct observations from proxy signals before changing code or policy.",
+      "manifest": {
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": ["Review the falsification evidence before declaring a root cause."],
+        "sideEffectScope": [],
+        "requiredCapabilities": ["Inspect direct process, authorization, quota, and exit-code evidence."]
+      },
+      "rules": [
+        "Record the observed failure, competing hypotheses, and a falsifying check for each hypothesis.",
+        "Do not use names, prefixes, timestamps, or process existence as proof of actor identity, delivery, or success.",
+        "Prefer the smallest direct probe and retain its exit code and evidence."
+      ]
+    },
+    "path-escape-qa": {
+      "label": "Path containment QA",
+      "description": "Detect traversal, encoded separator, and sibling-prefix escapes at filesystem boundaries.",
+      "manifest": {
+        "skillType": "executable",
+        "automationLevel": 8,
+        "humanApprovalPoints": [],
+        "sideEffectScope": [],
+        "requiredCapabilities": ["Normalize path inputs and compare separator-bounded resolved paths."]
+      },
+      "rules": [
+        "Resolve both root and candidate before containment checks and require equality or a separator-bounded descendant.",
+        "Test dot segments, alternate separators, URL-encoded separators, absolute paths, and sibling-prefix collisions.",
+        "Fail closed when decoding or normalization is ambiguous."
+      ]
+    },
+    "balance-tuning": {
+      "label": "Deterministic balance tuning",
+      "description": "Tune parameters against explicit metrics without mutating baselines or hiding no-solution outcomes.",
+      "manifest": {
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": ["Approve target metrics and constraints before applying a candidate balance patch."],
+        "sideEffectScope": ["config/**"],
+        "requiredCapabilities": ["Read a BalanceSpec and ObservationSet and reproduce the search deterministically."]
+      },
+      "rules": [
+        "Define target metrics, companion continuous metrics, constraints, and search bounds before simulation.",
+        "Keep the product target separate from the search heuristic and preserve every observation.",
+        "Use a deterministic seed or explicit grid, report no-solution honestly, and never mutate the baseline during search."
+      ]
+    },
+    "instruction-contract-authoring": {
+      "label": "Instruction contract authoring",
+      "description": "Turn prose directives into internally consistent, adversarially testable contracts.",
+      "manifest": {
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": ["Approve policy-changing directives and their negative tests."],
+        "sideEffectScope": ["docs/**", "config/**"],
+        "requiredCapabilities": ["Classify constraints and validate examples, gates, and generated hashes together."]
+      },
+      "rules": [
+        "Classify each requirement as invariant, conditional rule, or preference before writing enforcement.",
+        "Add at least one adversarial negative case for every blocking gate.",
+        "Generate hashes and derived values from programs, and verify prose, schema, and harness agree."
+      ]
+    },
+    "promotion-review": {
+      "label": "Experience promotion review",
+      "description": "Promote repeated experience into the narrowest durable artifact with evidence.",
+      "manifest": {
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": ["Approve promotion into a shared harness, skill, or wiki entry."],
+        "sideEffectScope": ["config/**", "docs/**"],
+        "requiredCapabilities": ["Score repeatability, decidability, isolation, observability, and maintenance value."]
+      },
+      "rules": [
+        "Require at least two linked occurrences before proposing durable promotion.",
+        "Prefer an executable harness when the decision is deterministic, then a skill, then wiki knowledge.",
+        "Keep proposals pending until a human accepts them; never auto-promote shared policy."
+      ]
+    },
     "failure-corpus-discipline": {
       "label": "Failure corpus discipline",
       "description": "Keep failure learning at the event level so the corpus stays useful instead of filling with duplicate rows.",

@@ -279,7 +279,7 @@ function normalizeCommands(commands) {
     const timeoutMs = Number.isFinite(Number(command.timeoutMs)) ? Number(command.timeoutMs) : 120_000;
     if (timeoutMs < 100 || timeoutMs > 1_800_000) throw new HttpError(400, `Command ${index + 1} timeout must be 100-1800000ms.`);
     const cwd = normalizeCwd(command.cwd ?? '.');
-    return { file, args, cwd, expectedExit, timeoutMs };
+    return { file, args, cwd, expectedExit, timeoutMs, mutatesState: Boolean(command.mutatesState) };
   });
 }
 

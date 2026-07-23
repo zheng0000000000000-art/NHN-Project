@@ -227,26 +227,19 @@ AI agents should prefer WIKI content over raw chat when reconstructing project h
 
 Members can see usage information scoped to themselves unless they are admin.
 
-- `사용량 대시보드` shows server AI usage and external CLI usage when available.
-- External usage is not automatically known by the server; members should run usage push from their own environment.
+- `사용량 대시보드` shows only the current server's AI usage.
+- Personal CLI quota and token telemetry stay in the local tool that produced it.
 
 CLI:
 
 ```bash
 team-loop usage status --days 30
-team-loop usage push
-```
-
-Daemon option:
-
-```bash
-team-loop usage push --daemon --interval 300
 ```
 
 Privacy expectation:
 
-- Usage collectors send token counts, model names, tools, and quota windows.
-- They should not send prompt or response bodies.
+- Team Loop does not collect external CLI token or quota snapshots.
+- Prompt and response bodies are not included in usage summaries.
 
 ## AI Helper Boundaries
 

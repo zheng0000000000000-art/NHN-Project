@@ -1,13 +1,12 @@
 import http from 'node:http';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { clearSessionCookie, issueSession, loadOrCreateSecret, parseCookies, readSession, sessionCookie } from './src/auth.js';
 import { Store } from './src/store.js';
 import { Verifier } from './src/verifier.js';
 import { AIService } from './src/ai.js';
 import { UsageTracker } from './src/usage.js';
-import { ExternalUsageStore } from './src/external-usage.js';
 import { HarnessRegistry } from './src/harness-registry.js';
 import { FailureCaseStore } from './src/failure-cases.js';
 import { SkillRegistry } from './src/skill-registry.js';
@@ -28,11 +27,18 @@ import { ContextIndex } from './src/context-index.js';
 import { AISessionLogStore } from './src/ai-session-logs.js';
 import { RunDashboardStore } from './src/run-dashboard.js';
 import { ScopeLeaseService } from './src/scope-leases.js';
-import { assertPlainObject, HttpError, nowIso, sha256 } from './src/utils.js';
+import { assertPlainObject, HttpError, nowIso, randomId, sha256 } from './src/utils.js';
+import { WorkboardEngine } from './src/engine/workboard-engine.js';
+import { renderStandaloneWorkboard } from './src/engine/standalone-workboard.js';
+import { WikiStore } from './src/wiki-store.js';
+import { ExperienceJournal } from './src/experience-journal.js';
+import { ExperienceEngine } from './src/experience-engine.js';
+import { CONTRACT_VERSION, KNOWLEDGE_PROMOTION_CONTRACT } from './src/contracts.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
 const dataDirectory = path.resolve(process.env.DATA_DIR || path.join(projectRoot, 'data'));
+const taskArtifactRoot = path.join(dataDirectory, 'task-artifacts');
 const workspaceRoot = path.resolve(process.env.WORKSPACE_ROOT || projectRoot);
 const profilePath = path.resolve(process.env.VERIFICATION_PROFILES || path.join(projectRoot, 'config', 'verification-profiles.json'));
 const learningSeedPath = path.resolve(process.env.LEARNING_SEEDS || path.join(projectRoot, 'config', 'learning-seeds.json'));
@@ -44,7 +50,6 @@ const signupCode = process.env.SIGNUP_CODE || '';
 const soloMode = process.env.SOLO_MODE === 'true';
 const serverStartedAt = Date.now();
 const authRateLimiter = new FixedWindowRateLimiter({ limit: 10, windowMs: 60_000 });
-const externalUsageRateLimiter = new FixedWindowRateLimiter({ limit: 4, windowMs: 60_000 });
 
 const store = new Store(dataDirectory, { signupCode, serverStartedAt });
 const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
@@ -56,12 +61,17 @@ const projectContext = new ProjectContextStore(dataDirectory);
 const discussions = new DiscussionStore(dataDirectory);
 const ai = new AIService();
 const usageTracker = new UsageTracker({ dataDirectory, configPath: usageConfigPath });
-const externalUsage = new ExternalUsageStore({ dataDirectory });
 const contextIndex = new ContextIndex({ workspaceRoot });
 const aiSessionLogs = new AISessionLogStore();
 const runDashboard = new RunDashboardStore({ workspaceRoot });
 const runScopes = new ScopeLeaseService({ workspaceRoot });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), externalUsage.initialize(), contextIndex.initialize()]);
+const workboardEngine = new WorkboardEngine();
+const wiki = new WikiStore(dataDirectory);
+const experienceJournal = new ExperienceJournal(dataDirectory);
+const experienceEngine = new ExperienceEngine({
+  projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
+});
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize()]);
 await failureCases.resolveCoveredByActiveArtifacts({
   harnessIds: (await harnessRegistry.list({ includeDisabled: false })).map((item) => item.id),
   skillIds: (await skillRegistry.list({ includeDisabled: false })).map((item) => item.id),
@@ -129,6 +139,72 @@ async function handleApi(request, response) {
 
   const actor = await requireUser(request);
 
+  if (method === 'GET' && url.pathname === '/api/contracts') {
+    sendJson(response, 200, {
+      schemaVersion: CONTRACT_VERSION,
+      contracts: {
+        contextPack: {
+          kind: 'team-loop-context-pack',
+          requiredFields: ['packId', 'requiredInputs', 'readOrder', 'writeScope', 'forbiddenActions'],
+          legacyAliases: { diId: 'packId', allowlist: 'writeScope' },
+        },
+        skillManifest: {
+          requiredFields: ['skillType', 'automationLevel', 'humanApprovalPoints', 'sideEffectScope', 'requiredCapabilities'],
+          skillTypes: ['procedural', 'assisted', 'executable'],
+        },
+        harness: {
+          kind: 'team-loop-harness',
+          requiredCheckFields: ['order', 'command', 'args', 'expectedExit', 'mutatesState'],
+        },
+        gateManifest: {
+          kind: 'team-loop-gate-manifest',
+          requiredCheckFields: ['order', 'harnessId', 'args', 'expectedExit', 'mutatesState'],
+        },
+        knowledgePromotion: KNOWLEDGE_PROMOTION_CONTRACT,
+      },
+    });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/workboard/export') {
+    const snapshot = workboardEngine.createSnapshot({
+      tasks: await store.listTasks(),
+      users: await store.listUsers(),
+      title: url.searchParams.get('title') || 'Team Loop Workboard',
+      includeArchived: url.searchParams.get('archived') === 'true',
+    });
+    const content = renderStandaloneWorkboard(snapshot);
+    response.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(content),
+      'Content-Disposition': 'attachment; filename="team-loop-workboard.html"',
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    response.end(content);
+    return;
+  }
+
+  const artifactDownloadMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/artifacts\/([^/]+)$/);
+  if (method === 'GET' && artifactDownloadMatch) {
+    const [, taskId, artifactId] = artifactDownloadMatch;
+    const task = await store.getTask(taskId);
+    if (!task) throw new HttpError(404, 'Task not found.');
+    requireTaskParticipantOrAdmin(task, actor);
+    const artifact = (task.artifacts || []).find((item) => item.id === artifactId);
+    if (!artifact) throw new HttpError(404, 'Task artifact not found.');
+    const content = await readFile(taskArtifactPath(taskId, artifactId));
+    response.writeHead(200, {
+      'Content-Type': artifact.contentType || 'application/octet-stream',
+      'Content-Length': content.length,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    response.end(content);
+    return;
+  }
+
   if (method === 'GET' && url.pathname === '/api/ai-sessions') {
     sendJson(response, 200, { sessions: await aiSessionLogs.list({ limit: url.searchParams.get('limit') }) });
     return;
@@ -187,6 +263,82 @@ async function handleApi(request, response) {
       contentSha256: context.content ? sha256(context.content) : null,
     });
     sendJson(response, 200, { projectContext: context });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/experience/prepare') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    if (!String(body.goal || body.title || '').trim()) throw new HttpError(400, 'Experience goal is required.');
+    const pack = await experienceEngine.prepare(body);
+    await store.recordAudit(actor.id, 'EXPERIENCE_PACK_PREPARED', {
+      goalSha256: sha256(pack.goal),
+      wikiEntries: pack.wiki.length,
+      sourceCount: pack.sources.sourceCount,
+      selectedHarnessId: pack.learning.selectedHarnessId,
+      selectedSkillIds: pack.learning.selectedSkillIds,
+    });
+    sendJson(response, 200, { pack });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/experience/reflect') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    if (!String(body.goal || '').trim()) throw new HttpError(400, 'Reflection goal is required.');
+    const experience = await experienceJournal.record(actor, body);
+    const candidates = experienceEngine.reflectionCandidates(experience);
+    const proposedWiki = [];
+    for (const candidate of candidates.wikiCandidates) {
+      const proposal = await wiki.propose(actor, { ...candidate, sourceExperienceId: experience.id });
+      proposedWiki.push(proposal);
+    }
+    await store.recordAudit(actor.id, 'EXPERIENCE_REFLECTED', {
+      experienceId: experience.id,
+      verdict: experience.verdict,
+      wikiCandidateIds: proposedWiki.map((item) => item.entry.id),
+      failureCaseIds: experience.failureCaseIds,
+    });
+    sendJson(response, 201, {
+      experience,
+      candidates: { ...candidates, wikiCandidates: proposedWiki.map((item) => item.entry) },
+    });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/experience/recent') {
+    sendJson(response, 200, { experiences: await experienceJournal.recent({ limit: url.searchParams.get('limit') }) });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/wiki') {
+    const query = url.searchParams.get('q');
+    const entries = query
+      ? await wiki.search(query, { includeCandidates: url.searchParams.get('candidates') === 'true', limit: url.searchParams.get('limit') })
+      : await wiki.list({ status: url.searchParams.get('status') || undefined, limit: url.searchParams.get('limit') });
+    sendJson(response, 200, { entries });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/wiki/propose') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const proposal = await wiki.propose(actor, body);
+    await store.recordAudit(actor.id, proposal.duplicate ? 'WIKI_CANDIDATE_DUPLICATE' : 'WIKI_CANDIDATE_PROPOSED', {
+      wikiEntryId: proposal.entry.id,
+    });
+    sendJson(response, proposal.duplicate ? 200 : 201, proposal);
+    return;
+  }
+
+  const wikiStatusMatch = url.pathname.match(/^\/api\/wiki\/([^/]+)\/status$/);
+  if (method === 'POST' && wikiStatusMatch) {
+    requireAdmin(actor);
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const entry = await wiki.setStatus(wikiStatusMatch[1], actor.id, body.status);
+    await store.recordAudit(actor.id, 'WIKI_STATUS_CHANGED', { wikiEntryId: entry.id, status: entry.status });
+    sendJson(response, 200, { entry });
     return;
   }
 
@@ -273,11 +425,7 @@ async function handleApi(request, response) {
     const allUsers = await store.listUsers();
     const visibleUsers = actor.role === 'admin' ? allUsers : allUsers.filter((user) => user.id === actor.id);
     const actorUserIds = visibleUsers.map((user) => user.id);
-    const [usage, external] = await Promise.all([
-      usageTracker.summary({ days, users: visibleUsers, actorUserIds }),
-      externalUsage.summary({ days, users: visibleUsers, actorUserIds }),
-    ]);
-    usage.external = external;
+    const usage = await usageTracker.summary({ days, users: visibleUsers, actorUserIds });
     usage.scope.visibility = actor.role === 'admin' ? 'TEAM' : 'SELF';
     usage.scope.description = actor.role === 'admin'
       ? 'Team Loop 서버 경유 AI 요청과 외부 Claude Code/Codex 참고 집계를 분리해 표시합니다. 외부 사용량은 예산에 합산하지 않습니다.'
@@ -286,25 +434,6 @@ async function handleApi(request, response) {
     return;
   }
 
-  if (method === 'POST' && url.pathname === '/api/usage/external') {
-    externalUsageRateLimiter.consume(`external-usage:${actor.id}`, 'Too many external usage snapshots. Try again later.');
-    const body = await readBody(request);
-    assertPlainObject(body);
-    const result = await externalUsage.record(actor.id, body);
-    await store.recordAudit(actor.id, result.duplicate ? 'EXTERNAL_USAGE_DUPLICATE' : 'EXTERNAL_USAGE_RECORDED', {
-      tool: result.snapshot.tool,
-      machineId: result.snapshot.machineId,
-      windowId: result.snapshot.tokens?.windowId || null,
-      duplicate: result.duplicate,
-      quotaWindows: result.snapshot.quota?.windows.length || 0,
-    });
-    sendJson(response, result.duplicate ? 200 : 201, {
-      accepted: result.accepted,
-      duplicate: result.duplicate,
-      windowId: result.snapshot.tokens?.windowId || null,
-    });
-    return;
-  }
 
   if (method === 'GET' && url.pathname === '/api/users') {
     sendJson(response, 200, { users: await store.listUsers() });
@@ -644,12 +773,43 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(queue-agent|cancel-agent|claim|files|submit|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
-  const body = await readBody(request);
+  const body = await readBody(request, action === 'artifact' ? 12 * 1024 * 1024 : undefined);
   assertPlainObject(body);
   const expectedVersion = body.expectedVersion;
+
+  if (action === 'artifact') {
+    const current = await store.getTask(taskId);
+    if (!current) throw new HttpError(404, 'Task not found.');
+    requireAssigneeOrAdmin(current, actor);
+    const name = safeArtifactName(body.name);
+    const contentType = String(body.contentType || 'application/octet-stream').slice(0, 120);
+    const encoded = String(body.data || '');
+    if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new HttpError(400, 'Artifact data must be base64.');
+    const content = Buffer.from(encoded, 'base64');
+    if (!content.length) throw new HttpError(400, 'Artifact file is empty.');
+    if (content.length > 8 * 1024 * 1024) throw new HttpError(413, 'Artifact file must be 8 MB or smaller.');
+    const artifact = {
+      id: randomId('art_'), name, contentType, size: content.length,
+      uploadedAt: nowIso(), uploadedByUserId: actor.id,
+    };
+    const target = taskArtifactPath(taskId, artifact.id);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content, { flag: 'wx' });
+    try {
+      const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_ARTIFACT_UPLOADED', async (next) => {
+        requireAssigneeOrAdmin(next, actor);
+        next.artifacts = [...(next.artifacts || []), artifact].slice(-20);
+      });
+      sendJson(response, 201, { task, artifact });
+    } catch (error) {
+      await unlink(target).catch(() => {});
+      throw error;
+    }
+    return;
+  }
 
   if (action === 'files') {
     const task = await store.getTask(taskId);
@@ -677,6 +837,30 @@ async function handleApi(request, response) {
       next.executionState = 'IDLE';
     });
     sendJson(response, 200, { task, submission });
+    return;
+  }
+
+  if (action === 'assign') {
+    const current = await store.getTask(taskId);
+    if (!current) throw new HttpError(404, 'Task not found.');
+    requireTaskCreatorOrAdmin(current, actor);
+    if (!['READY', 'BLOCKED'].includes(current.status)) {
+      throw new HttpError(409, 'Assignee can only be changed while a task is READY or BLOCKED.');
+    }
+    const assigneeUserId = body.assigneeUserId || null;
+    await validatePeople(assigneeUserId, current.reviewerUserId);
+    const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_ASSIGNEE_CHANGED', async (next) => {
+      requireTaskCreatorOrAdmin(next, actor);
+      if (!['READY', 'BLOCKED'].includes(next.status)) {
+        throw new HttpError(409, 'Assignee can only be changed while a task is READY or BLOCKED.');
+      }
+      next.assigneeUserId = assigneeUserId;
+      if (next.executionState === 'QUEUED') {
+        next.executionMode = 'HUMAN';
+        next.executionState = 'IDLE';
+      }
+    });
+    sendJson(response, 200, { task });
     return;
   }
 
@@ -1198,6 +1382,12 @@ function requireTaskParticipantOrAdmin(task, actor) {
   }
 }
 
+function requireTaskCreatorOrAdmin(task, actor) {
+  if (task.creatorUserId !== actor.id && actor.role !== 'admin') {
+    throw new HttpError(403, 'Only the task creator or an administrator can change the assignee.');
+  }
+}
+
 function buildTaskTimeline(tasks = [], audits = []) {
   const byTask = new Map(tasks.map((task) => [task.id, {
     taskId: task.id,
@@ -1417,12 +1607,12 @@ async function requireUser(request) {
   return user;
 }
 
-async function readBody(request) {
+async function readBody(request, maxBytes = 1024 * 1024) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 1024 * 1024) throw new HttpError(413, 'Request body is too large.');
+    if (size > maxBytes) throw new HttpError(413, 'Request body is too large.');
     chunks.push(chunk);
   }
   if (chunks.length === 0) return {};
@@ -1431,6 +1621,17 @@ async function readBody(request) {
   } catch {
     throw new HttpError(400, 'Request body must be valid JSON.');
   }
+}
+
+function safeArtifactName(value) {
+  const name = path.basename(String(value || '').trim()).replace(/[\x00-\x1f<>:"/\\|?*]/g, '-').slice(0, 180);
+  if (!name || name === '.' || name === '..') throw new HttpError(400, 'Artifact filename is required.');
+  return name;
+}
+
+function taskArtifactPath(taskId, artifactId) {
+  if (!/^tsk_[a-z0-9]+$/i.test(taskId) || !/^art_[a-z0-9]+$/i.test(artifactId)) throw new HttpError(400, 'Invalid artifact path.');
+  return path.join(taskArtifactRoot, taskId, artifactId);
 }
 
 async function serveStatic(request, response) {

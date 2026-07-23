@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "loopDefinition": {
+    "kind": "team-loop-definition",
+    "requiredFields": ["loopId", "stages"]
+  },
+  "loopState": {
+    "kind": "team-loop-state",
+    "phases": ["idle", "planning", "running", "reviewing", "blocked", "completed", "failed"],
+    "requiredFields": ["loopId", "runId", "phase"]
+  },
+  "balanceSpec": {
+    "kind": "team-loop-balance-spec",
+    "requiredFields": ["balanceId", "parameters", "metrics"]
+  },
+  "observationSet": {
+    "kind": "team-loop-observation-set",
+    "requiredFields": ["observationSetId", "balanceId", "observations"]
+  },
+  "experienceEvent": {
+    "kind": "team-loop-experience-event",
+    "requiredFields": ["eventId", "eventType", "actor", "summary"]
+  },
+  "contextPack": {
+    "kind": "team-loop-context-pack",
+    "requiredFields": ["packId", "requiredInputs", "readOrder", "writeScope", "forbiddenActions"]
+  },
+  "skillManifest": {
+    "skillTypes": ["procedural", "assisted", "executable"],
+    "automationLevel": { "minimum": 0, "maximum": 10 },
+    "requiredFields": ["skillType", "automationLevel", "humanApprovalPoints", "sideEffectScope", "requiredCapabilities"]
+  },
+  "harness": {
+    "kind": "team-loop-harness",
+    "requiredCheckFields": ["order", "command", "args", "expectedExit", "mutatesState"]
+  },
+  "gateManifest": {
+    "kind": "team-loop-gate-manifest",
+    "requiredCheckFields": ["order", "harnessId", "args", "expectedExit", "mutatesState"]
+  },
+  "knowledgePromotion": {
+    "minimumOccurrences": 2,
+    "priority": ["HARNESS", "SKILL", "WIKI"],
+    "automaticPromotion": false
+  }
+}

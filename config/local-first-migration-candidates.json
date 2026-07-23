@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "kind": "team-loop-migration-candidates",
+  "source": "C:\\Users\\1\\Documents\\Local-First Workflow Dashboard",
+  "policy": {
+    "activation": "manual-review-required",
+    "sourceMutation": false,
+    "importedRuntimeState": false
+  },
+  "failures": [
+    {
+      "sourceId": "FAIL-2026-001",
+      "title": "outbox 반입이 현행 코드를 덮어쓸 뻔함",
+      "status": "해결됨",
+      "failureClass": [
+        "stale_input",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-001-outbox-stale-import.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: 지시서 #11-R(ContextBudget 재적용 + 반입 stale 가드)\n- 구성요소: outbox-import\n- failureClass: stale_input, design_learning\n- 심각도: critical",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-002",
+      "title": "토큰 미설정 시 원격 반입/승인이 401로 막힘",
+      "status": "완화됨",
+      "failureClass": [
+        "config_side_effect",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-002-dispatch-token-blocks-remote-approval.md",
+      "summary": "- 상태: 완화됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: 지시서 #16(모바일 승인 토큰 개선)\n- 구성요소: remote-token, dispatch-auth, dashboard-approval\n- failureClass: config_side_effect, design_learning\n- 심각도: high",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-003",
+      "title": "승인된 화면에 새 제안이 떠 승인 버튼이 막힌 것처럼 보임",
+      "status": "해결됨",
+      "failureClass": [
+        "ui_state",
+        "known_failure"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-003-approve-button-stuck-on-new-proposal.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: 커밋 4e8c39c 계열 승인 UI 수정\n- 구성요소: dashboard-approval, proposal-rendering\n- failureClass: ui_state, known_failure\n- 심각도: high",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-004",
+      "title": "병렬 헤드리스 실행자가 작업트리를 오염시킴",
+      "status": "완화됨",
+      "failureClass": [
+        "concurrency",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-004-parallel-executor-worktree-contamination.md",
+      "summary": "- 상태: 완화됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: v9 다중모델 FILE-CLAIMS 설계, 모바일 토큰 수정, CLI 분리 리팩토링\n- 구성요소: executor-orchestration\n- failureClass: concurrency, design_learning\n- 심각도: high",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-005",
+      "title": "헤드리스 실행자 미실행을 진행 중으로 오판",
+      "status": "해결됨",
+      "failureClass": [
+        "observability",
+        "known_failure"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-005-headless-launch-observability.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: 향후 #13 실행자 사다리 관측 요구\n- 구성요소: executor-orchestration\n- failureClass: observability, known_failure\n- 심각도: medium",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-006",
+      "title": "Storage 프로젝트 경로가 sibling prefix 디렉터리를 통과시킴",
+      "status": "해결됨",
+      "failureClass": [
+        "path_escape",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-006-storage-project-path-prefix-escape.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: S-01 경로 escape 재현 라운드\n- 구성요소: storage-project-path\n- failureClass: path_escape, design_learning\n- 심각도: medium",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-007",
+      "title": "outbox 조회가 encoded backslash로 sibling 디렉터리를 읽음",
+      "status": "해결됨",
+      "failureClass": [
+        "path_escape",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-007-outbox-read-prefix-escape.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-10\n- 최근 발생일: 2026-07-10\n- 관련 DI: S-02 경로 escape 재현 라운드\n- 구성요소: outbox-read\n- failureClass: path_escape, design_learning\n- 심각도: medium",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-008",
+      "title": "self-refactor dispatch 템플릿이 현행 코드와 어긋나 빌드 실패",
+      "status": "해결됨",
+      "failureClass": [
+        "stale_template",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-008-dispatch-self-refactor-template-stale.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-11\n- 최근 발생일: 2026-07-11\n- 관련 DI: CODEX-QUEUE 2, R-01~04 호출부 정합성 헌트\n- 구성요소: dispatch-executor, executor-orchestration\n- failureClass: stale_template, design_learning\n- 심각도: medium",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-009",
+      "title": "없는 projectId 조회가 4xx 대신 500을 반환",
+      "status": "확인됨",
+      "failureClass": [
+        "error_handling",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-009-missing-project-api-returns-500.md",
+      "summary": "- 상태: 확인됨\n- 최초 발생일: 2026-07-11\n- 최근 발생일: 2026-07-11\n- 관련 DI: CODEX-AUTO-15min §4.5 E2E 실사용 검사\n- 구성요소: project-api-read\n- failureClass: error_handling, design_learning\n- 심각도: medium",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-010",
+      "title": "줄바꿈 표현 차이가 발사 게이트를 영구 잠금(큐 정지)",
+      "status": "해결됨",
+      "failureClass": [
+        "unnormalized_gate",
+        "config_side_effect",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-010-crlf-gate-deadlock.md",
+      "summary": "- 상태: 해결됨\n- 최초 발생일: 2026-07-09 (mtime 기준 잠복 시작)\n- 최근 발생일: 2026-07-11 (발견·해결)\n- 관련 DI: SONNET-QUEUE 발사규칙 ①, ORCH-01(관측 스캐폴드), HARNESS-01(gate-clean)\n- 구성요소: executor-orchestration, gate-evaluation\n- failureClass: unnormalized_gate, config_side_effect, design_learning\n- 심각도: high",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-012",
+      "title": "커밋 메시지 접두사를 '행위 주체'로 오판해 위반 22건을 날조",
+      "status": "해결됨(철회 완료)",
+      "failureClass": [
+        "unnormalized_gate",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-012-proxy-actor-misjudgment.md",
+      "summary": "- 상태: 해결됨(철회 완료)\n- 최초 발생일: 2026-07-11\n- 최근 발생일: 2026-07-11\n- 관련 DI: HARNESS-04 gate-audit(철회), HS-04(철회)\n- 구성요소: gate-evaluation, executor-orchestration\n- failureClass: unnormalized_gate, design_learning\n- 심각도: high (오보가 사람의 운영 결정을 유도할 뻔함)",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-013",
+      "title": "발사 프롬프트가 잘려서 도착한다: 실행자는 지시서를 **받은 적이 없었다**",
+      "status": "해결됨(격리 발사로 수정)",
+      "failureClass": [
+        "unnormalized_gate",
+        "observability",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-013-launch-prompt-truncation.md",
+      "summary": "> **[중대 정정 2026-07-11 18:3x]** 이 문서의 최초 진단(\"`claude -p`가 기존 세션을 이어받는다\")은 **틀렸다.**\n> `--fork-session`을 붙여도 증상이 그대로였다. 검수자가 **프록시(CLI 에러 메시지)로 원인을 단정한 세 번째 오귀인**이다.\n> **실제 원인은 아래 '진짜 원인'이다.** 조율자가 이 오진을 이미 전파했으므로(run-summary \"근본원인 규명: 세션 미격리\") 그 기록도 무효다.",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-014",
+      "title": "Tier2Approver 검증 CLI가 일부 시나리오에서 예외로 종료됨",
+      "status": "확인됨",
+      "failureClass": [
+        "verification_gap",
+        "harness_runtime_error",
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-014-tier2test-verification-cli-crashes.md",
+      "summary": "- 상태: 확인됨\n- failureClass: verification_gap, harness_runtime_error, design_learning\n- 구성요소: tier2-approver, verification-harness\n- 발견일: 2026-07-11\n- 발견자: codex",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-015",
+      "title": "하네스가 **다른 것을 잰다**: 초록불이 대상과 무관하다",
+      "status": "진행 중 (06C-1-R2 · 05H-R3 · CODEX-GATE-04에서 개별 대응)",
+      "failureClass": [
+        "verification_gap"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-015-harness-measures-wrong-thing.md",
+      "summary": "- 상태: 진행 중 (06C-1-R2 · 05H-R3 · CODEX-GATE-04에서 개별 대응)\n- 최초 발생일: 2026-07-12 (검수자가 \"게이트가 다섯 번 거짓말했다\"로 처음 묶음)\n- 최근 발생일: 2026-07-14\n- 관련 DI: 05H · 05H-R2 · 06C-1 · 06C-1-R1 · GUARD-01 · CODEX-GATE-04\n- 구성요소: verification-harness\n- failureClass: verification_gap\n- 심각도: 높음 (게이트가 **거짓 초록**을 준다 — 모든 판정의 신뢰가 무너진다)",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-016",
+      "title": "**모순된 요구가 실행자를 규칙 완화로 민다**",
+      "status": "부분 해결 (프롬프트 작성 규칙으로 승격 필요)",
+      "failureClass": [
+        "design_learning"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-016-contradictory-requirements-force-relaxation.md",
+      "summary": "- 상태: 부분 해결 (프롬프트 작성 규칙으로 승격 필요)\n- 최초 발생일: 2026-07-13\n- 최근 발생일: 2026-07-14\n- 관련 DI: 05H · 06C-1 · 06C-1-R1\n- 구성요소: executor-orchestration\n- failureClass: design_learning\n- 심각도: 높음 (**실행자를 탓하고 진짜 원인을 놓친다**)",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-017",
+      "title": "PowerShell 5.1 인코딩 3중 함정: **독립 검수자에게 깨진 입력을 줬다**",
+      "status": "해결 (`skills/common/powershell-encoding.md` 신설 · `run-codex-review.ps1` 수정)",
+      "failureClass": [
+        "config_side_effect"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-017-powershell-encoding-triple-trap.md",
+      "summary": "- 상태: 해결 (`skills/common/powershell-encoding.md` 신설 · `run-codex-review.ps1` 수정)\n- 최초 발생일: 2026-07-11 이전 (`run-executor.ps1` BOM 문제 — 소급 확인)\n- 최근 발생일: 2026-07-14\n- 관련 DI: P0-06 · 05H-R2 검수 · 코덱스 독립 검수 배선\n- 구성요소: executor-orchestration\n- failureClass: config_side_effect\n- 심각도: 높음 (**계측기·검수자에게 오염된 입력이 들어가면 판정 자체가 오염된다**)",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-018",
+      "title": "**검수자가 프록시로 네 번 오판할 뻔했다** (FAIL-2026-012의 재발)",
+      "status": "진행 중 (규칙은 있는데 지켜지지 않는다 — 하네스화 필요)",
+      "failureClass": [
+        "known_failure (FAIL-2026-012 계열)"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-018-reviewer-proxy-relapse.md",
+      "summary": "- 상태: 진행 중 (규칙은 있는데 지켜지지 않는다 — 하네스화 필요)\n- 최초 발생일: 2026-07-11 (FAIL-2026-012)\n- 최근 발생일: 2026-07-14\n- 관련 DI: 05H · 06C-1 · 06C-1-R1 검수\n- 구성요소: verification-harness\n- failureClass: known_failure (FAIL-2026-012 계열)\n- 심각도: 높음 (**검수자가 오판하면 아무도 못 잡는다** — 검수자를 검수하는 자가 없다)",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "sourceId": "FAIL-2026-019",
+      "title": "빈 인자 `dotnet run`이 **웹서버를 띄워 실행자를 12분간 교착**시켰다",
+      "status": "미해결 (`CODEX-GATE-04 §5-5`로 등재)",
+      "failureClass": [
+        "harness_runtime_error"
+      ],
+      "component": null,
+      "sourcePath": "docs/wiki/failures/cases/FAIL-2026-019-empty-args-webserver-deadlock.md",
+      "summary": "- 상태: 미해결 (`CODEX-GATE-04 §5-5`로 등재)\n- 최초 발생일: 2026-07-14\n- 최근 발생일: 2026-07-14\n- 관련 DI: 06C-1-R1 · GUARD-01 · CODEX-GATE-04\n- 구성요소: executor-orchestration\n- failureClass: harness_runtime_error\n- 심각도: 높음 (**한도 창을 통째로 태울 수 있다.** 사람이 개입하지 않으면 무한 대기)",
+      "disposition": "CANDIDATE"
+    }
+  ],
+  "skills": [
+    {
+      "id": "directive-authoring",
+      "title": "스킬: 지시서 작성 (지시자)",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/common/directive-authoring.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "directive-writing",
+      "title": "스킬: 지시서 해석",
+      "version": "2",
+      "trigger": null,
+      "sourcePath": "skills/common/directive-writing.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "executor-launch",
+      "title": "스킬: 실행자 발사 — 발사는 \"프로세스를 띄웠다\"가 아니다",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/common/executor-launch.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "hs-gate",
+      "title": "스킬: HS-GATE 승격 심사 (하네스·스킬 후보 점수화)",
+      "version": "1",
+      "trigger": "`dotnet run --project server -- hs-scan` 이 **exit 1**을 반환했을 때. 재량 아님 — **의무**.",
+      "sourcePath": "skills/common/hs-gate.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "powershell-encoding",
+      "title": "스킬: PowerShell 인코딩 — 이 저장소가 **네 번** 당한 함정",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/common/powershell-encoding.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "root-cause-diagnosis",
+      "title": "스킬: 근본원인 진단 — 프록시로 단정하지 마라",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/common/root-cause-diagnosis.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "verification",
+      "title": "스킬: 실행 검증",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/common/verification.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "design",
+      "title": "스킬: UI 작업법",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/domains/design/design.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "file-navigation",
+      "title": "스킬: 저장소 보는 법",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/domains/dev/file-navigation.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "path-escape-qa",
+      "title": "스킬: path-escape QA — root 경계는 접두사가 아니라 디렉터리 경계다",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/domains/dev/path-escape-qa.md",
+      "disposition": "CANDIDATE"
+    },
+    {
+      "id": "balance-tuning",
+      "title": "스킬: 게임 밸런스 튜닝",
+      "version": "1",
+      "trigger": null,
+      "sourcePath": "skills/domains/game/balance-tuning.md",
+      "disposition": "CANDIDATE"
+    }
+  ],
+  "counts": {
+    "failures": 18,
+    "skills": 11
+  }
+}

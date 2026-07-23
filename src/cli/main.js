@@ -7,8 +7,6 @@ import { printFailures, printHarnesses, printTask, printTasks, printUsers, print
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { readPassword } from './password.js';
-import { captureClaudeStatusline, collectUsageSnapshots, commitUsageCursor } from './usage-collector.js';
-import { startOtelReceiver } from './otel-receiver.js';
 import { Verifier, globMatch } from '../verifier.js';
 import { RunArtifactService, normalizeRunDocument } from '../run-artifacts.js';
 import { auditSkills, buildSkillPolicy } from '../skill-policy.js';
@@ -54,6 +52,7 @@ export async function runCli(argv) {
     printValue({ dashboard: `${server}/`, note: 'Open this URL in a browser and log in.' }, { json });
     return 0;
   }
+  if (command === 'board') return runBoard(client, positionals.slice(1), options, json);
 
   if (command === 'register' || command === 'login') {
     const name = requireOption(options, 'name');
@@ -1070,60 +1069,10 @@ async function runUsage(client, positionals, options, json) {
   if (action === 'status') {
     const days = numberOption(options, 'days', 30);
     const result = await client.request(`/api/usage?days=${encodeURIComponent(days)}`);
-    printValue(result.usage.external, { json: true });
+    printValue(result.usage, { json: true });
     return 0;
   }
-  if (action === 'capture-claude-statusline') {
-    const input = await readStdin();
-    const result = await captureClaudeStatusline(input);
-    if (!options.quiet) printValue(result, { json: true });
-    return 0;
-  }
-  if (action === 'receiver') {
-    const receiver = await startOtelReceiver({
-      host: stringOption(options, 'host', '127.0.0.1'),
-      port: numberOption(options, 'port', 4318),
-    });
-    printValue({ listening: `http://${receiver.host}:${receiver.port}`, spool: receiver.spool }, { json: true });
-    await new Promise((resolve) => {
-      process.once('SIGINT', resolve);
-      process.once('SIGTERM', resolve);
-    });
-    await new Promise((resolve) => receiver.server.close(resolve));
-    return 0;
-  }
-  if (action === 'push') {
-    const execute = async () => {
-      const collected = await collectUsageSnapshots({ includeInitialBackfill: Boolean(options['include-initial-backfill']) });
-      const results = [];
-      const collectorClient = new CliClient({ server: client.server, cookie: client.cookie, clientType: 'collector' });
-      for (const snapshot of collected.snapshots) {
-        results.push(await collectorClient.request('/api/usage/external', { method: 'POST', body: snapshot }));
-      }
-      await commitUsageCursor(collected.cursorPath, collected.nextCursor);
-      printValue({ collectedAt: collected.nextCursor.lastPushAt, snapshots: collected.snapshots, results, diagnostics: collected.diagnostics }, { json: true });
-    };
-    if (!options.daemon) {
-      await execute();
-      return 0;
-    }
-    const intervalSeconds = Math.max(60, numberOption(options, 'interval', 300));
-    await execute();
-    await new Promise((resolve) => {
-      const timer = setInterval(() => execute().catch((error) => console.error(`Usage push failed: ${error.message}`)), intervalSeconds * 1000);
-      const stop = () => { clearInterval(timer); resolve(); };
-      process.once('SIGINT', stop);
-      process.once('SIGTERM', stop);
-    });
-    return 0;
-  }
-  throw new Error('Usage action must be status, push, receiver, or capture-claude-statusline.');
-}
-
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
+  throw new Error('Usage action must be status.');
 }
 
 async function runTask(client, positionals, options, json) {
@@ -1456,6 +1405,23 @@ async function serve(options) {
   return 0;
 }
 
+async function runBoard(client, args, options, json) {
+  if (args[0] !== 'export') throw new Error('Usage: team-loop board export --output workboard.html');
+  const output = path.resolve(String(option(options, 'output', 'team-loop-workboard.html')));
+  const query = new URLSearchParams();
+  const title = option(options, 'title');
+  if (title && title !== true) query.set('title', String(title));
+  if (options.archived) query.set('archived', 'true');
+  const result = await client.request(`/api/workboard/export${query.size ? `?${query}` : ''}`);
+  if (typeof result.raw !== 'string' || !result.raw.startsWith('<!doctype html>')) {
+    throw new Error('Server did not return a standalone workboard.');
+  }
+  await mkdir(path.dirname(output), { recursive: true });
+  await writeFile(output, result.raw, { encoding: 'utf8', flag: options.force ? 'w' : 'wx' });
+  printValue({ output, portable: true }, { json });
+  return 0;
+}
+
 function stringOption(options, name, fallback) {
   const value = option(options, name, fallback);
   return value === true ? fallback : String(value);
@@ -1481,5 +1447,5 @@ function printHelp() {
   Passing work waits for explicit land.
 
 `);
-  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine] [--archived] [--all]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n  team-loop task archive <task-id>\n  team-loop task unarchive <task-id>\n  team-loop task delete <task-id>\n  team-loop worktree create|remove|list <task-id>   (per-task isolated git worktree)\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nExternal usage:\n  team-loop usage status [--days 30]\n  team-loop usage push [--daemon --interval 300]\n  team-loop usage receiver [--host 127.0.0.1 --port 4318]\n  claude-statusline-command | team-loop usage capture-claude-statusline [--quiet]\n\nDispatch (hand a task to a CLI agent that does the work):\n  team-loop dispatch <task-id> [--executor claude-code|codex|custom]\n      [--execute] [--isolate] [--model NAME] [--permission MODE] [--sandbox workspace-write]\n      [--to verify|review|done] [--reviewer-home DIR]\n  (default is a dry-run that prints the work order; --execute runs the agent\n   headless in WORKSPACE_ROOT, then verifies. claude-code and codex are supported.)\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n  TEAM_LOOP_CODEX_BIN           Codex executable override, defaults to codex.cmd on Windows\n  TEAM_LOOP_CLAUDE_BIN          Claude executable override, defaults to claude\n  TEAM_LOOP_CUSTOM_EXECUTOR_BIN Custom executor that reads the work order from stdin\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
+  process.stdout.write(`Team Loop Lite + AI CLI\n\nUsage:\n  team-loop [--server URL] [--json] <command>\n\nServer:\n  team-loop serve --workspace /path/to/game [--port 4173]\n  team-loop health\n\nAuthentication:\n  team-loop register --name Alice [--signup-code CODE]\n  team-loop login --name Alice\n  team-loop logout\n  team-loop whoami\n\nTeam and tasks:\n  team-loop users\n  team-loop tasks [--status REVIEW] [--mine] [--archived] [--all]\n  team-loop task show <task-id>\n  team-loop task create --title TEXT [--description TEXT] [--priority 100]\n      [--allowed-path PATH ...] [--criterion TEXT ...] [--profile PROFILE]\n      [--assignee NAME_OR_ID] [--reviewer NAME_OR_ID]\n  team-loop task claim <task-id>\n  team-loop task verify <task-id>\n  team-loop task request-review <task-id>\n  team-loop task approve <task-id> [--comment TEXT]\n  team-loop task reject <task-id> [--comment TEXT]\n  team-loop task block <task-id> --reason TEXT\n  team-loop task unblock <task-id>\n  team-loop task archive <task-id>\n  team-loop task unarchive <task-id>\n  team-loop task delete <task-id>\n  team-loop worktree create|remove|list <task-id>   (per-task isolated git worktree)\n\nHarnesses and failures:\n  team-loop harness list\n  team-loop harness show <id>\n  team-loop harness create --id ID --label TEXT --file COMMAND [--arg ARG ...]\n      [--cwd .] [--expected-exit 0] [--timeout-ms 120000]\n  team-loop harness create --definition harness.json\n  team-loop harness update <id> --definition harness.json\n  team-loop harness test <id>\n  team-loop harness activate <id>\n  team-loop harness disable <id>\n  team-loop skill list\n  team-loop skill show|activate|disable <id>\n  team-loop learning craft --type HARNESS|SKILL --id ID --failure CASE_ID [--failure CASE_ID ...]\n      [--label TEXT] [--description TEXT] [--rule TEXT ...]\n  team-loop learning apply <task-id> [--harness ID] [--skill ID ...]\n  team-loop failures [--status OPEN] [--harness ID]\n  team-loop failure show <id>\n  team-loop failure promote <id>\n  team-loop failure craft <id> --type HARNESS|SKILL --id ID [--failure CASE_ID ...]\n  team-loop failure resolve|ignore|reopen <id> [--note TEXT]\n\nAI advisor:\n  team-loop ai draft-task --goal TEXT\n  team-loop ai next-tasks --objective TEXT\n  team-loop ai brief <task-id>\n  team-loop ai verification-summary <task-id>\n\nPersonal usage:\n  team-loop usage status [--days 30]\n\nDispatch (hand a task to a CLI agent that does the work):\n  team-loop dispatch <task-id> [--executor claude-code|codex|custom]\n      [--execute] [--isolate] [--model NAME] [--permission MODE] [--sandbox workspace-write]\n      [--to verify|review|done] [--reviewer-home DIR]\n  (default is a dry-run that prints the work order; --execute runs the agent\n   headless in WORKSPACE_ROOT, then verifies. claude-code and codex are supported.)\n\nOrchestrate (full loop: worker + reviewer bot):\n  team-loop orchestrate run --goal "TEXT" [--reviewer-home DIR]\n      [--title T] [--allowed-path P ...] [--criterion C ...] [--profile HARNESS]\n  (worker: create->claim->verify->request-review; reviewer bot then approves to DONE)\n\nReviewer bot (auto-review from a separate account):\n  team-loop reviewer run [--once | --interval SECONDS]\n      [--comment TEXT] [--reject-comment TEXT]\n  (approves REVIEW tasks when verification is green and workspace is unchanged,\n   otherwise rejects for re-verification; log in as a non-assignee account)\n\nSolo mode (single-person loop):\n  team-loop solo run --goal "TEXT" [--title T] [--allowed-path P ...]\n      [--criterion C ...] [--profile HARNESS] [--comment TEXT]\n  (create -> claim -> verify -> self-approve to DONE; server needs SOLO_MODE=true)\n\nPersonal CLI profile:\n  team-loop config show\n  team-loop config set [--tool claude-code|codex|custom] [--model NAME]\n      [--default-harness ID] [--default-skill ID ...]\n  team-loop config clear\n  (task claim attaches this profile; the server records it on the task)\n\nEnvironment:\n  TEAM_LOOP_URL                 default server URL\n  TEAM_LOOP_PASSWORD            password for login/register\n  TEAM_LOOP_CLI_HOME            session storage directory\n  TEAM_LOOP_SESSION_COOKIE      non-persistent session for automation\n  TEAM_LOOP_CLI_TIMEOUT_MS      request timeout (default 300000)\n  TEAM_LOOP_CODEX_BIN           Codex executable override, defaults to codex.cmd on Windows\n  TEAM_LOOP_CLAUDE_BIN          Claude executable override, defaults to claude\n  TEAM_LOOP_CUSTOM_EXECUTOR_BIN Custom executor that reads the work order from stdin\n\nPasswords are prompted without echo when --password and TEAM_LOOP_PASSWORD are absent.\n`);
 }

@@ -1,5 +1,31 @@
 # Team Loop Lite AI
 
+Team Loop의 중심은 개인 오퍼레이터가 사용하는 AI 밸런싱·루프
+오케스트레이션 엔진입니다. 외부에 공유하는 표면은 작업보드로 제한하며,
+내부 프롬프트·모델 선택·검증·학습 기록은 작업보드 출력에 포함하지 않습니다.
+
+로그인된 CLI에서 네트워크 연결 없이도 열 수 있는 단일 HTML 작업보드를
+내보낼 수 있습니다.
+
+```powershell
+team-loop board export --output workboard.html
+```
+
+엔진 경계와 공개 데이터 규칙은 [docs/ENGINE-BOUNDARY.md](docs/ENGINE-BOUNDARY.md)를
+참고하세요.
+
+## 에이전트 경험 루프
+
+MCP는 Team Loop의 주 에이전트 인터페이스입니다. 에이전트는 작업 전에
+`experience_prepare`로 위키·관련 소스·과거 실패·스킬·하네스를 포함한
+컨텍스트팩을 준비하고, 작업 후 `experience_reflect`로 결과와 발견을
+기록합니다. 발견한 지식은 자동 확정되지 않고 검토 가능한 위키 후보로
+남습니다.
+
+```text
+experience_prepare → 작업·검증 → experience_reflect → 지식·학습 후보
+```
+
 AI 작업을 격리된 Git worktree에서 실행하고, 프로젝트 하네스로 검증한 뒤, 사람이 승인해야 기본 브랜치에 반영하는 로컬 우선 작업 루프입니다.
 
 핵심 원칙:

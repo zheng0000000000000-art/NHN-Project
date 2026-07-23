@@ -39,6 +39,85 @@ async function fetchTask(client, taskId) {
 
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
+  experience_contracts: {
+    description: 'Read the versioned contracts for context packs, skill manifests, harnesses, gates, and knowledge promotion before producing durable experience artifacts.',
+    inputSchema: { type: 'object', properties: {} },
+    async run(client) {
+      return client.request('/api/contracts');
+    },
+  },
+  experience_prepare: {
+    description: 'Primary start-of-work tool. Build an evidence-backed experience pack from wiki knowledge, project sources, relevant failures, skills, and a verification harness.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string' },
+        description: { type: 'string' },
+        allowedPaths: { type: 'array', items: { type: 'string' } },
+        acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+        maxWikiEntries: { type: 'number' },
+        maxSourceChunks: { type: 'number' },
+      },
+      required: ['goal'],
+    },
+    async run(client, args) {
+      return client.request('/api/experience/prepare', { method: 'POST', body: args });
+    },
+  },
+  experience_reflect: {
+    description: 'Primary end-of-work tool. Record the outcome and create reviewable wiki and learning candidates so future agents can reuse verified experience.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string' },
+        outcome: { type: 'string' },
+        verdict: { type: 'string', enum: ['PASSED', 'FAILED', 'PARTIAL', 'UNKNOWN'] },
+        taskId: { type: 'string' },
+        usedSkillIds: { type: 'array', items: { type: 'string' } },
+        usedHarnessIds: { type: 'array', items: { type: 'string' } },
+        failureCaseIds: { type: 'array', items: { type: 'string' } },
+        discoveries: { type: 'array', items: { type: 'string' } },
+        nextActions: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['goal', 'outcome', 'verdict'],
+    },
+    async run(client, args) {
+      return client.request('/api/experience/reflect', { method: 'POST', body: args });
+    },
+  },
+  wiki_search: {
+    description: 'Recall durable project knowledge. Active entries are returned by default; candidates can be included for review.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        includeCandidates: { type: 'boolean' },
+        limit: { type: 'number' },
+      },
+      required: ['query'],
+    },
+    async run(client, args) {
+      const query = new URLSearchParams({ q: String(args.query), limit: String(args.limit || 8) });
+      if (args.includeCandidates) query.set('candidates', 'true');
+      return client.request(`/api/wiki?${query}`);
+    },
+  },
+  wiki_propose: {
+    description: 'Propose durable knowledge discovered during work. Proposals remain candidates until explicitly promoted.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        content: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        evidence: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['title', 'content'],
+    },
+    async run(client, args) {
+      return client.request('/api/wiki/propose', { method: 'POST', body: args });
+    },
+  },
   list_tasks: {
     description: 'List board tasks. Defaults to a compact id/title/status view; use detail="work" only when scope and ownership fields are needed.',
     inputSchema: {
@@ -141,7 +220,7 @@ const TOOLS = {
   list_skills: {
     description: 'List shared skills (failure-derived rules) available to all agents.',
     inputSchema: { type: 'object', properties: {} },
-    async run(client) { return (await client.request('/api/skills')).skills.map((s) => ({ id: s.id, status: s.status, label: s.label, rules: s.rules })); },
+    async run(client) { return (await client.request('/api/skills')).skills.map((s) => ({ id: s.id, status: s.status, label: s.label, rules: s.rules, manifest: s.manifest })); },
   },
   list_harnesses: {
     description: 'List shared verification harnesses.',

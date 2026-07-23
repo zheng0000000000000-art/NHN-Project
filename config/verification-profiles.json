@@ -40,6 +40,18 @@
         { "file": "git", "args": ["diff", "--check"], "expectedExit": 0, "timeoutMs": 60000 }
       ]
     },
+    "context-pack-integrity": {
+      "label": "Context pack integrity",
+      "description": "Validates a shared context-pack contract and every immutable full-file SHA-256 input.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["{teamLoopRoot}/tools/verification/check-context-pack.mjs", ".team-loop/context-pack.json", "."],
+          "expectedExit": 0,
+          "timeoutMs": 60000
+        }
+      ]
+    },
     "document-review": {
       "label": "Document review",
       "description": "Checks changed writing for structure, placeholders, merge markers, and relative links.",

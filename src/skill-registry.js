@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { atomicWriteJson, HttpError, nowIso, readJson, sha256 } from './utils.js';
+import { inferSkillManifest, normalizeSkillManifest } from './contracts.js';
 
 const EMPTY_DB = { schemaVersion: 1, skills: [] };
 const STATUSES = new Set(['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED']);
@@ -15,6 +16,7 @@ export class SkillRegistry {
     await this.#withLock(async () => {
       const db = await readJson(this.path, EMPTY_DB);
       if (!Array.isArray(db.skills)) throw new Error('Invalid skill registry.');
+      for (const skill of db.skills) skill.manifest = inferSkillManifest(skill);
       if (this.seedSkillPath) {
         const seeds = await readJson(this.seedSkillPath, { schemaVersion: 1, skills: {} });
         for (const [id, seed] of Object.entries(seeds.skills ?? {})) {
@@ -117,6 +119,7 @@ function upsertBuiltinSkill(db, id, seed) {
     createdAt: current?.createdAt ?? at,
     updatedAt: current?.updatedAt ?? at,
     statusChangedByUserId: current?.statusChangedByUserId ?? null,
+    manifest: inferSkillManifest({ ...current, ...seed, source: 'BUILTIN', manifest: seed.manifest ?? current?.manifest }),
   };
   skill.definitionSha256 = skillDefinitionHash(skill);
   if (index === -1) db.skills.push(skill);
@@ -150,6 +153,13 @@ function normalizeSkill(input, actorUserId, failureCases) {
     createdByUserId: actorUserId,
     createdAt: at,
     updatedAt: at,
+    manifest: normalizeSkillManifest(input.manifest || {}, {
+      skillType: 'assisted',
+      automationLevel: 6,
+      humanApprovalPoints: ['Review the failure-derived rule before it changes future agent behavior.'],
+      sideEffectScope: [],
+      requiredCapabilities: ['Read linked failure evidence and report skill outcomes.'],
+    }),
   };
   skill.definitionSha256 = skillDefinitionHash(skill);
   return skill;
@@ -162,6 +172,7 @@ function skillDefinitionHash(skill) {
     description: skill.description,
     rules: skill.rules,
     sourceFailureCaseIds: skill.sourceFailureCaseIds,
+    manifest: skill.manifest,
   }));
 }
 
