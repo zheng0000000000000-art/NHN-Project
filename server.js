@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
 import { mergeTaskWorktree, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
+import { runBalanceOperation } from './src/balance-service.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
@@ -428,12 +429,18 @@ async function handleApi(request, response) {
     const usage = await usageTracker.summary({ days, users: visibleUsers, actorUserIds });
     usage.scope.visibility = actor.role === 'admin' ? 'TEAM' : 'SELF';
     usage.scope.description = actor.role === 'admin'
-      ? 'Team Loop 서버 경유 AI 요청과 외부 Claude Code/Codex 참고 집계를 분리해 표시합니다. 외부 사용량은 예산에 합산하지 않습니다.'
-      : '현재 로그인한 사용자 본인의 서버 AI 요청과 외부 Claude Code/Codex 참고 집계만 표시합니다.';
+      ? 'Team Loop 서버를 경유한 AI 요청을 팀 범위로 표시합니다.'
+      : '현재 로그인한 사용자 본인의 Team Loop 서버 AI 요청만 표시합니다.';
     sendJson(response, 200, { usage });
     return;
   }
 
+  if (method === 'POST' && url.pathname === '/api/balance/run') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    sendJson(response, 200, { balance: runBalanceOperation(body) });
+    return;
+  }
 
   if (method === 'GET' && url.pathname === '/api/users') {
     sendJson(response, 200, { users: await store.listUsers() });

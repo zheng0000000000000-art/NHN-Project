@@ -54,15 +54,26 @@ export function normalizeBalanceSpec(input = {}) {
   const balanceId = text(input.balanceId || input.id, 160);
   if (!balanceId) throw new HttpError(400, 'Balance spec id is required.');
   const parameters = normalizeNamedNumbers(input.parameters || input.variables);
+  const parameterSpace = (Array.isArray(input.parameterSpace) ? input.parameterSpace : []).map((item) => ({
+    parameterId: text(item?.parameterId || item?.id || item?.path, 160),
+    path: safePath(String(item?.path || '').replaceAll('.', '/')),
+    minimum: finiteNumber(item?.minimum ?? item?.min),
+    maximum: finiteNumber(item?.maximum ?? item?.max),
+    step: finiteNumber(item?.step),
+  }));
   const metrics = normalizeMetrics(input.metrics || input.measurements);
   if (!Object.keys(parameters).length) throw new HttpError(400, 'Balance spec needs at least one parameter.');
   if (!metrics.length) throw new HttpError(400, 'Balance spec needs at least one metric.');
+  if (parameterSpace.some((item) => !item.parameterId || !item.path || item.minimum === null || item.maximum === null || item.step === null || item.step <= 0 || item.minimum > item.maximum)) {
+    throw new HttpError(400, 'Balance parameterSpace entries need a safe path and valid minimum, maximum, and positive step.');
+  }
   return {
     schemaVersion: CONTRACT_VERSION,
     kind: 'team-loop-balance-spec',
     balanceId,
     objective: text(input.objective || input.description, 2000),
     parameters,
+    parameterSpace,
     metrics,
     constraints: stringList(input.constraints, 100, 1000),
     search: {
@@ -318,4 +329,9 @@ function normalizeMetrics(value) {
     maximum: Number.isFinite(Number(metric?.maximum ?? metric?.max)) ? Number(metric.maximum ?? metric.max) : null,
     weight: Number.isFinite(Number(metric?.weight)) ? Number(metric.weight) : 1,
   }));
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }

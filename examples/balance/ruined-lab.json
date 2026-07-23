@@ -1,0 +1,38 @@
+{
+  "provider": "combat-v1",
+  "mode": "tune",
+  "seed": 42,
+  "runs": 500,
+  "maxCandidates": 1000,
+  "spec": {
+    "balanceId": "ruined-lab-v1",
+    "objective": "Keep completion, early deaths, and rewards inside explicit target bands.",
+    "parameters": { "room3Attack": 8, "room4Attack": 10, "room4EnemyCount": 3 },
+    "parameterSpace": [
+      { "parameterId": "room3Attack", "path": "rooms/2/enemies/attack", "minimum": 4, "maximum": 10, "step": 2 },
+      { "parameterId": "room4Attack", "path": "rooms/3/enemies/attack", "minimum": 6, "maximum": 12, "step": 2 },
+      { "parameterId": "room4EnemyCount", "path": "rooms/3/enemies/count", "minimum": 1, "maximum": 3, "step": 1 }
+    ],
+    "metrics": [
+      { "metricId": "completionRate", "minimum": 45, "maximum": 60, "weight": 2 },
+      { "metricId": "room1DeathRate", "minimum": 0, "maximum": 20, "weight": 1 },
+      { "metricId": "room3DeathRate", "minimum": 0, "maximum": 35, "weight": 1 },
+      { "metricId": "avgRewardPerRun", "minimum": 8, "maximum": 20, "weight": 1 }
+    ],
+    "constraints": ["Never mutate the baseline.", "Return a no-solution result when no candidate satisfies every band."],
+    "search": { "deterministic": true, "seed": "42", "strategy": "explicit-grid" }
+  },
+  "baseline": {
+    "schemaVersion": 2,
+    "player": { "maxHp": 100, "attack": 12 },
+    "rooms": [
+      { "id": "room-1", "enemies": { "hp": 25, "attack": 4, "count": 2 }, "rewards": { "commonDropRate": 0.4, "healAmount": 10 } },
+      { "id": "room-2", "enemies": { "hp": 28, "attack": 6, "count": 1 }, "rewards": { "commonDropRate": 0.32, "healAmount": 10 } },
+      { "id": "room-3", "enemies": { "hp": 34, "attack": 8, "count": 3 }, "rewards": { "commonDropRate": 0.28, "healAmount": 6 } },
+      { "id": "room-4", "enemies": { "hp": 15, "attack": 10, "count": 3 }, "rewards": { "commonDropRate": 0.22, "healAmount": 4 } }
+    ],
+    "bosses": [
+      { "id": "boss-1", "hp": 120, "attack": 14, "healthMultiplier": { "lowUpgradePath": 1.35, "highUpgradePath": 1.1 } }
+    ]
+  }
+}

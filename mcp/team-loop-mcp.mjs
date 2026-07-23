@@ -39,6 +39,25 @@ async function fetchTask(client, taskId) {
 
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
+  balance_run: {
+    description: 'Evaluate or deterministically tune a combat balance baseline. Returns an immutable observation set and a candidate; it never applies the candidate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['evaluate', 'tune'] },
+        provider: { type: 'string', enum: ['combat-v1'] },
+        spec: { type: 'object' },
+        baseline: { type: 'object' },
+        seed: { type: 'number' },
+        runs: { type: 'number' },
+        maxCandidates: { type: 'number' },
+      },
+      required: ['spec', 'baseline'],
+    },
+    async run(client, args) {
+      return client.request('/api/balance/run', { method: 'POST', body: args });
+    },
+  },
   experience_contracts: {
     description: 'Read the versioned contracts for context packs, skill manifests, harnesses, gates, and knowledge promotion before producing durable experience artifacts.',
     inputSchema: { type: 'object', properties: {} },

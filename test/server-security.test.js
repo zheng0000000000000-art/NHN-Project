@@ -299,3 +299,34 @@ test('experience API prepares context and turns reflection discoveries into wiki
   const review = await fetch(`${base}/api/wiki?q=preparation&candidates=true`, { headers: { Cookie: cookie } });
   assert.equal((await review.json()).entries[0].sourceExperienceId, reflection.experience.id);
 });
+
+test('balance API requires authentication and returns an unapplied observation set', async (t) => {
+  const base = await startServer(t);
+  const request = {
+    mode: 'tune',
+    provider: 'combat-v1',
+    seed: 42,
+    runs: 30,
+    spec: {
+      balanceId: 'api-balance',
+      parameters: { enemyAttack: 8 },
+      parameterSpace: [{ parameterId: 'enemyAttack', path: 'rooms/0/enemies/attack', minimum: 4, maximum: 8, step: 2 }],
+      metrics: [{ metricId: 'completionRate', minimum: 20, maximum: 100 }],
+    },
+    baseline: {
+      player: { maxHp: 100, attack: 12 },
+      rooms: [{ enemies: { hp: 25, attack: 8, count: 2 }, rewards: { commonDropRate: 0, healAmount: 0 } }],
+    },
+  };
+  assert.equal((await post(base, '/api/balance/run', request)).status, 401);
+  const registration = await post(base, '/api/auth/register', {
+    name: 'BalanceOwner', password: 'correct-password', signupCode: 'test-signup-code',
+  });
+  const cookie = registration.headers.get('set-cookie').split(';', 1)[0];
+  const response = await post(base, '/api/balance/run', request, { Cookie: cookie });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.balance.observationSet.kind, 'team-loop-observation-set');
+  assert.equal(payload.balance.candidate.data.rooms[0].enemies.attack <= 8, true);
+  assert.equal(request.baseline.rooms[0].enemies.attack, 8);
+});

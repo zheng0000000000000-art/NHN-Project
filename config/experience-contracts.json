@@ -11,7 +11,9 @@
   },
   "balanceSpec": {
     "kind": "team-loop-balance-spec",
-    "requiredFields": ["balanceId", "parameters", "metrics"]
+    "requiredFields": ["balanceId", "parameters", "metrics"],
+    "optionalFields": ["parameterSpace"],
+    "parameterSpaceFields": ["parameterId", "path", "minimum", "maximum", "step"]
   },
   "observationSet": {
     "kind": "team-loop-observation-set",

@@ -63,3 +63,17 @@ team-loop board export --output workboard.html
 ```
 
 The resulting file may be opened directly or placed on any static web server.
+
+## Balance engine
+
+`src/engine/balance-engine.js` is a provider-neutral deterministic search
+engine. Providers supply a pure simulation function; `combat-v1` is the first
+adapter migrated from the Local-First Dashboard.
+
+- Input: a `BalanceSpec` and immutable baseline.
+- Output: candidate data, score, solution status, and an `ObservationSet`.
+- Candidates are never written or applied by the engine.
+- HTTP and MCP expose the same operation through `POST /api/balance/run` and
+  `balance_run`.
+
+`examples/balance/ruined-lab.json` is the converted legacy fixture.
