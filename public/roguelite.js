@@ -20,6 +20,13 @@ $('#new-game').addEventListener('click', async () => {
 $('#buy-appraisal').addEventListener('click', () => act('BUY_APPRAISAL'));
 $('#buy-demand').addEventListener('click', () => act('BUY_DEMAND'));
 $('#pass').addEventListener('click', () => act('PASS'));
+$('#guide-toggle').addEventListener('click', () => {
+  const body = $('#guide-body');
+  const collapsed = !body.classList.contains('hidden');
+  body.classList.toggle('hidden', collapsed);
+  $('#guide-toggle').textContent = collapsed ? '설명 펼치기' : '설명 접기';
+  $('#guide-toggle').setAttribute('aria-expanded', String(!collapsed));
+});
 $('#bid-form').addEventListener('submit', (event) => {
   event.preventDefault();
   act('BID', { amount: Number($('#bid-amount').value) });
@@ -63,9 +70,16 @@ function render() {
     $('#blind-estimate').textContent = money(lot.blindEstimate);
     reveal('#appraisal-estimate', lot.appraisalEstimate, money);
     reveal('#demand-estimate', lot.demandEstimate, (value) => `× ${Number(value).toFixed(2)}`);
+    $('#appraisal-price').textContent = `${money(lot.informationPrices.appraisal)} 지불`;
+    $('#demand-price').textContent = `${money(lot.informationPrices.demand)} 지불`;
     $('#buy-appraisal').disabled = lot.revealed.includes('appraisal');
     $('#buy-demand').disabled = lot.revealed.includes('demand');
-    $('#bid-amount').value = Math.max(lot.startBid, Math.round(lot.blindEstimate / 100) * 100);
+    const valueEstimate = lot.appraisalEstimate ?? lot.blindEstimate;
+    const demandEstimate = lot.demandEstimate ?? 1.05;
+    const estimatedNetSale = valueEstimate * demandEstimate * (1 - session.rules.saleFeeRate);
+    const breakEvenBid = Math.max(0, Math.floor(estimatedNetSale / 100) * 100);
+    $('#decision-helper').innerHTML = `<b>현재 관측으로 계산한 손익분기 입찰가: ${money(breakEvenBid)}</b><br>추정 가치 × 수요 배율 × 수수료 차감으로 계산한 참고값입니다. 오차가 있으므로 그대로 정답은 아닙니다.`;
+    $('#bid-amount').value = Math.max(lot.startBid, breakEvenBid);
   } else {
     $('#day').textContent = '종료';
     $('#lot-title').textContent = '세션 완료';
@@ -78,7 +92,29 @@ function render() {
   $('#decisions').innerHTML = session.recentDecisions.length
     ? session.recentDecisions.map(decisionRow).join('')
     : '<div class="decision-row"><span>-</span><span>대기</span><span>첫 판단이 여기에 기록됩니다.</span><span></span></div>';
+  renderLastOutcome();
   $('#error').textContent = '';
+}
+
+function renderLastOutcome() {
+  const decision = session.recentDecisions.find((item) => item.type === 'BID' || item.type === 'PASS');
+  const target = $('#last-outcome');
+  if (!decision) {
+    target.className = 'outcome hidden';
+    return;
+  }
+  if (decision.type === 'PASS') {
+    target.className = 'outcome';
+    target.innerHTML = `<b>직전 결과: 패스</b><br>자산 변화 없이 다음 물건으로 넘어갔습니다.`;
+    return;
+  }
+  if (!decision.won) {
+    target.className = 'outcome loss';
+    target.innerHTML = `<b>직전 결과: 유찰</b><br>최대 ${money(decision.bid)}를 냈지만 경쟁선 ${money(decision.clearingPrice)}보다 낮았습니다. 제출액은 지불되지 않습니다.`;
+    return;
+  }
+  target.className = `outcome ${decision.profit >= 0 ? 'win' : 'loss'}`;
+  target.innerHTML = `<b>직전 결과: ${money(decision.price)}에 낙찰 · 손익 ${money(decision.profit)}</b><br>최대 입찰가 전액이 아니라 숨겨진 경쟁선 가격을 지불했고, 수수료를 뺀 ${money(decision.netSale)}에 즉시 재판매했습니다.`;
 }
 
 function decisionRow(decision) {

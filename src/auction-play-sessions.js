@@ -120,6 +120,12 @@ function createSession(config, actor, seed) {
     realizedProfit: 0,
     lots,
     decisions: [],
+    rules: {
+      saleFeeRate: number(config.economy?.saleFeeRate, 0.05),
+      appraisalPriceRate: number(config.information?.appraisalPriceRate, 0.05),
+      demandPriceAssetRate: number(config.information?.demandPriceAssetRate, 0.01),
+      lotsPerDay,
+    },
   };
 }
 
@@ -130,7 +136,7 @@ function buyInformation(session, lot, type, config) {
     ? lot.baseValue * number(config.information?.appraisalPriceRate, 0.05)
     : session.cash * number(config.information?.demandPriceAssetRate, 0.01)
       / integer(config.auction?.lotsPerDay, 8);
-  const roundedCost = Math.max(0, roundTo100(cost));
+  const roundedCost = informationCost(cost);
   if (session.cash < roundedCost) throw new HttpError(409, 'Not enough cash to buy information.');
   session.cash -= roundedCost;
   session.informationSpent += roundedCost;
@@ -206,7 +212,16 @@ function publicSession(session) {
       appraisalEstimate: lot.revealed.includes('appraisal') ? lot.appraisalEstimate : null,
       demandEstimate: lot.revealed.includes('demand') ? lot.demandEstimate : null,
       revealed: [...lot.revealed],
+      informationPrices: {
+        appraisal: informationCost(lot.baseValue * number(session.rules?.appraisalPriceRate, 0.05)),
+        demand: informationCost(session.cash * number(session.rules?.demandPriceAssetRate, 0.01) / integer(session.rules?.lotsPerDay, 8)),
+      },
     } : null,
+    rules: {
+      saleFeeRate: number(session.rules?.saleFeeRate, 0.05),
+      settlement: 'IMMEDIATE_RESALE',
+      bidRule: 'Your bid is a maximum. When it beats the hidden competition line, you pay the competition line.',
+    },
     recentDecisions: session.decisions.slice(-12).reverse(),
     result: session.status === 'COMPLETED' ? {
       roiPercent: (session.cash / session.startingAssets - 1) * 100,
@@ -236,6 +251,10 @@ function symmetric(random, radius) {
 
 function roundTo100(value) {
   return Math.round(value / 100) * 100;
+}
+
+function informationCost(value) {
+  return value > 0 ? Math.max(100, roundTo100(value)) : 0;
 }
 
 function integer(value, fallback) {

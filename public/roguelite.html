@@ -20,6 +20,23 @@
       </div>
     </header>
 
+    <section class="how-to">
+      <div class="how-to-head">
+        <div><p class="eyebrow">HOW TO PLAY</p><h2>12일 동안 자산을 불리는 판단 실험</h2></div>
+        <button id="guide-toggle" type="button" aria-expanded="true">설명 접기</button>
+      </div>
+      <div id="guide-body">
+        <p class="guide-lead">물건의 진짜 가치는 보이지 않습니다. 제한된 추정치와 유료 정보를 보고 <b>이 물건을 살지, 산다면 얼마까지 낼지</b> 결정하세요.</p>
+        <ol class="guide-steps">
+          <li><b>1. 관찰</b><span>시작가와 부정확한 육안 추정가를 비교합니다.</span></li>
+          <li><b>2. 정보 선택</b><span>필요할 때 감정 또는 수요 정보를 구매합니다. 정보도 비용입니다.</span></li>
+          <li><b>3. 최대 입찰가</b><span>내가 감당할 상한을 적습니다. 경쟁선보다 높으면 경쟁선 가격으로 낙찰됩니다.</span></li>
+          <li><b>4. 즉시 정산</b><span>낙찰품은 5% 수수료를 빼고 즉시 재판매됩니다. 자산 변화로 판단을 확인합니다.</span></li>
+        </ol>
+        <div class="guide-note"><b>목표</b><span>정답을 맞히는 것이 아니라, 정보 비용까지 포함해 세션 종료 시 시작 자산 20,000G보다 많은 자산을 남기는 것입니다.</span></div>
+      </div>
+    </section>
+
     <section id="empty-state" class="empty-state">
       <strong>플레이 세션을 시작하세요.</strong>
       <span>모든 물건은 즉시 재판매되어 판단과 경제 흐름만 빠르게 시험합니다.</span>
@@ -53,9 +70,10 @@
           <h2>무엇을 확인하고, 얼마까지 살까?</h2>
           <p class="hint">정보를 사도 정답이 직접 공개되지는 않습니다. 오차가 줄어든 관측값만 얻습니다.</p>
           <div class="info-actions">
-            <button id="buy-appraisal">감정 정보 구매</button>
-            <button id="buy-demand">수요 정보 구매</button>
+            <button id="buy-appraisal">감정 정보 <span id="appraisal-price"></span></button>
+            <button id="buy-demand">수요 정보 <span id="demand-price"></span></button>
           </div>
+          <div id="decision-helper" class="decision-helper"></div>
           <form id="bid-form">
             <label>최대 입찰가
               <input id="bid-amount" type="number" min="0" step="100" required>
@@ -64,6 +82,7 @@
             <button id="pass" type="button">이번 물건 넘기기</button>
           </form>
           <p id="error" class="error" role="alert"></p>
+          <div id="last-outcome" class="outcome hidden" aria-live="polite"></div>
         </section>
       </div>
 

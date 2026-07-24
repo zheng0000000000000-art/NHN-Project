@@ -19,6 +19,8 @@ test('greybox sessions expose observations but keep hidden truth on the server',
   assert.equal(started.currentLot.appraisalEstimate, null);
   assert.equal('trueSalePrice' in started.currentLot, false);
   assert.equal('clearingPrice' in started.currentLot, false);
+  assert.ok(started.currentLot.informationPrices.appraisal >= 100);
+  assert.ok(started.currentLot.informationPrices.demand >= 100);
 
   const informed = await store.act(started.id, actor, { type: 'BUY_APPRAISAL' });
   assert.equal(typeof informed.currentLot.appraisalEstimate, 'number');
