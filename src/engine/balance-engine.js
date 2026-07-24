@@ -4,7 +4,7 @@ export function evaluateBalance({ spec: inputSpec, baseline, simulate }) {
   const spec = normalizeBalanceSpec(inputSpec);
   const result = simulate(structuredClone(baseline), { seed: spec.search.seed || 42 });
   const outputs = Object.fromEntries(spec.metrics.map((metric) => [metric.metricId, numericMetric(result, metric.metricId)]));
-  return { spec, outputs, score: scoreOutputs(spec.metrics, outputs) };
+  return { spec, outputs, statistics: result?.statistics ?? {}, score: scoreOutputs(spec.metrics, outputs) };
 }
 
 export function tuneBalance({ spec: inputSpec, baseline, simulate, maxCandidates = 1000 }) {

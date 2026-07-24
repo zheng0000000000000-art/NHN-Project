@@ -81,6 +81,13 @@ export function normalizeBalanceSpec(input = {}) {
       seed: text(input.search?.seed, 160) || null,
       strategy: text(input.search?.strategy || 'explicit-grid', 100),
     },
+    simulation: {
+      horizon: nonNegativeInteger(input.simulation?.horizon, 1),
+      runsPerSeed: nonNegativeInteger(input.simulation?.runsPerSeed, 1),
+      seeds: [...new Set((Array.isArray(input.simulation?.seeds) ? input.simulation.seeds : [])
+        .map(Number).filter(Number.isFinite))].slice(0, 50),
+      policies: stringList(input.simulation?.policies, 50, 160),
+    },
   };
 }
 

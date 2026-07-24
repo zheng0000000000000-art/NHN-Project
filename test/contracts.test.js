@@ -44,10 +44,12 @@ test('global loop, balance, observation, and experience contracts normalize lega
     id: 'combat-v1',
     variables: { enemyHealth: 100 },
     measurements: { clearTime: { target: 30, weight: 2 } },
+    simulation: { horizon: 12, runsPerSeed: 100, seeds: [11, 23, 11], policies: ['value', 'risk'] },
   });
   assert.equal(spec.parameters.enemyHealth, 100);
   assert.equal(spec.metrics[0].metricId, 'clearTime');
   assert.equal(spec.search.deterministic, true);
+  assert.deepEqual(spec.simulation, { horizon: 12, runsPerSeed: 100, seeds: [11, 23], policies: ['value', 'risk'] });
 
   const observations = normalizeObservationSet({
     measurementId: 'measure-1',

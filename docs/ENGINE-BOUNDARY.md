@@ -77,3 +77,16 @@ adapter migrated from the Local-First Dashboard.
   `balance_run`.
 
 `examples/balance/ruined-lab.json` is the converted legacy fixture.
+
+The combat provider is only the first executable fixture. The engine contract
+also targets long-horizon economy and management simulations:
+
+- a provider owns state transitions, agents/policies, and domain metrics;
+- the engine owns parameter search, scoring, observations, and comparison;
+- multi-seed ensembles report mean, standard deviation, minimum, and maximum
+  so a candidate is not selected from one lucky random sequence;
+- `simulation.horizon`, `runsPerSeed`, `seeds`, and `policies` describe the
+  experiment without embedding auction- or combat-specific rules.
+
+An auction provider can therefore model days, cash flow, inventory, rivals,
+information, debt, and endings later without changing the search engine.

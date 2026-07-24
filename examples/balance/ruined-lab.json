@@ -1,7 +1,7 @@
 {
   "provider": "combat-v1",
   "mode": "tune",
-  "seed": 42,
+  "seeds": [11, 23, 42, 71, 101],
   "runs": 500,
   "maxCandidates": 1000,
   "spec": {
@@ -20,7 +20,8 @@
       { "metricId": "avgRewardPerRun", "minimum": 8, "maximum": 20, "weight": 1 }
     ],
     "constraints": ["Never mutate the baseline.", "Return a no-solution result when no candidate satisfies every band."],
-    "search": { "deterministic": true, "seed": "42", "strategy": "explicit-grid" }
+    "search": { "deterministic": true, "seed": "42", "strategy": "explicit-grid" },
+    "simulation": { "horizon": 1, "runsPerSeed": 500, "seeds": [11, 23, 42, 71, 101], "policies": ["baseline-combat"] }
   },
   "baseline": {
     "schemaVersion": 2,

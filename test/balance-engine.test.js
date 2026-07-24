@@ -47,3 +47,13 @@ test('no-solution is reported without applying a candidate', () => {
   assert.equal(result.solved, false);
   assert.deepEqual(baseline.player, { maxHp: 100, attack: 12 });
 });
+
+test('multi-seed simulation aggregates reproducible statistics instead of optimizing one lucky run', () => {
+  const request = { spec, baseline, seeds: [11, 23, 42, 71], runs: 100, mode: 'evaluate' };
+  const first = runBalanceOperation(request);
+  const second = runBalanceOperation(request);
+  assert.deepEqual(first, second);
+  assert.equal(first.statistics.completionRate.samples, 4);
+  assert.ok(first.statistics.completionRate.maximum >= first.statistics.completionRate.minimum);
+  assert.ok(first.statistics.completionRate.standardDeviation >= 0);
+});

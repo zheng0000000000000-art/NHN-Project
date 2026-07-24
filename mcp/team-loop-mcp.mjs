@@ -40,7 +40,7 @@ async function fetchTask(client, taskId) {
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
   balance_run: {
-    description: 'Evaluate or deterministically tune a combat balance baseline. Returns an immutable observation set and a candidate; it never applies the candidate.',
+    description: 'Evaluate or deterministically tune a stochastic simulation through a registered provider. Supports multi-seed ensembles, returns immutable observations and statistics, and never applies the candidate.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,6 +49,7 @@ const TOOLS = {
         spec: { type: 'object' },
         baseline: { type: 'object' },
         seed: { type: 'number' },
+        seeds: { type: 'array', items: { type: 'number' }, maxItems: 50 },
         runs: { type: 'number' },
         maxCandidates: { type: 'number' },
       },
