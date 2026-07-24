@@ -25,6 +25,16 @@ export class BalanceExperimentStore {
       .map((item) => structuredClone(item));
   }
 
+  async get(id, { actorUserId = null, actorRole = 'member' } = {}) {
+    const db = await readJson(this.path, EMPTY_EXPERIMENTS);
+    const experiment = db.experiments.find((item) => item.id === id);
+    if (!experiment) throw new HttpError(404, 'Balance experiment not found.');
+    if (actorUserId && experiment.actorUserId !== actorUserId && actorRole !== 'admin') {
+      throw new HttpError(403, 'Only the experiment owner or an admin can read it.');
+    }
+    return structuredClone(experiment);
+  }
+
   async record(actor, request, result) {
     const experiment = {
       id: randomId('bal_'),

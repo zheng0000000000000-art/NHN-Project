@@ -156,12 +156,12 @@ const TOOLS = {
     },
   },
   balance_run: {
-    description: 'Evaluate or deterministically tune a stochastic simulation through a registered provider. Supports multi-seed ensembles, returns immutable observations and statistics, and never applies the candidate.',
+    description: 'Evaluate or tune a stochastic simulation. Returns a compact AI-oriented summary and an experiment id; use balance_result_read only when deeper evidence is needed.',
     inputSchema: {
       type: 'object',
       properties: {
         mode: { type: 'string', enum: ['evaluate', 'tune'] },
-        provider: { type: 'string', enum: ['combat-v1'] },
+        provider: { type: 'string', enum: ['combat-v1', 'auction-economy-v1'] },
         spec: { type: 'object' },
         baseline: { type: 'object' },
         seed: { type: 'number' },
@@ -172,7 +172,26 @@ const TOOLS = {
       required: ['spec', 'baseline'],
     },
     async run(client, args) {
-      return client.request('/api/balance/run', { method: 'POST', body: args });
+      return client.request('/api/balance/run', { method: 'POST', body: { ...args, responseDetail: 'summary' } });
+    },
+  },
+  balance_result_read: {
+    description: 'Read a saved balance result progressively. Start with summary, request diagnostics for one metric or policy, and use raw only when exact full evidence is necessary.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        experimentId: { type: 'string' },
+        view: { type: 'string', enum: ['summary', 'diagnostics', 'raw'], default: 'summary' },
+        metricId: { type: 'string', description: 'For diagnostics, return only this metric when provided.' },
+        policyId: { type: 'string', description: 'For diagnostics, include timelines and failure causes only for this policy.' },
+      },
+      required: ['experimentId'],
+    },
+    async run(client, args) {
+      const query = new URLSearchParams({ view: args.view || 'summary' });
+      if (args.metricId) query.set('metricId', args.metricId);
+      if (args.policyId) query.set('policyId', args.policyId);
+      return client.request(`/api/balance/experiments/${encodeURIComponent(args.experimentId)}?${query}`);
     },
   },
   experience_contracts: {

@@ -4,7 +4,13 @@ export function evaluateBalance({ spec: inputSpec, baseline, simulate }) {
   const spec = normalizeBalanceSpec(inputSpec);
   const result = simulate(structuredClone(baseline), { seed: spec.search.seed || 42 });
   const outputs = Object.fromEntries(spec.metrics.map((metric) => [metric.metricId, numericMetric(result, metric.metricId)]));
-  return { spec, outputs, statistics: result?.statistics ?? {}, score: scoreOutputs(spec.metrics, outputs) };
+  return {
+    spec,
+    outputs,
+    statistics: result?.statistics ?? {},
+    diagnostics: result?.diagnostics ?? {},
+    score: scoreOutputs(spec.metrics, outputs),
+  };
 }
 
 export function tuneBalance({ spec: inputSpec, baseline, simulate, maxCandidates = 1000 }) {
@@ -38,8 +44,20 @@ export function tuneBalance({ spec: inputSpec, baseline, simulate, maxCandidates
 
   return {
     balanceId: spec.balanceId,
-    baseline: { outputs: baselineEvaluation.outputs, statistics: baselineEvaluation.statistics, score: baselineEvaluation.score },
-    candidate: { parameters: best.parameters, outputs: best.outputs, statistics: best.statistics, score: best.score, data: best.data },
+    baseline: {
+      outputs: baselineEvaluation.outputs,
+      statistics: baselineEvaluation.statistics,
+      diagnostics: baselineEvaluation.diagnostics,
+      score: baselineEvaluation.score,
+    },
+    candidate: {
+      parameters: best.parameters,
+      outputs: best.outputs,
+      statistics: best.statistics,
+      diagnostics: best.diagnostics,
+      score: best.score,
+      data: best.data,
+    },
     solved: best.score.violations === 0,
     changed: JSON.stringify(best.data) !== JSON.stringify(untouchedBaseline),
     observationSet: normalizeObservationSet({
@@ -82,9 +100,12 @@ function enumerate(spaces, maximum) {
   for (const space of spaces) {
     const values = [];
     for (let value = space.minimum; value <= space.maximum + space.step / 1_000_000; value += space.step) values.push(Number(value.toFixed(12)));
-    rows = rows.flatMap((row) => values.map((value) => ({ ...row, [space.parameterId]: value }))).slice(0, maximum);
+    rows = rows.flatMap((row) => values.map((value) => ({ ...row, [space.parameterId]: value })));
+    if (rows.length > 100_000) throw new Error('Balance parameter grid exceeds the safe enumeration limit.');
   }
-  return rows;
+  if (rows.length <= maximum) return rows;
+  return Array.from({ length: maximum }, (_, index) =>
+    rows[Math.floor(index * (rows.length - 1) / Math.max(1, maximum - 1))]);
 }
 
 function setAtPath(target, slashPath, value) {

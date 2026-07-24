@@ -342,9 +342,10 @@ test('balance API requires authentication and returns an unapplied observation s
   const response = await post(base, '/api/balance/run', request, { Cookie: cookie });
   assert.equal(response.status, 200);
   const payload = await response.json();
-  assert.equal(payload.balance.observationSet.kind, 'team-loop-observation-set');
-  assert.equal(payload.balance.candidate.data.rooms[0].enemies.attack <= 8, true);
+  assert.equal(payload.balance.observationCount, 3);
+  assert.equal(payload.balance.candidate.parameters.enemyAttack <= 8, true);
   assert.equal(payload.experiment.status, 'PROPOSED');
+  assert.deepEqual(payload.experiment.availableViews, ['summary', 'diagnostics', 'raw']);
   assert.equal(request.baseline.rooms[0].enemies.attack, 8);
   const seeds = await fetch(`${base}/api/balance/seeds`, { headers: { Cookie: cookie } });
   assert.equal(seeds.status, 200);
@@ -352,6 +353,10 @@ test('balance API requires authentication and returns an unapplied observation s
   const history = await fetch(`${base}/api/balance/experiments`, { headers: { Cookie: cookie } });
   const historyPayload = await history.json();
   assert.equal(historyPayload.experiments.length, 1);
+  assert.equal(historyPayload.experiments[0].result.candidate.data, undefined);
+  const raw = await fetch(`${base}/api/balance/experiments/${payload.experiment.id}?view=raw`, { headers: { Cookie: cookie } });
+  assert.equal(raw.status, 200);
+  assert.equal((await raw.json()).experiment.result.candidate.data.rooms[0].enemies.attack <= 8, true);
   const applied = await post(base, `/api/balance/experiments/${payload.experiment.id}/apply`, {}, { Cookie: cookie });
   assert.equal(applied.status, 200);
   assert.equal((await applied.json()).experiment.status, 'APPLIED');

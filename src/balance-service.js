@@ -1,16 +1,26 @@
 import { combatMetric, simulateCombat } from './engine/balance-simulator.js';
+import { economyMetric, simulateAuctionEconomy } from './engine/economy-simulator.js';
 import { evaluateBalance, tuneBalance } from './engine/balance-engine.js';
 import { HttpError } from './utils.js';
 
 export function runBalanceOperation(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'Balance request must be an object.');
-  if (input.provider && input.provider !== 'combat-v1') throw new HttpError(400, `Unsupported balance provider: ${input.provider}`);
+  const provider = input.provider || 'combat-v1';
+  if (!['combat-v1', 'auction-economy-v1'].includes(provider)) throw new HttpError(400, `Unsupported balance provider: ${provider}`);
   const seeds = normalizeSeeds(input.seeds ?? input.spec?.simulation?.seeds, input.seed ?? input.spec?.search?.seed ?? 42);
   const simulate = (data) => {
-    const results = seeds.map((seed) => simulateCombat(data, { seed, runs: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500 }));
+    const results = seeds.map((seed) => provider === 'auction-economy-v1'
+      ? simulateAuctionEconomy(data, {
+        seed,
+        runs: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500,
+        policies: input.spec?.simulation?.policies,
+      })
+      : simulateCombat(data, { seed, runs: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500 }));
     const metricRows = results.map((result) => Object.fromEntries((input.spec?.metrics || []).map((metric) => {
       const metricId = metric.metricId || metric.id || metric.name;
-      return [metricId, combatMetric(metricId, result)];
+      return [metricId, provider === 'auction-economy-v1'
+        ? economyMetric(metricId, result)
+        : combatMetric(metricId, result)];
     })));
     const metrics = {};
     const statistics = {};
@@ -37,6 +47,16 @@ export function runBalanceOperation(input = {}) {
     return {
       metrics,
       statistics,
+      diagnostics: provider === 'auction-economy-v1'
+        ? {
+          provider,
+          seeds: results.map((result) => ({
+            seed: result.seed,
+            policies: result.diagnostics.policies,
+            comparison: result.diagnostics.comparison,
+          })),
+        }
+        : {},
       simulation: { seeds, runsPerSeed: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500 },
     };
   };

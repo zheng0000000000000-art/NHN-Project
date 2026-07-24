@@ -7,6 +7,13 @@
       "description": "다중 시드 전투 시뮬레이션을 시작하기 위한 교체 가능한 예시 계약입니다.",
       "provider": "combat-v1",
       "source": "examples/balance/ruined-lab.json"
+    },
+    {
+      "id": "unknown-auction-economy",
+      "label": "미지의 경매장 경제 실험",
+      "description": "12일 경제 생존, 정보 가치, 봇 가치 누출을 함께 검증하는 교체 가능한 시드입니다.",
+      "provider": "auction-economy-v1",
+      "source": "examples/balance/unknown-auction-economy.json"
     }
   ]
 }

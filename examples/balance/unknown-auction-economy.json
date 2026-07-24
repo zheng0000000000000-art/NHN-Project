@@ -1,0 +1,157 @@
+{
+  "provider": "auction-economy-v1",
+  "mode": "tune",
+  "seeds": [11, 23, 42, 71, 101],
+  "runs": 400,
+  "maxCandidates": 100,
+  "spec": {
+    "balanceId": "unknown-auction-economy-v1",
+    "objective": "Keep blind play risky, reward combined information, limit bot value leakage, and avoid economic ruin across a 12-day run.",
+    "parameters": {
+      "circumstanceDensity": 0.9,
+      "marketBidRatio": 0.92,
+      "targetMarginRate": 0.08,
+      "interestThreshold": 0.65,
+      "reserveCashRate": 0.35,
+      "gradeInterestBonus": 0.15,
+      "minimumBudget": 30000,
+      "circumstanceMaximumRatio": 1.8
+    },
+    "parameterSpace": [
+      {
+        "parameterId": "circumstanceDensity",
+        "path": "bots/circumstanceDensity",
+        "minimum": 0.4,
+        "maximum": 0.9,
+        "step": 0.1
+      },
+      {
+        "parameterId": "marketBidRatio",
+        "path": "bots/marketBidRatio",
+        "minimum": 0.8,
+        "maximum": 0.92,
+        "step": 0.02
+      },
+      {
+        "parameterId": "targetMarginRate",
+        "path": "player/targetMarginRate",
+        "minimum": 0.08,
+        "maximum": 0.08,
+        "step": 0.01
+      },
+      {
+        "parameterId": "interestThreshold",
+        "path": "bots/interestThreshold",
+        "minimum": 0.45,
+        "maximum": 0.65,
+        "step": 0.1
+      },
+      {
+        "parameterId": "reserveCashRate",
+        "path": "bots/reserveCashRate",
+        "minimum": 0.25,
+        "maximum": 0.4,
+        "step": 0.05
+      },
+      {
+        "parameterId": "gradeInterestBonus",
+        "path": "bots/gradeInterestBonus",
+        "minimum": 0.1,
+        "maximum": 0.2,
+        "step": 0.05
+      },
+      {
+        "parameterId": "minimumBudget",
+        "path": "bots/minimumBudget",
+        "minimum": 20000,
+        "maximum": 30000,
+        "step": 5000
+      },
+      {
+        "parameterId": "circumstanceMaximumRatio",
+        "path": "bots/circumstanceMaximumRatio",
+        "minimum": 1.2,
+        "maximum": 2,
+        "step": 0.2
+      }
+    ],
+    "metrics": [
+      { "metricId": "blindTransactionRoiMean", "minimum": 0, "maximum": 14, "weight": 2 },
+      { "metricId": "blindNegativeDayRate", "minimum": 15, "maximum": 45, "weight": 1 },
+      { "metricId": "blindDailyGrowthRate", "minimum": 3, "maximum": 12, "weight": 1 },
+      { "metricId": "informedRuinRate", "minimum": 0, "maximum": 8, "weight": 2 },
+      { "metricId": "informationTransactionAdvantage", "minimum": 3, "maximum": 20, "weight": 2 },
+      { "metricId": "blindNoContestRate", "minimum": 8, "maximum": 20, "weight": 1 },
+      { "metricId": "blindLegendaryProfitableNoContestRate", "minimum": 0, "maximum": 5, "weight": 2 },
+      { "metricId": "botValueLeakageResidual", "minimum": 0, "maximum": 0.35, "weight": 3 }
+    ],
+    "constraints": [
+      "The simulator must never read hidden true value when producing player observations.",
+      "Bot circumstance bids must be sampled independently from the true demand multiplier.",
+      "Report distributions and failure rates instead of relying on one mean."
+    ],
+    "search": {
+      "deterministic": true,
+      "seed": "42",
+      "strategy": "explicit-grid"
+    },
+    "simulation": {
+      "horizon": 12,
+      "runsPerSeed": 400,
+      "seeds": [11, 23, 42, 71, 101],
+      "policies": [
+        { "id": "blind", "information": [], "acquisition": "EVERY_LOT" },
+        { "id": "appraisal", "information": ["appraisal"], "acquisition": "SELECTIVE", "maxPurchasesPerDay": 2, "minimumPriority": 2 },
+        { "id": "demand", "information": ["demand"], "acquisition": "SELECTIVE", "maxPurchasesPerDay": 2, "minimumPriority": 2 },
+        { "id": "informed", "information": ["appraisal", "demand"], "acquisition": "SELECTIVE", "maxPurchasesPerDay": 2, "minimumPriority": 2 }
+      ]
+    }
+  },
+  "baseline": {
+    "schemaVersion": 1,
+    "economy": {
+      "startingAssets": 20000,
+      "days": 12,
+      "saleFeeRate": 0.05,
+      "expectedDemandMultiplier": 1.05,
+      "ruinThresholdRatio": 0.1
+    },
+    "auction": {
+      "lotsPerDay": 8,
+      "startBidRatio": 0.5,
+      "minimumIncrementRate": 0.1
+    },
+    "player": {
+      "targetMarginRate": 0.08
+    },
+    "information": {
+      "blindValueErrorRate": 0.35,
+      "appraisalErrorRate": 0.2,
+      "demandErrorRate": 0.15,
+      "appraisalPriceRate": 0.05,
+      "demandPriceAssetRate": 0.01
+    },
+    "bots": {
+      "count": 3,
+      "estimateErrorRate": 0.3,
+      "interestThreshold": 0.65,
+      "minimumExpectedMargin": 0.08,
+      "reserveCashRate": 0.35,
+      "gradeInterestBonus": 0.15,
+      "minimumBudget": 30000,
+      "circumstanceDensity": 0.9,
+      "circumstanceMinimumRatio": 0.45,
+      "circumstanceMaximumRatio": 1.8,
+      "budgetMinimumRatio": 0.6,
+      "budgetMaximumRatio": 1.2,
+      "marketBidRatio": 0.92
+    },
+    "categories": ["art", "relic", "machinery", "curio"],
+    "grades": [
+      { "id": "common", "weight": 0.3, "informationPriority": 0, "baseValue": 1500, "demandMinimum": 0.95, "demandMaximum": 1.1 },
+      { "id": "rare", "weight": 0.43, "informationPriority": 1, "baseValue": 4000, "demandMinimum": 0.8, "demandMaximum": 1.35 },
+      { "id": "epic", "weight": 0.195, "informationPriority": 2, "baseValue": 12000, "demandMinimum": 0.6, "demandMaximum": 1.75 },
+      { "id": "legendary", "weight": 0.075, "informationPriority": 3, "baseValue": 25000, "demandMinimum": 0.4, "demandMaximum": 2.4 }
+    ]
+  }
+}

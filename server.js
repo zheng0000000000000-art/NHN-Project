@@ -37,6 +37,7 @@ import { ExperienceEngine } from './src/experience-engine.js';
 import { CONTRACT_VERSION, KNOWLEDGE_PROMOTION_CONTRACT } from './src/contracts.js';
 import { BalanceExperimentStore } from './src/balance-experiments.js';
 import { BalanceSeedRegistry } from './src/balance-seeds.js';
+import { projectBalanceExperiment, projectBalanceResult } from './src/balance-result-view.js';
 import { ContextPackStore, ContextSeedRegistry } from './src/context-packs.js';
 import { PromotionEngine } from './src/promotion-engine.js';
 import { EntryService } from './src/entry-service.js';
@@ -625,9 +626,15 @@ async function handleApi(request, response) {
   if (method === 'POST' && url.pathname === '/api/balance/run') {
     const body = await readBody(request);
     assertPlainObject(body);
-    const balance = runBalanceOperation(body);
-    const experiment = await balanceExperiments.record(actor, body, balance);
-    sendJson(response, 200, { balance, experiment });
+    const responseDetail = ['full', 'raw'].includes(body.responseDetail) ? 'full' : 'summary';
+    const operation = { ...body };
+    delete operation.responseDetail;
+    const balance = runBalanceOperation(operation);
+    const experiment = await balanceExperiments.record(actor, operation, balance);
+    sendJson(response, 200, {
+      balance: projectBalanceResult(balance, responseDetail),
+      experiment: projectBalanceExperiment(experiment, { view: responseDetail }),
+    });
     return;
   }
 
@@ -645,7 +652,28 @@ async function handleApi(request, response) {
   }
 
   if (method === 'GET' && url.pathname === '/api/balance/experiments') {
-    sendJson(response, 200, { experiments: await balanceExperiments.list({ limit: url.searchParams.get('limit'), actorUserId: actor.id }) });
+    const view = ['full', 'raw'].includes(url.searchParams.get('view')) ? 'full' : 'summary';
+    const experiments = await balanceExperiments.list({ limit: url.searchParams.get('limit'), actorUserId: actor.id });
+    sendJson(response, 200, { experiments: experiments.map((item) => projectBalanceExperiment(item, { view })) });
+    return;
+  }
+
+  const balanceResultMatch = url.pathname.match(/^\/api\/balance\/experiments\/([^/]+)$/);
+  if (method === 'GET' && balanceResultMatch) {
+    const experiment = await balanceExperiments.get(decodeURIComponent(balanceResultMatch[1]), {
+      actorUserId: actor.id,
+      actorRole: actor.role,
+    });
+    const view = ['diagnostics', 'full', 'raw'].includes(url.searchParams.get('view'))
+      ? url.searchParams.get('view')
+      : 'summary';
+    sendJson(response, 200, {
+      experiment: projectBalanceExperiment(experiment, {
+        view,
+        metricId: url.searchParams.get('metricId') || '',
+        policyId: url.searchParams.get('policyId') || '',
+      }),
+    });
     return;
   }
 

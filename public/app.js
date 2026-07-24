@@ -2200,7 +2200,7 @@ async function loadBalanceLab() {
   try {
     const [seedPayload, historyPayload] = await Promise.all([
       api('/api/balance/seeds'),
-      api('/api/balance/experiments?limit=30'),
+      api('/api/balance/experiments?limit=30&view=full'),
     ]);
     state.balanceSeeds = seedPayload.seeds || [];
     state.balanceExperiments = historyPayload.experiments || [];
@@ -2340,7 +2340,7 @@ async function runBalanceExperiment(event) {
       },
       baseline,
     };
-    const payload = await api('/api/balance/run', { method: 'POST', body: request });
+    const payload = await api('/api/balance/run', { method: 'POST', body: { ...request, responseDetail: 'full' } });
     state.currentBalanceExperiment = payload.experiment;
     state.balanceExperiments.unshift(payload.experiment);
     renderBalanceResult(payload.experiment);
