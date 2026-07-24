@@ -4,7 +4,7 @@ import { HttpError } from '../utils.js';
 
 export async function handleBalanceRoute({
   method, url, request, response, actor, readBody, sendJson, assertPlainObject,
-  balanceExperiments, balanceJobs, balanceSeeds, audit,
+  balanceExperiments, balancePortfolio, balanceJobs, balanceSeeds, audit,
 }) {
   if (!url.pathname.startsWith('/api/balance/')) return false;
 
@@ -16,6 +16,7 @@ export async function handleBalanceRoute({
     delete operation.responseDetail;
     const balance = runBalanceOperation(operation);
     const experiment = await balanceExperiments.record(actor, operation, balance);
+    await balancePortfolio.capture(experiment);
     sendJson(response, 200, {
       balance: projectBalanceResult(balance, responseDetail),
       experiment: projectBalanceExperiment(experiment, { view: responseDetail }),
@@ -77,6 +78,23 @@ export async function handleBalanceRoute({
     return true;
   }
 
+  if (method === 'GET' && url.pathname === '/api/balance/portfolio') {
+    sendJson(response, 200, { entries: await balancePortfolio.list({ limit: url.searchParams.get('limit') }) });
+    return true;
+  }
+
+  const portfolioMatch = url.pathname.match(/^\/api\/balance\/portfolio\/([^/]+)$/);
+  if (method === 'GET' && portfolioMatch) {
+    const experiment = await balanceExperiments.get(decodeURIComponent(portfolioMatch[1]), {
+      actorUserId: actor.id,
+      actorRole: actor.role,
+    });
+    sendJson(response, 200, {
+      entry: await balancePortfolio.read(experiment.id),
+    });
+    return true;
+  }
+
   const resultMatch = url.pathname.match(/^\/api\/balance\/experiments\/([^/]+)$/);
   if (method === 'GET' && resultMatch) {
     const experiment = await balanceExperiments.get(decodeURIComponent(resultMatch[1]), {
@@ -99,6 +117,7 @@ export async function handleBalanceRoute({
   const applyMatch = url.pathname.match(/^\/api\/balance\/experiments\/([^/]+)\/apply$/);
   if (method === 'POST' && applyMatch) {
     const experiment = await balanceExperiments.apply(applyMatch[1], actor);
+    await balancePortfolio.capture(experiment, { decisionReason: '사용자가 후보 패치를 승인하여 기준 데이터에 적용했다.' });
     await audit(actor.id, 'BALANCE_CANDIDATE_APPLIED', {
       experimentId: experiment.id,
       balanceId: experiment.result?.balanceId || experiment.request?.spec?.balanceId,

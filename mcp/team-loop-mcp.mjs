@@ -228,6 +228,27 @@ const TOOLS = {
       return client.request(`/api/balance/experiments/${encodeURIComponent(args.experimentId)}?${query}`);
     },
   },
+  balance_portfolio_list: {
+    description: 'List automatically captured balance case studies with decision status and artifact paths.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', default: 100 } },
+    },
+    async run(client, args) {
+      return client.request(`/api/balance/portfolio?limit=${encodeURIComponent(args.limit || 100)}`);
+    },
+  },
+  balance_portfolio_read: {
+    description: 'Read the automatic portfolio bundle for one experiment: decision Markdown, patch, metrics, and SVG chart.',
+    inputSchema: {
+      type: 'object',
+      properties: { experimentId: { type: 'string' } },
+      required: ['experimentId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/balance/portfolio/${encodeURIComponent(args.experimentId)}`);
+    },
+  },
   experience_contracts: {
     description: 'Read the versioned contracts for context packs, skill manifests, harnesses, gates, and knowledge promotion before producing durable experience artifacts.',
     inputSchema: { type: 'object', properties: {} },

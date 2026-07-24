@@ -37,6 +37,7 @@ import { CONTRACT_VERSION, KNOWLEDGE_PROMOTION_CONTRACT } from './src/contracts.
 import { BalanceExperimentStore } from './src/balance-experiments.js';
 import { BalanceSeedRegistry } from './src/balance-seeds.js';
 import { BalanceJobManager } from './src/balance-jobs.js';
+import { BalancePortfolioStore } from './src/balance-portfolio.js';
 import { handleBalanceRoute } from './src/http/balance-routes.js';
 import { ContextPackStore, ContextSeedRegistry } from './src/context-packs.js';
 import { PromotionEngine } from './src/promotion-engine.js';
@@ -81,9 +82,14 @@ const workboardEngine = new WorkboardEngine();
 const wiki = new WikiStore(dataDirectory);
 const experienceJournal = new ExperienceJournal(dataDirectory);
 const balanceExperiments = new BalanceExperimentStore(dataDirectory);
+const balancePortfolio = new BalancePortfolioStore(dataDirectory);
 const balanceJobs = new BalanceJobManager({
   dataDirectory,
-  onComplete: ({ actor, request, result }) => balanceExperiments.record(actor, request, result),
+  async onComplete({ actor, request, result }) {
+    const experiment = await balanceExperiments.record(actor, request, result);
+    await balancePortfolio.capture(experiment);
+    return experiment;
+  },
 });
 const balanceSeeds = new BalanceSeedRegistry({ projectRoot, manifestPath: balanceSeedManifestPath });
 const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
@@ -99,7 +105,11 @@ const orchestrationEngine = new OrchestrationEngine({ constitutionCompiler, entr
 const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balanceJobs.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balancePortfolio.initialize(), balanceJobs.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
+const capturedPortfolioIds = new Set((await balancePortfolio.list({ limit: 1_000 })).map((item) => item.experimentId));
+for (const experiment of await balanceExperiments.list({ limit: 100 })) {
+  if (!capturedPortfolioIds.has(experiment.id)) await balancePortfolio.capture(experiment);
+}
 await constitutionCompiler.compile();
 await failureCases.resolveCoveredByActiveArtifacts({
   harnessIds: (await harnessRegistry.list({ includeDisabled: false })).map((item) => item.id),
@@ -630,7 +640,7 @@ async function handleApi(request, response) {
   if (url.pathname.startsWith('/api/balance/')) {
     await handleBalanceRoute({
       method, url, request, response, actor, readBody, sendJson, assertPlainObject,
-      balanceExperiments, balanceJobs, balanceSeeds,
+      balanceExperiments, balancePortfolio, balanceJobs, balanceSeeds,
       audit: (...arguments_) => store.recordAudit(...arguments_),
     });
     return;

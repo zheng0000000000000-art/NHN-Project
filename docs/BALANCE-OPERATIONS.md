@@ -57,3 +57,25 @@ data/balance-experiments/
 6. 정확한 전체 증거가 필요한 경우에만 `raw`
 
 이 순서를 따르면 일반적인 실행에서 전체 원본을 AI 컨텍스트에 적재하지 않는다.
+
+## Automatic portfolio capture
+
+모든 완료된 실험은 사용자의 추가 기록 없이 다음 묶음으로 저장된다.
+
+```text
+data/balance-portfolio/
+  index.json
+  bal_<id>/
+    decision.md
+    patch.json
+    metrics.json
+    chart.svg
+```
+
+- `decision.md`: 문제, 자동 판단, 선택 패치, 전후 지표
+- `patch.json`: 변경된 파라미터와 경로
+- `metrics.json`: 기준·후보·목표 범위
+- `chart.svg`: 문서나 포트폴리오에 재사용 가능한 비교 차트
+
+실험 완료 시 초안을 만들고 후보 적용 시 동일 기록을 `APPLIED` 상태로 갱신한다.
+기존 실험 중 기록이 없는 항목은 서버 시작 시 자동으로 백필한다.

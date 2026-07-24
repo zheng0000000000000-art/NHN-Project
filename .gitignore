@@ -3,6 +3,7 @@ data/*.jsonl
 data/*.key
 data/generated/
 data/balance-experiments/
+data/balance-portfolio/
 !data/.gitkeep
 .team-loop/
 .team-loop-worktrees/
