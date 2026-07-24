@@ -40,6 +40,8 @@ import { BalanceSeedRegistry } from './src/balance-seeds.js';
 import { ContextPackStore, ContextSeedRegistry } from './src/context-packs.js';
 import { PromotionEngine } from './src/promotion-engine.js';
 import { EntryService } from './src/entry-service.js';
+import { ConstitutionCompiler } from './src/constitution.js';
+import { OrchestrationEngine } from './src/orchestration-engine.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
@@ -83,10 +85,16 @@ const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
 const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
 const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry });
 const entryService = new EntryService({ dataDirectory, workspaceRoot });
+const constitutionCompiler = new ConstitutionCompiler({
+  sourcePath: path.join(projectRoot, 'docs', 'AGENT-CONSTITUTION.md'),
+  outputDirectory: path.join(dataDirectory, 'generated', 'constitution'),
+});
+const orchestrationEngine = new OrchestrationEngine({ constitutionCompiler, entryService });
 const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
 await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize()]);
+await constitutionCompiler.compile();
 await failureCases.resolveCoveredByActiveArtifacts({
   harnessIds: (await harnessRegistry.list({ includeDisabled: false })).map((item) => item.id),
   skillIds: (await skillRegistry.list({ includeDisabled: false })).map((item) => item.id),
@@ -153,6 +161,37 @@ async function handleApi(request, response) {
   }
 
   const actor = await requireUser(request);
+
+  if (method === 'GET' && url.pathname === '/api/constitution') {
+    sendJson(response, 200, { constitution: constitutionCompiler.status() });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/constitution/compile') {
+    requireAdmin(actor);
+    const constitution = await constitutionCompiler.compile();
+    await store.recordAudit(actor.id, 'CONSTITUTION_COMPILED', {
+      constitutionVersion: constitution.constitutionVersion,
+      sourceSha256: constitution.sourceSha256,
+    });
+    sendJson(response, 200, { constitution });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/orchestration/enter') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const decision = await orchestrationEngine.enter(body, await store.listTasks());
+    await store.recordAudit(actor.id, 'ORCHESTRATION_ENTRY_DECIDED', {
+      decision: decision.decision,
+      reasonCode: decision.reasonCode,
+      projectId: decision.project?.id || null,
+      taskId: decision.work?.id || null,
+      constitutionVersion: decision.constitutionVersion,
+    });
+    sendJson(response, 200, { decision });
+    return;
+  }
 
   if (method === 'GET' && url.pathname === '/api/entry') {
     sendJson(response, 200, await entryService.portfolio(await store.listTasks()));
@@ -323,6 +362,7 @@ async function handleApi(request, response) {
       activeRunScopes,
       workspace: { root: workspaceRoot },
       entry: await entryService.projectEntry('team-loop', tasks, audits),
+      constitution: constitutionCompiler.status(),
       learningAudit: auditLearningArtifacts({ harnesses, skills }),
     });
     return;

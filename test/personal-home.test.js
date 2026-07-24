@@ -63,4 +63,5 @@ test('personal home exposes the shared project entry and work-ledger console', a
   for (const id of ['entry-console', 'entry-revision', 'entry-projects', 'entry-works', 'entry-work-detail']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
+  assert.match(html, /id="constitution-status"/);
 });

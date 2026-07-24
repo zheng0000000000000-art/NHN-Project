@@ -13,9 +13,11 @@ import readline from 'node:readline';
 import { CliClient } from '../src/cli/client.js';
 import { loadSession, normalizeServer } from '../src/cli/session.js';
 import { taskListView } from '../src/mcp-task-view.js';
+import { compileConstitutionInMemory } from '../src/constitution.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'team-loop', version: '0.7.0' };
+const constitutionPromise = compileConstitutionInMemory(new URL('../docs/AGENT-CONSTITUTION.md', import.meta.url));
 
 function log(...args) { console.error('[team-loop-mcp]', ...args); }
 function send(message) { process.stdout.write(`${JSON.stringify(message)}\n`); }
@@ -39,6 +41,20 @@ async function fetchTask(client, taskId) {
 
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
+  loop_enter: {
+    description: 'Default zero-manual entry point. Let the constitution-derived decision engine select the project, active work, bounded read plan, and one next action. Call this first unless a more specific active tool flow is already known.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        intent: { type: 'string', description: 'The user desired outcome in their own words. Tool and menu names are not required.' },
+        currentPath: { type: 'string', description: 'Optional current local project path used only for project matching.' },
+      },
+    },
+    async run(client, args) {
+      return client.request('/api/orchestration/enter', { method: 'POST', body: args });
+    },
+  },
   portfolio_enter: {
     description: 'Lowest-cost entry point for a new agent session. Lists registered projects, active-work counts, attention counts, entry references, and a portfolio revision without loading project internals.',
     inputSchema: { type: 'object', properties: {} },
@@ -462,7 +478,13 @@ async function handleMessage(msg) {
   const { id, method, params } = msg;
   if (method === undefined) return; // response/ack, ignore
   if (method === 'initialize') {
-    reply(id, { protocolVersion: params?.protocolVersion || PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
+    const constitution = await constitutionPromise;
+    reply(id, {
+      protocolVersion: params?.protocolVersion || PROTOCOL_VERSION,
+      capabilities: { tools: {} },
+      serverInfo: SERVER_INFO,
+      instructions: constitution.instructions,
+    });
     return;
   }
   if (method === 'notifications/initialized' || method === 'initialized') return; // notification

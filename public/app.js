@@ -786,6 +786,9 @@ async function bootstrap({ quiet = true } = {}) {
     workspaceView.classList.remove('hidden');
     document.querySelector('#current-user').textContent = `${state.user.name} · ${state.user.role}`;
     document.querySelector('#workspace-root').textContent = state.workspace.root;
+    const constitutionBadge = document.querySelector('#constitution-status');
+    constitutionBadge.textContent = `헌법 ${state.constitution?.constitutionVersion || '미컴파일'} · ${state.constitution?.constitutionStatus || 'UNKNOWN'}`;
+    constitutionBadge.className = `badge ${state.constitution?.constitutionStatus === 'ACTIVE' ? 'pass' : ''}`;
     populateTaskForm();
     populateBoardFilters();
     renderAIStatus();

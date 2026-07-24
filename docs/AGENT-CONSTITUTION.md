@@ -353,6 +353,17 @@ Team Loop에 연결된 에이전트는 다음을 지켜야 한다.
     "SHARED_POLICY_CHANGE",
     "OUT_OF_SCOPE_OBJECTIVE"
   ],
+  "decisionTable": [
+    { "reasonCode": "SYSTEM_INTEGRITY_FAILED", "decision": "BLOCKED", "action": "system_recover", "priority": 1000 },
+    { "reasonCode": "PROJECT_NOT_FOUND", "decision": "ASK", "action": "project_register", "priority": 900 },
+    { "reasonCode": "PROJECT_AMBIGUOUS", "decision": "ASK", "action": "project_select", "priority": 850 },
+    { "reasonCode": "WORK_BLOCKED", "decision": "YES", "action": "work_inspect", "priority": 800 },
+    { "reasonCode": "WORK_AMBIGUOUS", "decision": "ASK", "action": "work_select", "priority": 750 },
+    { "reasonCode": "ACTIVE_WORK_WITH_VALID_HANDOFF", "decision": "YES", "action": "work_inspect", "priority": 700 },
+    { "reasonCode": "ACTIVE_WORK_WITH_STALE_HANDOFF", "decision": "YES", "action": "work_inspect", "priority": 650 },
+    { "reasonCode": "NO_ACTIVE_WORK_WITH_GOAL", "decision": "YES", "action": "create_task", "priority": 600 },
+    { "reasonCode": "USER_GOAL_REQUIRED", "decision": "ASK", "action": "request_goal", "priority": 500 }
+  ],
   "workLifecycle": [
     "ENTER",
     "PLAN",
@@ -365,6 +376,13 @@ Team Loop에 연결된 에이전트는 다음을 지켜야 한다.
   "defaultReadBudgetTokens": 12000,
   "writeFactsOnlyHandoffImmediately": true,
   "requireVerificationBeforeCompletion": true,
-  "showConstitutionVersionOnMajorSurfaces": true
+  "showConstitutionVersionOnMajorSurfaces": true,
+  "acceptanceScenarios": [
+    { "id": "unexplained-first-entry", "expectedDecision": "YES", "expectedAction": "work_inspect", "when": ["one-project", "one-active-work"] },
+    { "id": "ambiguous-projects", "expectedDecision": "ASK", "expectedAction": "project_select", "when": ["multiple-projects", "no-selection-evidence"] },
+    { "id": "safe-new-work", "expectedDecision": "YES", "expectedAction": "create_task", "when": ["selected-project", "no-active-work", "goal-present"] },
+    { "id": "missing-goal", "expectedDecision": "ASK", "expectedAction": "request_goal", "when": ["selected-project", "no-active-work", "goal-missing"] },
+    { "id": "blocked-work", "expectedDecision": "YES", "expectedAction": "work_inspect", "when": ["selected-project", "blocked-work"] }
+  ]
 }
 ```
