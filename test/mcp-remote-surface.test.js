@@ -65,4 +65,5 @@ test('MCP initialize teaches an unexplained agent to enter through the compiled 
   child.stdin.end();
   assert.match(response.result.instructions, /Begin an unexplained session with loop_enter/);
   assert.match(response.result.instructions, /constitution 0\.1\.0/);
+  assert.match(response.result.instructions, /constitution 0\.1\.0 \(DRAFT\)/);
 });

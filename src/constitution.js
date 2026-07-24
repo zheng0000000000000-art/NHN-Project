@@ -80,6 +80,7 @@ export async function compileConstitutionInMemory(sourcePath) {
   const policy = {
     ...summary,
     kind: 'team-loop-orchestration-policy',
+    constitutionStatus: summary.status,
     sourceSha256: sha256(source),
     decisionTable: summary.decisionTable,
     acceptanceScenarios: summary.acceptanceScenarios,
