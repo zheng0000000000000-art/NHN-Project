@@ -3,19 +3,21 @@ import { economyMetric, simulateAuctionEconomy } from './engine/economy-simulato
 import { evaluateBalance, tuneBalance } from './engine/balance-engine.js';
 import { HttpError } from './utils.js';
 
-export function runBalanceOperation(input = {}) {
+export function runBalanceOperation(input = {}, { onProgress = null } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'Balance request must be an object.');
   const provider = input.provider || 'combat-v1';
   if (!['combat-v1', 'auction-economy-v1'].includes(provider)) throw new HttpError(400, `Unsupported balance provider: ${provider}`);
   const seeds = normalizeSeeds(input.seeds ?? input.spec?.simulation?.seeds, input.seed ?? input.spec?.search?.seed ?? 42);
+  const runsPerSeed = boundedInteger(input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500, 1, 5_000);
+  const maxCandidates = boundedInteger(input.maxCandidates ?? 1000, 1, 5_000);
   const simulate = (data) => {
     const results = seeds.map((seed) => provider === 'auction-economy-v1'
       ? simulateAuctionEconomy(data, {
         seed,
-        runs: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500,
+        runs: runsPerSeed,
         policies: input.spec?.simulation?.policies,
       })
-      : simulateCombat(data, { seed, runs: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500 }));
+      : simulateCombat(data, { seed, runs: runsPerSeed }));
     const metricRows = results.map((result) => Object.fromEntries((input.spec?.metrics || []).map((metric) => {
       const metricId = metric.metricId || metric.id || metric.name;
       return [metricId, provider === 'auction-economy-v1'
@@ -57,13 +59,21 @@ export function runBalanceOperation(input = {}) {
           })),
         }
         : {},
-      simulation: { seeds, runsPerSeed: input.runs ?? input.spec?.simulation?.runsPerSeed ?? 500 },
+      simulation: { seeds, runsPerSeed },
     };
   };
   const request = { spec: input.spec, baseline: input.baseline, simulate };
   return input.mode === 'evaluate'
     ? { mode: 'evaluate', ...evaluateBalance(request) }
-    : { mode: 'tune', ...tuneBalance({ ...request, maxCandidates: input.maxCandidates ?? 1000 }) };
+    : {
+      mode: 'tune',
+      ...tuneBalance({
+        ...request,
+        maxCandidates,
+        onProgress,
+        priorParameters: input.priorParameters,
+      }),
+    };
 }
 
 function normalizeSeeds(value, fallback) {
@@ -87,4 +97,10 @@ function percentile(sorted, ratio) {
   const upper = Math.ceil(position);
   if (lower === upper) return sorted[lower];
   return sorted[lower] + ((sorted[upper] - sorted[lower]) * (position - lower));
+}
+
+function boundedInteger(value, minimum, maximum) {
+  const candidate = Math.round(Number(value));
+  if (!Number.isFinite(candidate)) return minimum;
+  return Math.max(minimum, Math.min(maximum, candidate));
 }

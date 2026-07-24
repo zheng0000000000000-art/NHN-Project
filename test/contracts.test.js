@@ -68,6 +68,25 @@ test('global loop, balance, observation, and experience contracts normalize lega
   assert.equal(event.summary, 'Measure the target directly.');
 });
 
+test('balance contracts preserve structured simulation policies', () => {
+  const spec = normalizeBalanceSpec({
+    balanceId: 'economy-v1',
+    parameters: { bid: 0.8 },
+    metrics: [{ metricId: 'roi', minimum: 0, maximum: 20 }],
+    simulation: {
+      policies: [{
+        id: 'informed',
+        information: ['appraisal', 'demand'],
+        acquisition: 'SELECTIVE',
+        maxPurchasesPerDay: 2,
+        minimumPriority: 2,
+      }],
+    },
+  });
+  assert.equal(spec.simulation.policies[0].id, 'informed');
+  assert.deepEqual(spec.simulation.policies[0].information, ['appraisal', 'demand']);
+});
+
 test('context pack rejects stale-prone or self-modifying declarations', () => {
   assert.throws(() => normalizeContextPackContract({
     packId: 'bad',

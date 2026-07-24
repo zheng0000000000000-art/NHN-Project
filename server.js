@@ -18,7 +18,6 @@ import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
 import { mergeTaskWorktree, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
-import { runBalanceOperation } from './src/balance-service.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
@@ -37,7 +36,8 @@ import { ExperienceEngine } from './src/experience-engine.js';
 import { CONTRACT_VERSION, KNOWLEDGE_PROMOTION_CONTRACT } from './src/contracts.js';
 import { BalanceExperimentStore } from './src/balance-experiments.js';
 import { BalanceSeedRegistry } from './src/balance-seeds.js';
-import { projectBalanceExperiment, projectBalanceResult } from './src/balance-result-view.js';
+import { BalanceJobManager } from './src/balance-jobs.js';
+import { handleBalanceRoute } from './src/http/balance-routes.js';
 import { ContextPackStore, ContextSeedRegistry } from './src/context-packs.js';
 import { PromotionEngine } from './src/promotion-engine.js';
 import { EntryService } from './src/entry-service.js';
@@ -81,6 +81,10 @@ const workboardEngine = new WorkboardEngine();
 const wiki = new WikiStore(dataDirectory);
 const experienceJournal = new ExperienceJournal(dataDirectory);
 const balanceExperiments = new BalanceExperimentStore(dataDirectory);
+const balanceJobs = new BalanceJobManager({
+  dataDirectory,
+  onComplete: ({ actor, request, result }) => balanceExperiments.record(actor, request, result),
+});
 const balanceSeeds = new BalanceSeedRegistry({ projectRoot, manifestPath: balanceSeedManifestPath });
 const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
 const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
@@ -95,7 +99,7 @@ const orchestrationEngine = new OrchestrationEngine({ constitutionCompiler, entr
 const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balanceJobs.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
 await constitutionCompiler.compile();
 await failureCases.resolveCoveredByActiveArtifacts({
   harnessIds: (await harnessRegistry.list({ includeDisabled: false })).map((item) => item.id),
@@ -623,68 +627,12 @@ async function handleApi(request, response) {
     return;
   }
 
-  if (method === 'POST' && url.pathname === '/api/balance/run') {
-    const body = await readBody(request);
-    assertPlainObject(body);
-    const responseDetail = ['full', 'raw'].includes(body.responseDetail) ? 'full' : 'summary';
-    const operation = { ...body };
-    delete operation.responseDetail;
-    const balance = runBalanceOperation(operation);
-    const experiment = await balanceExperiments.record(actor, operation, balance);
-    sendJson(response, 200, {
-      balance: projectBalanceResult(balance, responseDetail),
-      experiment: projectBalanceExperiment(experiment, { view: responseDetail }),
+  if (url.pathname.startsWith('/api/balance/')) {
+    await handleBalanceRoute({
+      method, url, request, response, actor, readBody, sendJson, assertPlainObject,
+      balanceExperiments, balanceJobs, balanceSeeds,
+      audit: (...arguments_) => store.recordAudit(...arguments_),
     });
-    return;
-  }
-
-  if (method === 'GET' && url.pathname === '/api/balance/seeds') {
-    sendJson(response, 200, { seeds: balanceSeeds.list() });
-    return;
-  }
-
-  const balanceSeedMatch = url.pathname.match(/^\/api\/balance\/seeds\/([^/]+)$/);
-  if (method === 'GET' && balanceSeedMatch) {
-    const seed = balanceSeeds.get(decodeURIComponent(balanceSeedMatch[1]));
-    if (!seed) throw new HttpError(404, 'Balance seed not found.');
-    sendJson(response, 200, { seed });
-    return;
-  }
-
-  if (method === 'GET' && url.pathname === '/api/balance/experiments') {
-    const view = ['full', 'raw'].includes(url.searchParams.get('view')) ? 'full' : 'summary';
-    const experiments = await balanceExperiments.list({ limit: url.searchParams.get('limit'), actorUserId: actor.id });
-    sendJson(response, 200, { experiments: experiments.map((item) => projectBalanceExperiment(item, { view })) });
-    return;
-  }
-
-  const balanceResultMatch = url.pathname.match(/^\/api\/balance\/experiments\/([^/]+)$/);
-  if (method === 'GET' && balanceResultMatch) {
-    const experiment = await balanceExperiments.get(decodeURIComponent(balanceResultMatch[1]), {
-      actorUserId: actor.id,
-      actorRole: actor.role,
-    });
-    const view = ['diagnostics', 'full', 'raw'].includes(url.searchParams.get('view'))
-      ? url.searchParams.get('view')
-      : 'summary';
-    sendJson(response, 200, {
-      experiment: projectBalanceExperiment(experiment, {
-        view,
-        metricId: url.searchParams.get('metricId') || '',
-        policyId: url.searchParams.get('policyId') || '',
-      }),
-    });
-    return;
-  }
-
-  const balanceApplyMatch = url.pathname.match(/^\/api\/balance\/experiments\/([^/]+)\/apply$/);
-  if (method === 'POST' && balanceApplyMatch) {
-    const experiment = await balanceExperiments.apply(balanceApplyMatch[1], actor);
-    await store.recordAudit(actor.id, 'BALANCE_CANDIDATE_APPLIED', {
-      experimentId: experiment.id,
-      balanceId: experiment.result?.balanceId || experiment.request?.spec?.balanceId,
-    });
-    sendJson(response, 200, { experiment });
     return;
   }
 

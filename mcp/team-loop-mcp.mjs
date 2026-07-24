@@ -156,7 +156,7 @@ const TOOLS = {
     },
   },
   balance_run: {
-    description: 'Evaluate or tune a stochastic simulation. Returns a compact AI-oriented summary and an experiment id; use balance_result_read only when deeper evidence is needed.',
+    description: 'Start a non-blocking stochastic balance job. Returns a job id immediately; poll balance_job_read and then use balance_result_read for evidence.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -168,11 +168,45 @@ const TOOLS = {
         seeds: { type: 'array', items: { type: 'number' }, maxItems: 50 },
         runs: { type: 'number' },
         maxCandidates: { type: 'number' },
+        priorParameters: { type: 'object', description: 'Optional parameters from a previous experiment to evaluate first.' },
       },
       required: ['spec', 'baseline'],
     },
     async run(client, args) {
-      return client.request('/api/balance/run', { method: 'POST', body: { ...args, responseDetail: 'summary' } });
+      return client.request('/api/balance/jobs', { method: 'POST', body: args });
+    },
+  },
+  balance_job_read: {
+    description: 'Read progress and terminal state for a balance job. A completed job includes the saved experiment id.',
+    inputSchema: {
+      type: 'object',
+      properties: { jobId: { type: 'string' } },
+      required: ['jobId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/balance/jobs/${encodeURIComponent(args.jobId)}`);
+    },
+  },
+  balance_job_cancel: {
+    description: 'Cancel a queued or running balance job. The saved baseline and prior experiments are unchanged.',
+    inputSchema: {
+      type: 'object',
+      properties: { jobId: { type: 'string' } },
+      required: ['jobId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/balance/jobs/${encodeURIComponent(args.jobId)}/cancel`, { method: 'POST', body: {} });
+    },
+  },
+  balance_job_resume: {
+    description: 'Resume an interrupted, failed, or cancelled balance job from its saved request.',
+    inputSchema: {
+      type: 'object',
+      properties: { jobId: { type: 'string' } },
+      required: ['jobId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/balance/jobs/${encodeURIComponent(args.jobId)}/resume`, { method: 'POST', body: {} });
     },
   },
   balance_result_read: {

@@ -360,4 +360,15 @@ test('balance API requires authentication and returns an unapplied observation s
   const applied = await post(base, `/api/balance/experiments/${payload.experiment.id}/apply`, {}, { Cookie: cookie });
   assert.equal(applied.status, 200);
   assert.equal((await applied.json()).experiment.status, 'APPLIED');
+
+  const asyncResponse = await post(base, '/api/balance/jobs', { ...request, mode: 'evaluate', runs: 20 }, { Cookie: cookie });
+  assert.equal(asyncResponse.status, 202);
+  let asyncJob = (await asyncResponse.json()).job;
+  for (let attempt = 0; attempt < 100 && !['COMPLETED', 'FAILED'].includes(asyncJob.status); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const status = await fetch(`${base}/api/balance/jobs/${asyncJob.id}`, { headers: { Cookie: cookie } });
+    asyncJob = (await status.json()).job;
+  }
+  assert.equal(asyncJob.status, 'COMPLETED', JSON.stringify(asyncJob.error));
+  assert.ok(asyncJob.experimentId);
 });

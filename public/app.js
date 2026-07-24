@@ -3,6 +3,7 @@ import { taskResultSummary } from './task-result.js';
 import { filterTasksByPeople } from './task-board-filter.js';
 import { publicExecutionLabel } from './task-execution.js';
 import { canReviewTask } from './review-policy.js';
+import { readBalanceExperiment, startBalanceJob, waitForBalanceJob } from './features/balance-client.js';
 
 const state = {
   user: null,
@@ -199,7 +200,7 @@ document.querySelector('#balance-parameters').addEventListener('click', (event) 
 document.querySelector('#balance-metrics').addEventListener('click', (event) => event.target.closest('[data-remove-row]')?.closest('.balance-contract-row')?.remove());
 document.querySelector('#balance-form').addEventListener('submit', runBalanceExperiment);
 document.querySelector('#balance-apply').addEventListener('click', applyBalanceCandidate);
-document.querySelector('#balance-compare').addEventListener('change', renderBalanceHistoryComparison);
+document.querySelector('#balance-compare').addEventListener('change', loadBalanceHistoryComparison);
 document.querySelector('#balance-copy-patch').addEventListener('click', async () => {
   await navigator.clipboard.writeText(document.querySelector('#balance-patch').textContent);
   showToast('후보 패치를 복사했습니다.');
@@ -2200,7 +2201,7 @@ async function loadBalanceLab() {
   try {
     const [seedPayload, historyPayload] = await Promise.all([
       api('/api/balance/seeds'),
-      api('/api/balance/experiments?limit=30&view=full'),
+      api('/api/balance/experiments?limit=30'),
     ]);
     state.balanceSeeds = seedPayload.seeds || [];
     state.balanceExperiments = historyPayload.experiments || [];
@@ -2306,12 +2307,7 @@ async function runBalanceExperiment(event) {
   error.textContent = '';
   runButton.disabled = true;
   progress.classList.remove('hidden');
-  let progressStep = 0;
-  const messages = ['기준 분포 검증 중', '후보 공간 탐색 중', '시드별 분포 집계 중'];
-  const progressTimer = setInterval(() => {
-    progressStep = Math.min(messages.length - 1, progressStep + 1);
-    progress.querySelector('strong').textContent = messages[progressStep];
-  }, 700);
+  progress.querySelector('strong').textContent = 'QUEUED · 0%';
   try {
     const baseline = JSON.parse(document.querySelector('#balance-baseline').value);
     const parameterRows = [...document.querySelectorAll('#balance-parameters .parameter-row')].map(readBalanceRow);
@@ -2340,15 +2336,23 @@ async function runBalanceExperiment(event) {
       },
       baseline,
     };
-    const payload = await api('/api/balance/run', { method: 'POST', body: { ...request, responseDetail: 'full' } });
-    state.currentBalanceExperiment = payload.experiment;
-    state.balanceExperiments.unshift(payload.experiment);
-    renderBalanceResult(payload.experiment);
+    const started = await startBalanceJob(api, request);
+    const completed = await waitForBalanceJob(api, started.id, {
+      onProgress(job) {
+        const completedUnits = Number(job.progress?.completed || 0);
+        const totalUnits = Math.max(1, Number(job.progress?.total || 1));
+        progress.querySelector('strong').textContent =
+          `${job.progress?.phase || job.status} · ${Math.round(completedUnits / totalUnits * 100)}%`;
+      },
+    });
+    const experiment = await readBalanceExperiment(api, completed.experimentId);
+    state.currentBalanceExperiment = experiment;
+    state.balanceExperiments.unshift(experiment);
+    renderBalanceResult(experiment);
     renderBalanceHistory();
   } catch (runError) {
     error.textContent = runError instanceof SyntaxError ? '기준 데이터 JSON 형식을 확인해주세요.' : runError.message;
   } finally {
-    clearInterval(progressTimer);
     progress.classList.add('hidden');
     runButton.disabled = false;
   }
@@ -2452,12 +2456,16 @@ function renderBalanceHistory() {
       <span class="badge ${experiment.status === 'APPLIED' ? 'pass' : ''}">${escapeHtml(experiment.status)}</span><strong>${escapeHtml(experiment.title)}</strong>
       <small>${formatNumber(experiment.request?.seeds?.length || 1)}개 시드 · ${formatNumber(experiment.result?.observationSet?.observations?.length || 0)}개 후보</small><time>${escapeHtml(formatDateTime(experiment.createdAt))}</time>
     </button>`).join('') : '<div class="empty">아직 저장된 실험이 없습니다.</div>';
-  document.querySelectorAll('[data-balance-history]').forEach((button) => button.addEventListener('click', () => {
-    const experiment = state.balanceExperiments.find((item) => item.id === button.dataset.balanceHistory);
-    if (experiment) {
-      state.currentBalanceExperiment = experiment;
-      renderBalanceResult(experiment);
+  document.querySelectorAll('[data-balance-history]').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const payload = await api(`/api/balance/experiments/${encodeURIComponent(button.dataset.balanceHistory)}?view=raw`);
+      state.currentBalanceExperiment = payload.experiment;
+      state.balanceExperiments = state.balanceExperiments.map((item) =>
+        item.id === payload.experiment.id ? payload.experiment : item);
+      renderBalanceResult(payload.experiment);
       renderBalanceHistory();
+    } catch (historyError) {
+      document.querySelector('#balance-error').textContent = historyError.message;
     }
   }));
   renderBalanceHistoryOptions();
@@ -2487,6 +2495,19 @@ function renderBalanceHistoryComparison() {
     const before = previous.result.candidate.statistics?.[metric.metricId] || {};
     return `<div class="history-delta"><strong>${escapeHtml(metric.metricId)}</strong><span>평균 ${formatBalanceNumber(before.mean)} → <b>${formatBalanceNumber(now.mean)}</b></span><span>실패율 ${formatPercent(Number(before.failureRate || 0))} → <b>${formatPercent(Number(now.failureRate || 0))}</b></span><span>σ ${formatBalanceNumber(before.standardDeviation)} → <b>${formatBalanceNumber(now.standardDeviation)}</b></span></div>`;
   }).join('');
+}
+
+async function loadBalanceHistoryComparison() {
+  const id = document.querySelector('#balance-compare').value;
+  if (id) {
+    const current = state.balanceExperiments.find((item) => item.id === id);
+    if (!current?.result?.candidate?.statistics) {
+      const payload = await api(`/api/balance/experiments/${encodeURIComponent(id)}?view=raw`);
+      state.balanceExperiments = state.balanceExperiments.map((item) =>
+        item.id === payload.experiment.id ? payload.experiment : item);
+    }
+  }
+  renderBalanceHistoryComparison();
 }
 
 async function loadContextStudio() {

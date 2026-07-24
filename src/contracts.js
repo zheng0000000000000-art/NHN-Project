@@ -86,9 +86,28 @@ export function normalizeBalanceSpec(input = {}) {
       runsPerSeed: nonNegativeInteger(input.simulation?.runsPerSeed, 1),
       seeds: [...new Set((Array.isArray(input.simulation?.seeds) ? input.simulation.seeds : [])
         .map(Number).filter(Number.isFinite))].slice(0, 50),
-      policies: stringList(input.simulation?.policies, 50, 160),
+      policies: normalizeSimulationPolicies(input.simulation?.policies),
     },
   };
+}
+
+function normalizeSimulationPolicies(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 50).flatMap((policy) => {
+    if (typeof policy === 'string') {
+      const id = text(policy, 160);
+      return id ? [id] : [];
+    }
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return [];
+    const id = text(policy.id, 160);
+    if (!id) return [];
+    return [{
+      id,
+      information: stringList(policy.information, 20, 160),
+      acquisition: text(policy.acquisition || 'EVERY_LOT', 80),
+      maxPurchasesPerDay: finiteNumber(policy.maxPurchasesPerDay),
+      minimumPriority: finiteNumber(policy.minimumPriority),
+    }];
+  });
 }
 
 export function normalizeObservationSet(input = {}) {

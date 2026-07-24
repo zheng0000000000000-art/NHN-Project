@@ -12,6 +12,8 @@
    코드에서 약화할 수 없는 인증, 권한, 실행 격리와 배포 안전 경계를 설명한다.
 4. [Brainstorm Workflow](./BRAINSTORM-WORKFLOW.md)  
    제품 변경 전에 후보를 분리하고 비교·검증하는 현행 탐색 워크플로우다.
+5. [Balance Operations](./BALANCE-OPERATIONS.md)
+   비동기 실험, 진행률·재개, 결과 아티팩트와 AI의 단계적 조회 규칙을 정의한다.
 
 ## Reading policy
 

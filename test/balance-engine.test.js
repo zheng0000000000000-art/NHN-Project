@@ -67,3 +67,16 @@ test('tuning exposes baseline and candidate distributions for review', () => {
   assert.equal(result.candidate.statistics.completionRate.samples, 4);
   assert.equal(typeof result.candidate.statistics.completionRate.failureRate, 'number');
 });
+
+test('tuning returns a bounded pareto front and evaluates prior parameters first', () => {
+  const result = runBalanceOperation({
+    spec,
+    baseline,
+    runs: 20,
+    maxCandidates: 4,
+    priorParameters: { room2Attack: 6 },
+  });
+  assert.ok(result.paretoCandidates.length > 0);
+  assert.ok(result.paretoCandidates.length <= 20);
+  assert.equal(result.observationSet.observations[0].inputs.room2Attack, 6);
+});
