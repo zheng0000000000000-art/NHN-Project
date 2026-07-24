@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "seeds": [
+    {
+      "id": "combat-distribution-starter",
+      "label": "전투 분포 실험 기본 시드",
+      "description": "다중 시드 전투 시뮬레이션을 시작하기 위한 교체 가능한 예시 계약입니다.",
+      "provider": "combat-v1",
+      "source": "examples/balance/ruined-lab.json"
+    }
+  ]
+}

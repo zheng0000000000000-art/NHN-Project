@@ -35,6 +35,11 @@ import { WikiStore } from './src/wiki-store.js';
 import { ExperienceJournal } from './src/experience-journal.js';
 import { ExperienceEngine } from './src/experience-engine.js';
 import { CONTRACT_VERSION, KNOWLEDGE_PROMOTION_CONTRACT } from './src/contracts.js';
+import { BalanceExperimentStore } from './src/balance-experiments.js';
+import { BalanceSeedRegistry } from './src/balance-seeds.js';
+import { ContextPackStore, ContextSeedRegistry } from './src/context-packs.js';
+import { PromotionEngine } from './src/promotion-engine.js';
+import { EntryService } from './src/entry-service.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
@@ -44,6 +49,9 @@ const workspaceRoot = path.resolve(process.env.WORKSPACE_ROOT || projectRoot);
 const profilePath = path.resolve(process.env.VERIFICATION_PROFILES || path.join(projectRoot, 'config', 'verification-profiles.json'));
 const learningSeedPath = path.resolve(process.env.LEARNING_SEEDS || path.join(projectRoot, 'config', 'learning-seeds.json'));
 const usageConfigPath = path.resolve(process.env.USAGE_CONFIG || path.join(projectRoot, 'config', 'usage-dashboard.json'));
+const balanceSeedManifestPath = path.resolve(process.env.BALANCE_SEEDS || path.join(projectRoot, 'config', 'balance-seeds.json'));
+const contextSeedManifestPath = path.resolve(process.env.CONTEXT_SEEDS || path.join(projectRoot, 'config', 'context-seeds.json'));
+const promotionPolicyPath = path.resolve(process.env.PROMOTION_POLICY || path.join(projectRoot, 'config', 'promotion-policy.json'));
 const host = process.env.HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 4173);
 const secureCookies = process.env.SECURE_COOKIES === 'true';
@@ -69,10 +77,16 @@ const runScopes = new ScopeLeaseService({ workspaceRoot });
 const workboardEngine = new WorkboardEngine();
 const wiki = new WikiStore(dataDirectory);
 const experienceJournal = new ExperienceJournal(dataDirectory);
+const balanceExperiments = new BalanceExperimentStore(dataDirectory);
+const balanceSeeds = new BalanceSeedRegistry({ projectRoot, manifestPath: balanceSeedManifestPath });
+const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
+const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
+const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry });
+const entryService = new EntryService({ dataDirectory, workspaceRoot });
 const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize()]);
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize()]);
 await failureCases.resolveCoveredByActiveArtifacts({
   harnessIds: (await harnessRegistry.list({ includeDisabled: false })).map((item) => item.id),
   skillIds: (await skillRegistry.list({ includeDisabled: false })).map((item) => item.id),
@@ -139,6 +153,64 @@ async function handleApi(request, response) {
   }
 
   const actor = await requireUser(request);
+
+  if (method === 'GET' && url.pathname === '/api/entry') {
+    sendJson(response, 200, await entryService.portfolio(await store.listTasks()));
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/projects') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const project = await entryService.register(actor, body);
+    await store.recordAudit(actor.id, 'PROJECT_REGISTERED', { projectId: project.id });
+    sendJson(response, 201, { project });
+    return;
+  }
+
+  const projectEntryMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/entry$/);
+  if (method === 'GET' && projectEntryMatch) {
+    const [tasks, audits] = await Promise.all([store.listTasks(), store.listAuditEvents()]);
+    sendJson(response, 200, await entryService.projectEntry(decodeURIComponent(projectEntryMatch[1]), tasks, audits));
+    return;
+  }
+
+  const readPlanMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/read-plan$/);
+  if (method === 'GET' && readPlanMatch) {
+    sendJson(response, 200, await entryService.readPlan(decodeURIComponent(readPlanMatch[1]), {
+      intent: url.searchParams.get('intent') || 'enter',
+      workId: url.searchParams.get('workId') || null,
+      maxTokens: url.searchParams.get('maxTokens'),
+    }));
+    return;
+  }
+
+  const workEntryMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/works\/([^/]+)$/);
+  if (method === 'GET' && workEntryMatch) {
+    const [, projectId, workId] = workEntryMatch.map(decodeURIComponent);
+    const [task, audits] = await Promise.all([store.getTask(workId), store.listAuditEvents()]);
+    sendJson(response, 200, await entryService.inspectWork(projectId, workId, task, audits));
+    return;
+  }
+
+  const handoffMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/works\/([^/]+)\/handoff$/);
+  if (handoffMatch) {
+    const projectId = decodeURIComponent(handoffMatch[1]);
+    const workId = decodeURIComponent(handoffMatch[2]);
+    if (method === 'GET') {
+      sendJson(response, 200, { handoff: await entryService.latestHandoff(projectId, workId) });
+      return;
+    }
+    if (method === 'POST') {
+      const body = await readBody(request);
+      assertPlainObject(body);
+      const [task, audits] = await Promise.all([store.getTask(workId), store.listAuditEvents()]);
+      const handoff = await entryService.writeHandoff(actor, projectId, task, audits, body);
+      await store.recordAudit(actor.id, 'WORK_HANDOFF_WRITTEN', { projectId, taskId: workId, handoffId: handoff.id, trigger: handoff.trigger });
+      sendJson(response, 201, { handoff });
+      return;
+    }
+  }
 
   if (method === 'GET' && url.pathname === '/api/contracts') {
     sendJson(response, 200, {
@@ -250,6 +322,7 @@ async function handleApi(request, response) {
       runResults,
       activeRunScopes,
       workspace: { root: workspaceRoot },
+      entry: await entryService.projectEntry('team-loop', tasks, audits),
       learningAudit: auditLearningArtifacts({ harnesses, skills }),
     });
     return;
@@ -281,6 +354,61 @@ async function handleApi(request, response) {
     });
     sendJson(response, 200, { pack });
     return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/context-packs/seeds') {
+    sendJson(response, 200, { seeds: contextSeeds.list() });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/context-packs') {
+    sendJson(response, 200, { packs: await contextPacks.list(actor.id, { limit: url.searchParams.get('limit') }) });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/context-packs/prepare') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const seed = contextSeeds.get(body.seedId);
+    if (!seed) throw new HttpError(404, 'Context seed not found.');
+    const pack = await experienceEngine.prepare({
+      ...body,
+      maxWikiEntries: body.maxWikiEntries ?? seed.maxWikiEntries,
+      maxSourceChunks: body.maxSourceChunks ?? seed.maxSourceChunks,
+      maxSourceCharacters: body.maxSourceCharacters ?? seed.maxSourceCharacters,
+      forbiddenActions: body.forbiddenActions ?? seed.forbiddenActions,
+    });
+    pack.layers = seed.layers;
+    const record = await contextPacks.record(actor, seed, pack);
+    await store.recordAudit(actor.id, 'CONTEXT_PACK_PREPARED', {
+      contextPackId: record.id,
+      packId: pack.contract.packId,
+      seedId: seed.id,
+      sourceCount: pack.sources.sourceCount,
+      estimatedTokens: pack.sources.estimatedTokens,
+    });
+    sendJson(response, 201, { record });
+    return;
+  }
+
+  const contextPackMatch = url.pathname.match(/^\/api\/context-packs\/([^/]+)(?:\/(lock))?$/);
+  if (contextPackMatch) {
+    const [, contextPackId, action] = contextPackMatch;
+    if (method === 'GET' && !action) {
+      sendJson(response, 200, { record: await contextPacks.get(contextPackId, actor) });
+      return;
+    }
+    if (method === 'POST' && action === 'lock') {
+      const record = await contextPacks.lockPack(contextPackId, actor);
+      await store.recordAudit(actor.id, 'CONTEXT_PACK_LOCKED', {
+        contextPackId: record.id,
+        packId: record.pack.contract.packId,
+        receiptId: record.receipt.receiptId,
+        estimatedTokens: record.receipt.budget.estimatedTokens,
+      });
+      sendJson(response, 200, { record });
+      return;
+    }
   }
 
   if (method === 'POST' && url.pathname === '/api/experience/reflect') {
@@ -345,6 +473,15 @@ async function handleApi(request, response) {
 
   if (method === 'GET' && url.pathname === '/api/context-index') {
     sendJson(response, 200, { contextIndex: contextIndex.status() });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/context-index/search') {
+    sendJson(response, 200, contextIndex.search(url.searchParams.get('q') || '', {
+      historical: url.searchParams.get('historical') === 'true',
+      maxChunks: url.searchParams.get('maxChunks'),
+      maxCharacters: url.searchParams.get('maxCharacters'),
+    }));
     return;
   }
 
@@ -438,7 +575,38 @@ async function handleApi(request, response) {
   if (method === 'POST' && url.pathname === '/api/balance/run') {
     const body = await readBody(request);
     assertPlainObject(body);
-    sendJson(response, 200, { balance: runBalanceOperation(body) });
+    const balance = runBalanceOperation(body);
+    const experiment = await balanceExperiments.record(actor, body, balance);
+    sendJson(response, 200, { balance, experiment });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/balance/seeds') {
+    sendJson(response, 200, { seeds: balanceSeeds.list() });
+    return;
+  }
+
+  const balanceSeedMatch = url.pathname.match(/^\/api\/balance\/seeds\/([^/]+)$/);
+  if (method === 'GET' && balanceSeedMatch) {
+    const seed = balanceSeeds.get(decodeURIComponent(balanceSeedMatch[1]));
+    if (!seed) throw new HttpError(404, 'Balance seed not found.');
+    sendJson(response, 200, { seed });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/balance/experiments') {
+    sendJson(response, 200, { experiments: await balanceExperiments.list({ limit: url.searchParams.get('limit'), actorUserId: actor.id }) });
+    return;
+  }
+
+  const balanceApplyMatch = url.pathname.match(/^\/api\/balance\/experiments\/([^/]+)\/apply$/);
+  if (method === 'POST' && balanceApplyMatch) {
+    const experiment = await balanceExperiments.apply(balanceApplyMatch[1], actor);
+    await store.recordAudit(actor.id, 'BALANCE_CANDIDATE_APPLIED', {
+      experimentId: experiment.id,
+      balanceId: experiment.result?.balanceId || experiment.request?.spec?.balanceId,
+    });
+    sendJson(response, 200, { experiment });
     return;
   }
 
@@ -595,11 +763,10 @@ async function handleApi(request, response) {
     await requireAutoLearningAccess(actor, body.taskId, cases);
     const context = await projectContext.get();
     const plan = await planLearningArtifact({ cases, context });
-    const result = await learning.craft(actor, { ...plan, failureCaseIds: cases.map((item) => item.id) });
-    if (result.type === 'SKILL' && result.skill?.status === 'DRAFT') {
-      result.skill = await skillRegistry.setStatus(result.skill.id, actor.id, result.skill.version, 'ACTIVE');
-      await resolveArtifactCases(actor, result.skill, 'SKILL');
-    }
+    const crafted = await learning.craft(actor, { ...plan, failureCaseIds: cases.map((item) => item.id) });
+    const result = await promotionEngine.activate(actor, crafted, plan);
+    const artifact = result.skill || result.harness;
+    if (result.promotion.status === 'PROBATION') await resolveArtifactCases(actor, artifact, result.type);
     await store.recordAudit(actor.id, 'LEARNING_ARTIFACT_AUTO_CRAFTED', {
       type: result.type,
       harnessId: result.harness?.id ?? null,
@@ -607,8 +774,60 @@ async function handleApi(request, response) {
       sourceFailureCaseIds: result.sourceFailureCases.map((item) => item.id),
       planner: plan.planner,
       rationale: plan.rationale,
+      promotionReceiptId: result.promotion.id,
+      promotionStatus: result.promotion.status,
     });
     sendJson(response, 201, { ...result, plan });
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/promotions') {
+    const [candidates, receipts] = await Promise.all([
+      promotionEngine.candidates(actor.id),
+      promotionEngine.list(actor.id, { limit: url.searchParams.get('limit') }),
+    ]);
+    sendJson(response, 200, { policy: promotionEngine.status(), candidates, receipts });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/promotions/scan') {
+    const candidates = await promotionEngine.candidates(actor.id);
+    const context = await projectContext.get();
+    const promotions = [];
+    for (const candidate of candidates.filter((item) => item.score.verdict !== 'NOTE').slice(0, 10)) {
+      try {
+        const cases = await selectedFailureCases(candidate.failureCaseIds);
+        const plan = await planLearningArtifact({ cases, context });
+        const crafted = await learning.craft(actor, { ...plan, failureCaseIds: candidate.failureCaseIds });
+        const promoted = await promotionEngine.activate(actor, crafted, plan);
+        const artifact = promoted.skill || promoted.harness;
+        if (promoted.promotion.status === 'PROBATION') await resolveArtifactCases(actor, artifact, promoted.type);
+        promotions.push(promoted);
+      } catch (error) {
+        promotions.push({ candidate, error: error.message });
+      }
+    }
+    await store.recordAudit(actor.id, 'OPTIMISTIC_PROMOTION_SCAN_COMPLETED', {
+      candidateCount: candidates.length,
+      promotionCount: promotions.filter((item) => item.promotion).length,
+    });
+    sendJson(response, 200, {
+      policy: promotionEngine.status(),
+      promotions,
+      candidates: await promotionEngine.candidates(actor.id),
+      receipts: await promotionEngine.list(actor.id),
+    });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/promotions/audit') {
+    const changes = await promotionEngine.audit(actor);
+    await store.recordAudit(actor.id, 'OPTIMISTIC_PROMOTION_AUDITED', { changes });
+    sendJson(response, 200, {
+      changes,
+      candidates: await promotionEngine.candidates(actor.id),
+      receipts: await promotionEngine.list(actor.id),
+    });
     return;
   }
 
@@ -984,7 +1203,9 @@ async function handleApi(request, response) {
       if (verification.passed) await failureCases.resolveTaskFailuresOnPass(taskId, verification.profile, actor.id);
       verification.failureCaseIds = recordedFailures.map((item) => item.id);
       const task = await saveVerificationResult(taskId, actor, runningTask.version, verification);
-      sendJson(response, 200, { task, failureCases: recordedFailures });
+      const promotionChanges = await promotionEngine.audit(actor);
+      const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: 'VERIFICATION_COMPLETED' });
+      sendJson(response, 200, { task, failureCases: recordedFailures, promotionChanges, handoff });
     });
     return;
   }
@@ -1010,7 +1231,8 @@ async function handleApi(request, response) {
       next.executionState = 'IDLE';
       next.review = { status: 'PENDING', requestedAt: nowIso(), requestedByUserId: actor.id };
     });
-    sendJson(response, 200, { task });
+    const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: 'REVIEW_REQUESTED' });
+    sendJson(response, 200, { task, handoff });
     return;
   }
 
@@ -1079,7 +1301,8 @@ async function handleApi(request, response) {
         await store.recordAudit(actor.id, 'CONTEXT_INDEX_AUTO_REFRESH_FAILED', { taskId, error: error.message }).catch(() => {});
       }
     }
-    sendJson(response, 200, { task, merge });
+    const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: decision === 'APPROVE' ? 'WORK_COMPLETED' : 'REVIEW_REJECTED' });
+    sendJson(response, 200, { task, merge, handoff });
     return;
   }
 
@@ -1093,7 +1316,8 @@ async function handleApi(request, response) {
       next.executionState = 'IDLE';
       next.blocked = { reason: reason.slice(0, 2000), byUserId: actor.id, at: nowIso() };
     });
-    sendJson(response, 200, { task });
+    const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: 'WORK_BLOCKED' });
+    sendJson(response, 200, { task, handoff });
     return;
   }
 

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "seeds": [
+    {
+      "id": "implementation",
+      "label": "구현 작업",
+      "description": "계약과 인터페이스를 우선하고 관련 구현·테스트·실패 사례를 제한된 예산으로 구성합니다.",
+      "maxSourceChunks": 8,
+      "maxSourceCharacters": 12000,
+      "maxWikiEntries": 6,
+      "forbiddenActions": ["approve", "reject", "promote-knowledge-without-review"],
+      "layers": ["L0_GOAL", "L1_CONTRACT", "L2_IMPLEMENTATION", "L3_EVIDENCE"]
+    },
+    {
+      "id": "balance-research",
+      "label": "밸런싱·시뮬레이션",
+      "description": "밸런스 계약, provider, 시드와 관측 근거를 우선하는 실험용 컨텍스트입니다.",
+      "maxSourceChunks": 10,
+      "maxSourceCharacters": 16000,
+      "maxWikiEntries": 8,
+      "forbiddenActions": ["apply-candidate-without-approval", "mutate-baseline", "promote-knowledge-without-review"],
+      "layers": ["L0_GOAL", "L1_CONTRACT", "L2_PROVIDER", "L3_OBSERVATION"]
+    },
+    {
+      "id": "knowledge-research",
+      "label": "위키·연구",
+      "description": "기존 지식과 원시 근거를 구분하고 출처가 있는 발견만 후보로 만드는 조사용 컨텍스트입니다.",
+      "maxSourceChunks": 12,
+      "maxSourceCharacters": 20000,
+      "maxWikiEntries": 12,
+      "forbiddenActions": ["treat-candidate-as-fact", "promote-knowledge-without-review"],
+      "layers": ["L0_GOAL", "L1_WIKI", "L2_SOURCE", "L3_RAW_EVIDENCE"]
+    }
+  ]
+}

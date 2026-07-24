@@ -270,7 +270,8 @@ test('experience API prepares context and turns reflection discoveries into wiki
   assert.equal(contractsResponse.status, 200);
   const contracts = await contractsResponse.json();
   assert.equal(contracts.contracts.contextPack.legacyAliases.diId, 'packId');
-  assert.equal(contracts.contracts.knowledgePromotion.minimumOccurrences, 2);
+  assert.equal(contracts.contracts.knowledgePromotion.minimumOccurrences, 1);
+  assert.equal(contracts.contracts.knowledgePromotion.promotionMode, 'OPTIMISTIC');
 
   const prepared = await post(base, '/api/experience/prepare', {
     goal: 'Improve the MCP experience learning loop',
@@ -282,6 +283,21 @@ test('experience API prepares context and turns reflection discoveries into wiki
   assert.equal(pack.kind, 'team-loop-experience-pack');
   assert.equal(pack.contract.kind, 'team-loop-context-pack');
   assert.equal(Array.isArray(pack.learning.selectedSkillIds), true);
+
+  const contextPrepared = await post(base, '/api/context-packs/prepare', {
+    seedId: 'implementation',
+    goal: 'Verify the context pack contract and receipt',
+    allowedPaths: [],
+  }, { Cookie: cookie });
+  assert.equal(contextPrepared.status, 201);
+  const contextRecord = (await contextPrepared.json()).record;
+  assert.equal(contextRecord.status, 'DRAFT');
+  const contextLocked = await post(base, `/api/context-packs/${contextRecord.id}/lock`, {}, { Cookie: cookie });
+  assert.equal(contextLocked.status, 200);
+  const lockedRecord = (await contextLocked.json()).record;
+  assert.equal(lockedRecord.status, 'LOCKED');
+  assert.equal(lockedRecord.receipt.stages.serialized, true);
+  assert.equal(lockedRecord.receipt.stages.transported, false);
 
   const reflected = await post(base, '/api/experience/reflect', {
     goal: 'Improve the MCP experience learning loop',
@@ -328,5 +344,15 @@ test('balance API requires authentication and returns an unapplied observation s
   const payload = await response.json();
   assert.equal(payload.balance.observationSet.kind, 'team-loop-observation-set');
   assert.equal(payload.balance.candidate.data.rooms[0].enemies.attack <= 8, true);
+  assert.equal(payload.experiment.status, 'PROPOSED');
   assert.equal(request.baseline.rooms[0].enemies.attack, 8);
+  const seeds = await fetch(`${base}/api/balance/seeds`, { headers: { Cookie: cookie } });
+  assert.equal(seeds.status, 200);
+  assert.ok((await seeds.json()).seeds.length > 0);
+  const history = await fetch(`${base}/api/balance/experiments`, { headers: { Cookie: cookie } });
+  const historyPayload = await history.json();
+  assert.equal(historyPayload.experiments.length, 1);
+  const applied = await post(base, `/api/balance/experiments/${payload.experiment.id}/apply`, {}, { Cookie: cookie });
+  assert.equal(applied.status, 200);
+  assert.equal((await applied.json()).experiment.status, 'APPLIED');
 });

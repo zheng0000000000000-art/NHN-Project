@@ -31,6 +31,12 @@ const state = {
   discussions: { messages: [], memories: [] },
   aiSessions: [], selectedAISession: null, aiSessionQuery: '', aiLogMode: 'answers',
   runResults: [], activeRunScopes: [],
+  experiences: [], wikiCandidates: [], personalHomeError: null,
+  balanceSeeds: [], balanceExperiments: [], currentBalanceSeed: null, currentBalanceExperiment: null,
+  contextSeeds: [], contextPacks: [], currentContextPack: null,
+  promotions: { policy: null, candidates: [], receipts: [] },
+  portfolio: { projects: [], revision: 0 },
+  entry: null,
 };
 
 const columns = [
@@ -67,6 +73,8 @@ const milestoneCalendar = document.querySelector('#milestone-calendar');
 const milestoneStream = document.querySelector('#milestone-stream');
 const usageView = document.querySelector('#usage-view');
 const loopView = document.querySelector('#loop-view');
+const balanceView = document.querySelector('#balance-view');
+const contextView = document.querySelector('#context-view');
 const boardView = document.querySelector('#board-view');
 const harnessView = document.querySelector('#harness-view');
 const caseWikiView = document.querySelector('#case-wiki-view');
@@ -160,8 +168,10 @@ for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', async () => {
     switchView(button.dataset.view);
     if (state.activeView === 'usage') await loadUsage({ quiet: false });
+    if (state.activeView === 'balance') await loadBalanceLab();
+    if (state.activeView === 'context') await loadContextStudio();
     if (state.activeView === 'harnesses') {
-      await loadLearningAudit({ quiet: true });
+      await Promise.all([loadLearningAudit({ quiet: true }), loadPromotions()]);
       renderHarnessDashboard();
     }
     if (state.activeView === 'case-wiki') renderCaseArchive();
@@ -169,7 +179,37 @@ for (const button of document.querySelectorAll('[data-view]')) {
     if (state.activeView === 'ai-logs') await loadAISessions({ quiet: false });
   });
 }
-loopView.addEventListener('click', (event) => { const target = event.target.closest('[data-loop-view]'); if (target) switchView(target.dataset.loopView); });
+loopView.addEventListener('click', async (event) => {
+  const work = event.target.closest('[data-work-ledger]');
+  if (work) {
+    await inspectEntryWork(work.dataset.workLedger);
+    return;
+  }
+  const target = event.target.closest('[data-loop-view]');
+  if (!target) return;
+  switchView(target.dataset.loopView);
+  if (target.dataset.loopView === 'balance') await loadBalanceLab();
+  if (target.dataset.loopView === 'context') await loadContextStudio();
+});
+
+document.querySelector('#balance-preset').addEventListener('change', (event) => loadBalanceSeed(event.target.value));
+document.querySelector('#balance-add-parameter').addEventListener('click', () => addBalanceParameterRow());
+document.querySelector('#balance-add-metric').addEventListener('click', () => addBalanceMetricRow());
+document.querySelector('#balance-parameters').addEventListener('click', (event) => event.target.closest('[data-remove-row]')?.closest('.balance-contract-row')?.remove());
+document.querySelector('#balance-metrics').addEventListener('click', (event) => event.target.closest('[data-remove-row]')?.closest('.balance-contract-row')?.remove());
+document.querySelector('#balance-form').addEventListener('submit', runBalanceExperiment);
+document.querySelector('#balance-apply').addEventListener('click', applyBalanceCandidate);
+document.querySelector('#balance-compare').addEventListener('change', renderBalanceHistoryComparison);
+document.querySelector('#balance-copy-patch').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(document.querySelector('#balance-patch').textContent);
+  showToast('후보 패치를 복사했습니다.');
+});
+document.querySelector('#context-seed').addEventListener('change', applyContextSeed);
+document.querySelector('#context-pack-form').addEventListener('submit', prepareContextPack);
+document.querySelector('#context-pack-lock').addEventListener('click', lockCurrentContextPack);
+document.querySelector('#context-pack-compare').addEventListener('change', renderContextPackComparison);
+document.querySelector('#promotion-scan').addEventListener('click', () => runPromotionAction('scan'));
+document.querySelector('#promotion-audit').addEventListener('click', () => runPromotionAction('audit'));
 
 document.querySelector('#ai-log-refresh').addEventListener('click', () => loadAISessions({ quiet: false }));
 document.querySelector('#ai-log-search').addEventListener('input', (event) => { state.aiSessionQuery = event.target.value; renderAISessionList(); });
@@ -313,7 +353,7 @@ agentActivityPanel?.addEventListener('click', (event) => {
 
 document.querySelector('#harness-refresh').addEventListener('click', async () => {
   await bootstrap({ quiet: true });
-  await loadLearningAudit({ quiet: true });
+  await Promise.all([loadLearningAudit({ quiet: true }), loadPromotions()]);
   renderHarnessDashboard();
   showToast('하네스와 실패사례를 갱신했습니다.');
 });
@@ -740,6 +780,8 @@ async function bootstrap({ quiet = true } = {}) {
   try {
     const data = await api('/api/bootstrap');
     Object.assign(state, data);
+    state.portfolio = await api('/api/entry');
+    await loadPersonalHome();
     authView.classList.add('hidden');
     workspaceView.classList.remove('hidden');
     document.querySelector('#current-user').textContent = `${state.user.name} · ${state.user.role}`;
@@ -897,8 +939,10 @@ function populateBoardFilters() {
 }
 
 function switchView(view) {
-  state.activeView = ['loop', 'usage', 'board', 'harnesses', 'case-wiki', 'ai-logs', 'discussion'].includes(view) ? view : 'loop';
+  state.activeView = ['loop', 'balance', 'context', 'usage', 'board', 'harnesses', 'case-wiki', 'ai-logs', 'discussion'].includes(view) ? view : 'loop';
   loopView.classList.toggle('hidden', state.activeView !== 'loop');
+  balanceView.classList.toggle('hidden', state.activeView !== 'balance');
+  contextView.classList.toggle('hidden', state.activeView !== 'context');
   usageView.classList.toggle('hidden', state.activeView !== 'usage');
   boardView.classList.toggle('hidden', state.activeView !== 'board');
   harnessView.classList.toggle('hidden', state.activeView !== 'harnesses');
@@ -922,6 +966,8 @@ function renderLearningLoop() {
   const learnedFailures = failures.filter((item) => learnedIds.has(item.id));
   const learnedOccurrences = learnedFailures.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
   const repeatFailures = failures.filter((item) => Number(item.occurrences || 0) > 1).length;
+  renderPersonalHome();
+  renderEntryConsole();
   renderRunModes();
   document.querySelector('#loop-kpis').innerHTML = [
     loopMetric('검증 통과율', verified.length ? formatPercent(passed / verified.length) : '—', `${passed}/${verified.length} 작업`, 'good'),
@@ -1232,6 +1278,7 @@ function renderHarnessDashboard() {
     kpiCard('Fixture 후보', formatNumber(summary.fixtureCandidates), '재현 setup 필요', 'output'),
     kpiCard('활성 스킬', formatNumber(activeSkills), `${formatNumber(state.skills.length)}개 등록`, 'ok'),
   ].join('');
+  renderPromotionPanel();
   renderLearningArchivePanel();
   const admin = state.user?.role === 'admin';
   document.querySelector('#learning-create-toggle').classList.toggle('hidden', !admin);
@@ -1965,6 +2012,672 @@ function renderTaskResult(task) {
       <div><small>검증</small>${checks.length ? `<ul>${checks.map((check) => `<li class="${check.passed ? 'pass-text' : 'fail-text'}">${check.passed ? '통과' : '실패'} · <code>${escapeHtml([check.file, ...(check.args || [])].filter(Boolean).join(' '))}</code></li>`).join('')}</ul>` : '<p class="muted">실행 기록 없음</p>'}</div>
     </div>
   </section>`;
+}
+
+function renderEntryConsole() {
+  const projects = state.portfolio?.projects || [];
+  const entry = state.entry || {};
+  const works = entry.activeWorks || [];
+  document.querySelector('#entry-revision').textContent = `REV ${escapeHtml(String(entry.revision || state.portfolio?.revision || '0'))}`;
+  document.querySelector('#entry-projects').innerHTML = projects.map((project) => `
+    <article class="entry-project ${project.id === entry.project?.id ? 'active' : ''}">
+      <div><strong>${escapeHtml(project.title)}</strong><small>${escapeHtml(project.purpose || '목적 미등록')}</small></div>
+      <span><b>${formatNumber(project.activeWorkCount || 0)}</b> active</span>
+    </article>`).join('') || '<div class="empty">등록된 프로젝트가 없습니다.</div>';
+  document.querySelector('#entry-works').innerHTML = works.map((work) => `
+    <button type="button" class="entry-work" data-work-ledger="${escapeHtml(work.id)}">
+      <span class="badge ${work.status === 'BLOCKED' ? 'fail' : work.verification?.passed ? 'pass' : ''}">${escapeHtml(work.status)}</span>
+      <div><strong>${escapeHtml(work.title)}</strong><small>다음: ${escapeHtml(work.nextAction?.name || 'work_inspect')}</small></div>
+      <b>열기</b>
+    </button>`).join('') || '<div class="loop-empty-good">진행 중인 작업이 없습니다. 새 작업을 시작할 수 있습니다.</div>';
+}
+
+async function inspectEntryWork(workId) {
+  const panel = document.querySelector('#entry-work-detail');
+  panel.classList.remove('hidden');
+  panel.innerHTML = '<p class="muted">작업 원장을 불러오는 중입니다.</p>';
+  try {
+    const ledger = await api(`/api/projects/team-loop/works/${encodeURIComponent(workId)}`);
+    const handoff = ledger.latestHandoff;
+    panel.innerHTML = `
+      <div class="entry-detail-head"><div><p class="eyebrow">WORK LEDGER</p><h4>${escapeHtml(ledger.work.title)}</h4></div><span class="badge">${escapeHtml(ledger.work.status)}</span></div>
+      <div class="entry-detail-grid">
+        <div><b>완료 조건</b><p>${escapeHtml((ledger.contract.acceptanceCriteria || []).join(' · ') || '등록되지 않음')}</p></div>
+        <div><b>검증</b><p>${escapeHtml(ledger.evidence.verification?.status || '아직 실행하지 않음')}</p></div>
+        <div><b>최근 인계</b><p>${escapeHtml(handoff ? `${handoff.status} · ${handoff.trigger}` : '아직 없음')}</p></div>
+        <div><b>다음 행동</b><p>${escapeHtml(ledger.work.nextAction?.name || 'work_inspect')}</p></div>
+      </div>
+      <p class="muted">${formatNumber(ledger.timeline.length)}개 사건 · ${formatNumber(ledger.checkpoints.length)}개 체크포인트 · revision ${formatNumber(ledger.work.version)}</p>`;
+  } catch (error) {
+    panel.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function loadPromotions() {
+  try {
+    const payload = await api('/api/promotions?limit=50');
+    state.promotions = payload;
+    renderPromotionPanel();
+  } catch (error) {
+    document.querySelector('#promotion-candidates').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function runPromotionAction(action) {
+  const button = document.querySelector(action === 'scan' ? '#promotion-scan' : '#promotion-audit');
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = action === 'scan' ? '승격 시험 중…' : '악화 검사 중…';
+  try {
+    const payload = await api(`/api/promotions/${action}`, { method: 'POST', body: {} });
+    state.promotions = { policy: state.promotions.policy, candidates: payload.candidates || [], receipts: payload.receipts || [] };
+    await bootstrap({ quiet: true });
+    await loadPromotions();
+    renderHarnessDashboard();
+    const rolledBack = (payload.changes || []).filter((item) => item.status === 'ROLLED_BACK').length;
+    showToast(rolledBack ? `${rolledBack}개 학습을 자동 원복했습니다.` : action === 'scan' ? '낙관적 승격 스캔을 완료했습니다.' : '악화 신호가 없습니다.');
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function renderPromotionPanel() {
+  const policy = state.promotions?.policy;
+  const candidates = state.promotions?.candidates || [];
+  const receipts = state.promotions?.receipts || [];
+  if (!policy) return;
+  document.querySelector('#promotion-policy').innerHTML = `
+    <span><b>${escapeHtml(policy.mode)}</b> 실행 모드</span>
+    <span><b>${policy.snapshotRequired ? '필수' : '선택'}</b> 사전 스냅샷</span>
+    <span><b>${policy.autoRollback ? 'ON' : 'OFF'}</b> 자동 원복</span>
+    <span><b>${formatNumber(policy.stableAfterCleanAudits)}</b> 안정화 검사</span>`;
+  document.querySelector('#promotion-candidates').innerHTML = candidates.length ? candidates.map((candidate) => `
+    <article class="promotion-item"><header><span class="badge">${escapeHtml(candidate.suggestedType)}</span><b>${formatNumber(candidate.score.total)}/12</b></header><strong>${escapeHtml(candidate.title)}</strong><p>${formatNumber(candidate.occurrences)}회 관찰 · ${escapeHtml(candidate.score.verdict)}</p></article>`).join('') : '<div class="empty">아직 처리하지 않은 승격 후보가 없습니다.</div>';
+  document.querySelector('#promotion-receipts').innerHTML = receipts.length ? receipts.slice(0, 12).map((receipt) => `
+    <article class="promotion-item receipt-${escapeHtml(receipt.status.toLowerCase())}"><header><span class="badge ${receipt.status === 'STABLE' || receipt.status === 'PROBATION' ? 'pass' : receipt.status === 'ROLLED_BACK' || receipt.status === 'QUARANTINED' ? 'fail' : ''}">${escapeHtml(receipt.status)}</span><b>${escapeHtml(receipt.type)}</b></header><strong>${escapeHtml(receipt.artifactId)}</strong><p>${receipt.status === 'ROLLED_BACK' ? escapeHtml(receipt.rollbackReason) : `clean audit ${receipt.cleanAudits}/${policy.stableAfterCleanAudits} · score ${receipt.score.total}/12`}</p><small>${escapeHtml(formatDateTime(receipt.createdAt))}</small></article>`).join('') : '<div class="empty">아직 승격 영수증이 없습니다.</div>';
+}
+
+async function loadPersonalHome() {
+  try {
+    const [experiencePayload, wikiPayload] = await Promise.all([
+      api('/api/experience/recent?limit=8'),
+      api('/api/wiki?status=CANDIDATE&limit=8'),
+    ]);
+    state.experiences = experiencePayload.experiences || [];
+    state.wikiCandidates = wikiPayload.entries || [];
+    state.personalHomeError = null;
+  } catch (error) {
+    state.personalHomeError = error.message;
+  }
+}
+
+function renderPersonalHome() {
+  const tasks = state.tasks || [];
+  const activeRuns = state.activeRunScopes || [];
+  const runResults = state.runResults || [];
+  const balancePattern = /balance|balancing|simulation|economy|combat|밸런스|시뮬레이션|경제|전투/i;
+  const balanceRun = [...activeRuns, ...runResults].find((item) =>
+    balancePattern.test(`${item.title || ''} ${item.goal || ''} ${item.runId || ''}`));
+  const currentTask = [...tasks]
+    .filter((item) => ['IN_PROGRESS', 'REVIEW', 'BLOCKED', 'READY'].includes(item.status))
+    .sort((a, b) => {
+      const statusOrder = { IN_PROGRESS: 0, REVIEW: 1, BLOCKED: 2, READY: 3 };
+      return statusOrder[a.status] - statusOrder[b.status]
+        || Number(a.priority || 999) - Number(b.priority || 999)
+        || String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    })[0];
+  const activeRun = activeRuns[0];
+  const context = state.contextIndex || {};
+  const activeHarnesses = state.harnesses.filter((item) => item.status === 'ACTIVE');
+  const activeSkills = state.skills.filter((item) => item.status === 'ACTIVE');
+  const draftHarnesses = state.harnesses.filter((item) => item.status === 'DRAFT');
+  const draftSkills = state.skills.filter((item) => item.status === 'DRAFT');
+  const promotionCount = draftHarnesses.length + draftSkills.length + state.wikiCandidates.length;
+  const goalTitle = activeRun?.title || currentTask?.title || '다음 루프의 목표를 정해주세요';
+  const goalMeta = activeRun
+    ? `실행 중 · ${activeRun.mode?.appliedMode || activeRun.mode?.requestedMode || 'AUTO'} 모드`
+    : currentTask
+      ? `${statusLabel(currentTask.status)} · 우선순위 ${currentTask.priority || 100}`
+      : '작업 보드에서 목표를 만들면 준비·실행·회고가 연결됩니다.';
+
+  const status = document.querySelector('#home-status');
+  status.classList.toggle('hidden', !state.personalHomeError);
+  status.textContent = state.personalHomeError ? `경험·위키 요약을 불러오지 못했습니다: ${state.personalHomeError}` : '';
+  document.querySelector('#home-goal').innerHTML = `
+    <div><p class="eyebrow">TODAY'S GOAL</p><h2>${escapeHtml(goalTitle)}</h2><p>${escapeHtml(goalMeta)}</p></div>
+    <div class="home-goal-actions"><span class="badge ${activeRun ? 'pass' : ''}">${activeRun ? 'LOOP RUNNING' : currentTask ? currentTask.status : 'READY'}</span><button class="ghost compact" type="button" data-loop-view="board">작업 보드</button></div>`;
+
+  document.querySelector('#home-balance').innerHTML = `
+    ${homeCardHead('BALANCE LAB', '밸런싱 실험', balanceRun ? '연결됨' : '준비됨')}
+    <div class="home-card-value">${balanceRun ? escapeHtml(balanceRun.title || balanceRun.runId) : '결정론적 실험 엔진'}</div>
+    <p>${balanceRun ? escapeHtml(balanceRun.verdict || 'RUNNING') : '전투와 경제 모델을 같은 계약으로 실행하고 여러 시드의 분포를 비교할 수 있습니다.'}</p>
+    <div class="home-mini-stats"><span><b>${formatNumber(runResults.length)}</b> 최근 실행</span><span><b>${formatNumber(activeRuns.length)}</b> 진행 중</span></div>
+    <button class="ghost compact home-card-action" type="button" data-loop-view="balance">실험실 열기</button>`;
+
+  document.querySelector('#home-context').innerHTML = `
+    ${homeCardHead('CONTEXT PACK', '현재 컨텍스트', context.indexedAt ? '색인됨' : '대기')}
+    <div class="home-card-value">${formatNumber(context.indexedFiles || 0)}개 파일 · ${formatNumber(context.chunks || 0)}개 청크</div>
+    <p>${state.projectContext?.content ? '개인 프로젝트 규칙과 로컬 소스 색인이 실행 준비에 함께 들어갑니다.' : '로컬 소스는 색인됐습니다. 반복해서 쓸 프로젝트 규칙을 추가하면 더 안정적입니다.'}</p>
+    <div class="home-mini-stats"><span><b>${formatNumber(context.estimatedTokens || 0)}</b> 예상 토큰</span><span><b>${state.projectContext?.content ? '저장됨' : '비어 있음'}</b> 규칙</span></div>
+    <button class="ghost compact home-card-action" type="button" data-loop-view="context">팩 구성하기</button>`;
+
+  document.querySelector('#home-learning').innerHTML = `
+    ${homeCardHead('LEARNING ASSETS', '활성 스킬과 하네스', `${activeSkills.length + activeHarnesses.length}개`)}
+    <div class="home-learning-list">
+      ${[...activeSkills.map((item) => ({ ...item, type: 'SKILL' })), ...activeHarnesses.map((item) => ({ ...item, type: 'HARNESS' }))].slice(0, 4).map((item) => `<div><span class="badge">${item.type}</span><strong>${escapeHtml(item.label)}</strong></div>`).join('') || '<p class="muted">활성 학습 자산이 아직 없습니다.</p>'}
+    </div>
+    <button class="ghost compact home-card-action" type="button" data-loop-view="harnesses">학습 자산 관리</button>`;
+
+  document.querySelector('#home-experiences').innerHTML = `
+    ${homeCardHead('EXPERIENCE MEMORY', '최근 경험', `${state.experiences.length}개`)}
+    <div class="home-experience-list">
+      ${state.experiences.slice(0, 4).map((item) => `<div class="home-experience"><span class="badge ${item.verdict === 'PASSED' ? 'pass' : item.verdict === 'FAILED' ? 'fail' : ''}">${escapeHtml(item.verdict)}</span><div><strong>${escapeHtml(item.goal)}</strong><p>${escapeHtml(item.outcome || item.discoveries?.[0] || '결과 기록 없음')}</p></div><time>${escapeHtml(formatDateTime(item.at))}</time></div>`).join('') || '<div class="empty">아직 회고된 경험이 없습니다. 첫 실행을 마치면 여기에 기억이 쌓입니다.</div>'}
+    </div>`;
+
+  document.querySelector('#home-promotions').innerHTML = `
+    ${homeCardHead('PROMOTION QUEUE', '승격 후보', `${promotionCount}개`)}
+    <div class="home-promotion-count">${formatNumber(promotionCount)}</div>
+    <div class="home-mini-stats stacked"><span><b>${state.wikiCandidates.length}</b> 위키 후보</span><span><b>${draftSkills.length}</b> 스킬 초안</span><span><b>${draftHarnesses.length}</b> 하네스 초안</span></div>
+    <button class="ghost compact home-card-action" type="button" data-loop-view="harnesses">검토하기</button>`;
+}
+
+function homeCardHead(eyebrow, title, badge) {
+  return `<header class="home-card-head"><div><p class="eyebrow">${escapeHtml(eyebrow)}</p><h3>${escapeHtml(title)}</h3></div><span class="badge">${escapeHtml(badge)}</span></header>`;
+}
+
+async function loadBalanceLab() {
+  const error = document.querySelector('#balance-error');
+  error.textContent = '';
+  try {
+    const [seedPayload, historyPayload] = await Promise.all([
+      api('/api/balance/seeds'),
+      api('/api/balance/experiments?limit=30'),
+    ]);
+    state.balanceSeeds = seedPayload.seeds || [];
+    state.balanceExperiments = historyPayload.experiments || [];
+    const select = document.querySelector('#balance-preset');
+    select.innerHTML = state.balanceSeeds.map((seed) => `<option value="${escapeHtml(seed.id)}">${escapeHtml(seed.label)}</option>`).join('')
+      + '<option value="custom">빈 계약에서 시작</option>';
+    const selectedId = state.currentBalanceSeed?.id || state.balanceSeeds[0]?.id || 'custom';
+    select.value = selectedId;
+    if (!state.currentBalanceSeed && selectedId !== 'custom') await loadBalanceSeed(selectedId);
+    else if (!state.currentBalanceSeed) loadEmptyBalanceContract();
+    renderBalanceHistory();
+  } catch (loadError) {
+    error.textContent = loadError.message;
+  }
+}
+
+async function loadBalanceSeed(id) {
+  if (id === 'custom') {
+    state.currentBalanceSeed = null;
+    loadEmptyBalanceContract();
+    return;
+  }
+  try {
+    const payload = await api(`/api/balance/seeds/${encodeURIComponent(id)}`);
+    state.currentBalanceSeed = payload.seed;
+    populateBalanceContract(payload.seed.request);
+    document.querySelector('#balance-seed-description').textContent = payload.seed.description || '계약 시드';
+    document.querySelector('#balance-engine-status').textContent = String(payload.seed.provider || 'PROVIDER').toUpperCase();
+  } catch (error) {
+    document.querySelector('#balance-error').textContent = error.message;
+  }
+}
+
+function loadEmptyBalanceContract() {
+  populateBalanceContract({
+    provider: '',
+    title: '새 밸런스 실험',
+    seeds: [11, 23, 42, 71, 101],
+    runs: 500,
+    maxCandidates: 1000,
+    spec: {
+      balanceId: 'new-balance-contract',
+      objective: '',
+      parameters: { parameter: 0 },
+      parameterSpace: [{ parameterId: 'parameter', path: 'replace/with/path', minimum: 0, maximum: 10, step: 1 }],
+      metrics: [{ metricId: 'metric', minimum: 0, maximum: 100, weight: 1 }],
+    },
+    baseline: {},
+  });
+  document.querySelector('#balance-seed-description').textContent = '빈 계약은 실행 provider가 등록된 뒤 사용할 수 있습니다.';
+  document.querySelector('#balance-engine-status').textContent = 'NO PROVIDER';
+}
+
+function populateBalanceContract(request) {
+  const form = document.querySelector('#balance-form');
+  form.elements.title.value = request.title || request.spec?.objective || request.spec?.balanceId || '새 밸런스 실험';
+  document.querySelector('#balance-baseline').value = JSON.stringify(request.baseline || {}, null, 2);
+  document.querySelector('#balance-seeds').value = (request.seeds || request.spec?.simulation?.seeds || [42]).join(', ');
+  document.querySelector('#balance-runs').value = request.runs || request.spec?.simulation?.runsPerSeed || 500;
+  document.querySelector('#balance-candidates').value = request.maxCandidates || 1000;
+  const parameterList = document.querySelector('#balance-parameters');
+  parameterList.innerHTML = '';
+  for (const definition of request.spec?.parameterSpace || []) {
+    addBalanceParameterRow({ ...definition, value: request.spec?.parameters?.[definition.parameterId] });
+  }
+  const metricList = document.querySelector('#balance-metrics');
+  metricList.innerHTML = '';
+  for (const metric of request.spec?.metrics || []) addBalanceMetricRow(metric);
+  document.querySelector('#balance-results').classList.add('hidden');
+}
+
+function addBalanceParameterRow(definition = {}) {
+  const row = document.createElement('div');
+  row.className = 'balance-contract-row parameter-row';
+  row.innerHTML = `
+    <label>키<input data-field="id" value="${escapeHtml(definition.parameterId || '')}" placeholder="enemyAttack"></label>
+    <label class="wide">데이터 경로<input data-field="path" value="${escapeHtml(definition.path || '')}" placeholder="rooms/0/enemies/attack"></label>
+    <label>현재값<input data-field="value" type="number" step="any" value="${escapeHtml(definition.value ?? '')}"></label>
+    <label>최소<input data-field="minimum" type="number" step="any" value="${escapeHtml(definition.minimum ?? '')}"></label>
+    <label>최대<input data-field="maximum" type="number" step="any" value="${escapeHtml(definition.maximum ?? '')}"></label>
+    <label>간격<input data-field="step" type="number" step="any" min="0.000001" value="${escapeHtml(definition.step ?? 1)}"></label>
+    <button class="danger compact" type="button" data-remove-row aria-label="파라미터 삭제">삭제</button>`;
+  document.querySelector('#balance-parameters').append(row);
+}
+
+function addBalanceMetricRow(metric = {}) {
+  const row = document.createElement('div');
+  row.className = 'balance-contract-row metric-row';
+  row.innerHTML = `
+    <label class="wide">지표 키<input data-field="id" value="${escapeHtml(metric.metricId || '')}" placeholder="completionRate"></label>
+    <label>최소 목표<input data-field="minimum" type="number" step="any" value="${escapeHtml(metric.minimum ?? '')}"></label>
+    <label>최대 목표<input data-field="maximum" type="number" step="any" value="${escapeHtml(metric.maximum ?? '')}"></label>
+    <label>가중치<input data-field="weight" type="number" step="any" min="0" value="${escapeHtml(metric.weight ?? 1)}"></label>
+    <button class="danger compact" type="button" data-remove-row aria-label="지표 삭제">삭제</button>`;
+  document.querySelector('#balance-metrics').append(row);
+}
+
+async function runBalanceExperiment(event) {
+  event.preventDefault();
+  const error = document.querySelector('#balance-error');
+  const progress = document.querySelector('#balance-progress');
+  const runButton = document.querySelector('#balance-run');
+  error.textContent = '';
+  runButton.disabled = true;
+  progress.classList.remove('hidden');
+  let progressStep = 0;
+  const messages = ['기준 분포 검증 중', '후보 공간 탐색 중', '시드별 분포 집계 중'];
+  const progressTimer = setInterval(() => {
+    progressStep = Math.min(messages.length - 1, progressStep + 1);
+    progress.querySelector('strong').textContent = messages[progressStep];
+  }, 700);
+  try {
+    const baseline = JSON.parse(document.querySelector('#balance-baseline').value);
+    const parameterRows = [...document.querySelectorAll('#balance-parameters .parameter-row')].map(readBalanceRow);
+    const metricRows = [...document.querySelectorAll('#balance-metrics .metric-row')].map(readBalanceRow);
+    const parameters = Object.fromEntries(parameterRows.map((row) => [row.id, numberValue(row.value)]));
+    const request = {
+      title: event.currentTarget.elements.title.value,
+      provider: state.currentBalanceSeed?.provider || state.currentBalanceSeed?.request?.provider,
+      mode: 'tune',
+      seeds: document.querySelector('#balance-seeds').value.split(',').map((value) => Number(value.trim())).filter(Number.isFinite),
+      runs: Number(document.querySelector('#balance-runs').value),
+      maxCandidates: Number(document.querySelector('#balance-candidates').value),
+      spec: {
+        balanceId: state.currentBalanceSeed?.request?.spec?.balanceId || slugBalanceId(event.currentTarget.elements.title.value),
+        objective: event.currentTarget.elements.title.value,
+        parameters,
+        parameterSpace: parameterRows.map((row) => ({
+          parameterId: row.id, path: row.path, minimum: numberValue(row.minimum), maximum: numberValue(row.maximum), step: numberValue(row.step),
+        })),
+        metrics: metricRows.map((row) => ({
+          metricId: row.id,
+          minimum: optionalNumber(row.minimum),
+          maximum: optionalNumber(row.maximum),
+          weight: optionalNumber(row.weight) ?? 1,
+        })),
+      },
+      baseline,
+    };
+    const payload = await api('/api/balance/run', { method: 'POST', body: request });
+    state.currentBalanceExperiment = payload.experiment;
+    state.balanceExperiments.unshift(payload.experiment);
+    renderBalanceResult(payload.experiment);
+    renderBalanceHistory();
+  } catch (runError) {
+    error.textContent = runError instanceof SyntaxError ? '기준 데이터 JSON 형식을 확인해주세요.' : runError.message;
+  } finally {
+    clearInterval(progressTimer);
+    progress.classList.add('hidden');
+    runButton.disabled = false;
+  }
+}
+
+function readBalanceRow(row) {
+  return Object.fromEntries([...row.querySelectorAll('[data-field]')].map((input) => [input.dataset.field, input.value.trim()]));
+}
+
+function numberValue(value) {
+  const result = Number(value);
+  if (!Number.isFinite(result)) throw new Error('파라미터의 숫자 값을 모두 입력해주세요.');
+  return result;
+}
+
+function optionalNumber(value) {
+  return value === '' ? null : numberValue(value);
+}
+
+function slugBalanceId(value) {
+  return String(value || 'balance-experiment').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 120) || 'balance-experiment';
+}
+
+function renderBalanceResult(experiment) {
+  const result = experiment.result;
+  const request = experiment.request;
+  const results = document.querySelector('#balance-results');
+  results.classList.remove('hidden');
+  document.querySelector('#balance-solved').textContent = result.solved ? '목표 충족' : '최선 후보';
+  document.querySelector('#balance-solved').className = `badge ${result.solved ? 'pass' : 'fail'}`;
+  document.querySelector('#balance-result-summary').textContent = `${result.observationSet?.observations?.length || 0}개 후보 · ${request.seeds?.length || 1}개 시드 · 시드당 ${formatNumber(request.runs)}회`;
+  document.querySelector('#balance-apply').disabled = !result.changed || experiment.status === 'APPLIED';
+  document.querySelector('#balance-apply').textContent = experiment.status === 'APPLIED' ? '적용 완료' : '후보 승인 및 적용';
+  document.querySelector('#balance-distributions').innerHTML = (request.spec?.metrics || []).map((metric) =>
+    renderDistributionMetric(metric, result.baseline, result.candidate)).join('');
+  document.querySelector('#balance-patch').textContent = JSON.stringify(buildBalancePatch(experiment), null, 2);
+  renderBalanceHistoryOptions();
+  renderBalanceHistoryComparison();
+  results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderDistributionMetric(metric, baseline, candidate) {
+  const base = baseline.statistics?.[metric.metricId] || { mean: baseline.outputs?.[metric.metricId] };
+  const next = candidate.statistics?.[metric.metricId] || { mean: candidate.outputs?.[metric.metricId] };
+  const values = [base.minimum, base.p10, base.mean, base.p90, base.maximum, next.minimum, next.p10, next.mean, next.p90, next.maximum, metric.minimum, metric.maximum].map(Number).filter(Number.isFinite);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const position = (value) => `${((Number(value) - minimum) / Math.max(0.000001, maximum - minimum)) * 100}%`;
+  return `<article class="distribution-card">
+    <header><div><h3>${escapeHtml(metric.metricId)}</h3><span>목표 ${metric.minimum ?? '—'} ~ ${metric.maximum ?? '—'}</span></div><div class="distribution-verdict"><b>${formatBalanceNumber(next.mean)}</b><span>후보 평균</span></div></header>
+    ${distributionBand('기준', base, position, 'baseline')}
+    ${distributionBand('후보', next, position, 'candidate')}
+    <footer><span>기준 실패율 <b>${formatPercent(Number(base.failureRate || 0))}</b></span><span>후보 실패율 <b>${formatPercent(Number(next.failureRate || 0))}</b></span><span>후보 표준편차 <b>${formatBalanceNumber(next.standardDeviation)}</b></span></footer>
+  </article>`;
+}
+
+function distributionBand(label, stats, position, tone) {
+  const low = stats.p10 ?? stats.minimum ?? stats.mean;
+  const high = stats.p90 ?? stats.maximum ?? stats.mean;
+  return `<div class="distribution-row"><span>${label}</span><div class="distribution-track"><i class="${tone}" style="left:${position(low)};width:calc(${position(high)} - ${position(low)})"></i><b style="left:${position(stats.mean)}" title="평균 ${formatBalanceNumber(stats.mean)}"></b><em style="left:${position(stats.median ?? stats.mean)}" title="중앙값 ${formatBalanceNumber(stats.median ?? stats.mean)}"></em></div><small>P10 ${formatBalanceNumber(low)} · P50 ${formatBalanceNumber(stats.median ?? stats.mean)} · P90 ${formatBalanceNumber(high)}</small></div>`;
+}
+
+function formatBalanceNumber(value) {
+  return Number.isFinite(Number(value)) ? Number(value).toLocaleString('ko-KR', { maximumFractionDigits: 2 }) : '—';
+}
+
+function buildBalancePatch(experiment) {
+  const { request, result } = experiment;
+  return (request.spec?.parameterSpace || []).map((definition) => ({
+    parameterId: definition.parameterId,
+    path: definition.path,
+    before: getAtBalancePath(request.baseline, definition.path),
+    after: getAtBalancePath(result.candidate.data, definition.path),
+  })).filter((item) => JSON.stringify(item.before) !== JSON.stringify(item.after));
+}
+
+function getAtBalancePath(data, slashPath) {
+  return String(slashPath || '').split('/').filter(Boolean).reduce((value, key) => value?.[/^\d+$/.test(key) ? Number(key) : key], data);
+}
+
+async function applyBalanceCandidate() {
+  const experiment = state.currentBalanceExperiment;
+  if (!experiment) return;
+  try {
+    const payload = await api(`/api/balance/experiments/${encodeURIComponent(experiment.id)}/apply`, { method: 'POST', body: {} });
+    state.currentBalanceExperiment = payload.experiment;
+    state.balanceExperiments = state.balanceExperiments.map((item) => item.id === payload.experiment.id ? payload.experiment : item);
+    document.querySelector('#balance-baseline').value = JSON.stringify(payload.experiment.result.candidate.data, null, 2);
+    renderBalanceResult(payload.experiment);
+    renderBalanceHistory();
+    showToast('후보를 승인하고 다음 실험의 기준 데이터로 적용했습니다.');
+  } catch (error) {
+    document.querySelector('#balance-error').textContent = error.message;
+  }
+}
+
+function renderBalanceHistory() {
+  document.querySelector('#balance-history-count').textContent = `${state.balanceExperiments.length}개`;
+  document.querySelector('#balance-history').innerHTML = state.balanceExperiments.length ? state.balanceExperiments.map((experiment) => `
+    <button type="button" class="balance-history-item ${state.currentBalanceExperiment?.id === experiment.id ? 'active' : ''}" data-balance-history="${escapeHtml(experiment.id)}">
+      <span class="badge ${experiment.status === 'APPLIED' ? 'pass' : ''}">${escapeHtml(experiment.status)}</span><strong>${escapeHtml(experiment.title)}</strong>
+      <small>${formatNumber(experiment.request?.seeds?.length || 1)}개 시드 · ${formatNumber(experiment.result?.observationSet?.observations?.length || 0)}개 후보</small><time>${escapeHtml(formatDateTime(experiment.createdAt))}</time>
+    </button>`).join('') : '<div class="empty">아직 저장된 실험이 없습니다.</div>';
+  document.querySelectorAll('[data-balance-history]').forEach((button) => button.addEventListener('click', () => {
+    const experiment = state.balanceExperiments.find((item) => item.id === button.dataset.balanceHistory);
+    if (experiment) {
+      state.currentBalanceExperiment = experiment;
+      renderBalanceResult(experiment);
+      renderBalanceHistory();
+    }
+  }));
+  renderBalanceHistoryOptions();
+}
+
+function renderBalanceHistoryOptions() {
+  const select = document.querySelector('#balance-compare');
+  const currentId = state.currentBalanceExperiment?.id;
+  const selected = select.value;
+  select.innerHTML = '<option value="">비교하지 않음</option>' + state.balanceExperiments
+    .filter((item) => item.id !== currentId)
+    .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)} · ${escapeHtml(formatDateTime(item.createdAt))}</option>`).join('');
+  if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+}
+
+function renderBalanceHistoryComparison() {
+  const current = state.currentBalanceExperiment;
+  const previous = state.balanceExperiments.find((item) => item.id === document.querySelector('#balance-compare').value);
+  const target = document.querySelector('#balance-history-compare');
+  if (!current || !previous) {
+    target.innerHTML = '<div class="empty">이전 실험을 선택하면 후보 분포의 변화량을 비교합니다.</div>';
+    return;
+  }
+  const metrics = current.request.spec?.metrics || [];
+  target.innerHTML = metrics.map((metric) => {
+    const now = current.result.candidate.statistics?.[metric.metricId] || {};
+    const before = previous.result.candidate.statistics?.[metric.metricId] || {};
+    return `<div class="history-delta"><strong>${escapeHtml(metric.metricId)}</strong><span>평균 ${formatBalanceNumber(before.mean)} → <b>${formatBalanceNumber(now.mean)}</b></span><span>실패율 ${formatPercent(Number(before.failureRate || 0))} → <b>${formatPercent(Number(now.failureRate || 0))}</b></span><span>σ ${formatBalanceNumber(before.standardDeviation)} → <b>${formatBalanceNumber(now.standardDeviation)}</b></span></div>`;
+  }).join('');
+}
+
+async function loadContextStudio() {
+  const error = document.querySelector('#context-pack-error');
+  error.textContent = '';
+  try {
+    const [seedPayload, packPayload] = await Promise.all([
+      api('/api/context-packs/seeds'),
+      api('/api/context-packs?limit=30'),
+    ]);
+    state.contextSeeds = seedPayload.seeds || [];
+    state.contextPacks = packPayload.packs || [];
+    const select = document.querySelector('#context-seed');
+    const selected = select.value || state.contextSeeds[0]?.id;
+    select.innerHTML = state.contextSeeds.map((seed) => `<option value="${escapeHtml(seed.id)}">${escapeHtml(seed.label)}</option>`).join('');
+    select.value = state.contextSeeds.some((seed) => seed.id === selected) ? selected : state.contextSeeds[0]?.id || '';
+    applyContextSeed();
+    document.querySelector('#context-index-badge').textContent = `${formatNumber(state.contextIndex?.indexedFiles || 0)} FILES INDEXED`;
+    renderContextPackHistory();
+  } catch (loadError) {
+    error.textContent = loadError.message;
+  }
+}
+
+function applyContextSeed() {
+  const seed = state.contextSeeds.find((item) => item.id === document.querySelector('#context-seed').value);
+  if (!seed) return;
+  const form = document.querySelector('#context-pack-form');
+  form.elements.maxSourceChunks.value = seed.maxSourceChunks;
+  form.elements.maxSourceCharacters.value = seed.maxSourceCharacters;
+  form.elements.maxWikiEntries.value = seed.maxWikiEntries;
+  document.querySelector('#context-seed-description').textContent = `${seed.description} · ${seed.layers.join(' → ')}`;
+  document.querySelector('#context-budget-tokens').textContent = `최대 약 ${formatNumber(Math.ceil(seed.maxSourceCharacters / 4))} 토큰`;
+  document.querySelector('#context-budget-bar').style.width = '0%';
+}
+
+async function prepareContextPack(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const error = document.querySelector('#context-pack-error');
+  const button = document.querySelector('#context-prepare');
+  error.textContent = '';
+  button.disabled = true;
+  button.textContent = '근거 선택 중…';
+  try {
+    const body = {
+      seedId: form.elements.seedId.value,
+      goal: form.elements.goal.value,
+      acceptanceCriteria: contextLines(form.elements.criteria.value),
+      allowedPaths: contextLines(form.elements.allowedPaths.value),
+      maxSourceChunks: Number(form.elements.maxSourceChunks.value),
+      maxSourceCharacters: Number(form.elements.maxSourceCharacters.value),
+      maxWikiEntries: Number(form.elements.maxWikiEntries.value),
+    };
+    const payload = await api('/api/context-packs/prepare', { method: 'POST', body });
+    state.currentContextPack = payload.record;
+    state.contextPacks.unshift(contextPackSummary(payload.record));
+    renderContextPackDetail(payload.record);
+    renderContextPackHistory();
+  } catch (prepareError) {
+    error.textContent = prepareError.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = '컨텍스트팩 구성';
+  }
+}
+
+function contextLines(value) {
+  return String(value || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+}
+
+function contextPackSummary(record) {
+  return {
+    id: record.id,
+    seedId: record.seedId,
+    seedLabel: record.seed?.label,
+    status: record.status,
+    goal: record.pack?.goal,
+    sourceCount: record.pack?.sources?.sourceCount || 0,
+    estimatedTokens: record.pack?.sources?.estimatedTokens || 0,
+    integrityOk: record.receipt?.integrity?.ok ?? null,
+    createdAt: record.createdAt,
+    lockedAt: record.lockedAt,
+  };
+}
+
+function renderContextPackHistory() {
+  document.querySelector('#context-pack-count').textContent = `${state.contextPacks.length}개`;
+  document.querySelector('#context-pack-history').innerHTML = state.contextPacks.length ? state.contextPacks.map((pack) => `
+    <button class="context-pack-item ${state.currentContextPack?.id === pack.id ? 'active' : ''}" type="button" data-context-pack="${escapeHtml(pack.id)}">
+      <span class="badge ${pack.status === 'LOCKED' ? 'pass' : ''}">${escapeHtml(pack.status)}</span><strong>${escapeHtml(pack.goal)}</strong>
+      <small>${escapeHtml(pack.seedLabel || pack.seedId)} · ${formatNumber(pack.estimatedTokens)} 토큰 · ${formatNumber(pack.sourceCount)} 소스</small>
+      <time>${escapeHtml(formatDateTime(pack.createdAt))}</time>
+    </button>`).join('') : '<div class="empty">아직 저장된 컨텍스트팩이 없습니다.</div>';
+  document.querySelectorAll('[data-context-pack]').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const payload = await api(`/api/context-packs/${encodeURIComponent(button.dataset.contextPack)}`);
+      state.currentContextPack = payload.record;
+      renderContextPackDetail(payload.record);
+      renderContextPackHistory();
+    } catch (error) {
+      document.querySelector('#context-pack-error').textContent = error.message;
+    }
+  }));
+  renderContextCompareOptions();
+}
+
+function renderContextPackDetail(record) {
+  const pack = record.pack;
+  document.querySelector('#context-pack-detail').classList.remove('hidden');
+  document.querySelector('#context-pack-title').textContent = pack.goal;
+  document.querySelector('#context-pack-meta').textContent = `${record.seed.label} · ${formatNumber(pack.sources.estimatedTokens)} 토큰 · ${escapeHtml(formatDateTime(record.createdAt))}`;
+  const status = document.querySelector('#context-pack-status');
+  status.textContent = record.status;
+  status.className = `badge ${record.status === 'LOCKED' ? 'pass' : ''}`;
+  const lockButton = document.querySelector('#context-pack-lock');
+  lockButton.disabled = record.status === 'LOCKED';
+  lockButton.textContent = record.status === 'LOCKED' ? '검증 및 잠금 완료' : '검증 후 잠금';
+  document.querySelector('#context-budget-tokens').textContent = `${formatNumber(pack.sources.estimatedTokens)} / ${formatNumber(Math.ceil(pack.sources.budgetCharacters / 4))} 토큰`;
+  document.querySelector('#context-budget-bar').style.width = `${Math.min(100, pack.sources.characters / Math.max(1, pack.sources.budgetCharacters) * 100)}%`;
+  document.querySelector('#context-pack-contract').innerHTML = `
+    <div class="context-contract-grid"><span>PACK ID<b>${escapeHtml(pack.contract.packId)}</b></span><span>READ ORDER<b>${pack.contract.readOrder.length}개</b></span><span>WRITE SCOPE<b>${pack.contract.writeScope.length || 0}개</b></span><span>금지 행동<b>${pack.contract.forbiddenActions.length}개</b></span></div>
+    <div class="context-chip-list">${record.seed.layers.map((layer) => `<span>${escapeHtml(layer)}</span>`).join('')}</div>
+    <details><summary>금지 행동과 쓰기 범위</summary><pre>${escapeHtml(JSON.stringify({ forbiddenActions: pack.contract.forbiddenActions, writeScope: pack.contract.writeScope }, null, 2))}</pre></details>`;
+  document.querySelector('#context-source-count').textContent = `${pack.sources.sourceCount}개`;
+  document.querySelector('#context-pack-sources').innerHTML = pack.sources.sources.length ? pack.sources.sources.map((source) => `
+    <article class="context-source"><header><strong>${escapeHtml(source.path)}</strong><span>score ${formatBalanceNumber(source.score)}</span></header><p>${escapeHtml(source.text.slice(0, 240))}${source.text.length > 240 ? '…' : ''}</p><small>chunk ${source.chunk} · ${source.truncated ? '예산으로 잘림' : '전체 포함'} · ${escapeHtml(source.contentSha256.slice(0, 10))}</small></article>`).join('') : '<div class="empty">목표와 겹치는 소스가 없습니다.</div>';
+  const knowledge = [
+    ...(pack.wiki || []).map((item) => ({ type: 'WIKI', title: item.title, text: item.content })),
+    ...(pack.learning?.relevantFailures || []).map((item) => ({ type: 'FAILURE', title: item.title, text: `${item.kind} · ${item.occurrences}회 관찰` })),
+  ];
+  document.querySelector('#context-pack-knowledge').innerHTML = knowledge.length ? knowledge.map((item) => `<article class="context-knowledge"><span class="badge">${item.type}</span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(String(item.text || '').slice(0, 180))}</p></div></article>`).join('') : '<div class="empty">관련 위키나 실패 사례가 없습니다.</div>';
+  renderContextReceipt(record.receipt);
+  renderContextCompareOptions();
+  renderContextPackComparison();
+  document.querySelector('#context-pack-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderContextReceipt(receipt) {
+  const target = document.querySelector('#context-pack-receipt');
+  if (!receipt) {
+    target.innerHTML = '<div class="context-receipt-pending"><strong>아직 영수증이 없습니다.</strong><p>잠그면 파일 해시를 다시 검사하고, 실제 모델 요청에 포함될 세그먼트를 기록합니다.</p></div>';
+    return;
+  }
+  const stages = Object.entries(receipt.stages);
+  target.innerHTML = `
+    <div class="receipt-stages">${stages.map(([name, passed]) => `<span class="${passed ? 'done' : ''}"><i></i>${escapeHtml(name)}</span>`).join('')}</div>
+    <div class="context-contract-grid"><span>무결성<b>${receipt.integrity.ok ? 'PASS' : 'FAIL'}</b></span><span>입력 검증<b>${receipt.requiredInputs.filter((item) => item.verified).length}/${receipt.requiredInputs.length}</b></span><span>직렬화<b>${receipt.requiredInputs.filter((item) => item.includedInModelRequest).length}개</b></span><span>예산 사용<b>${formatPercent(receipt.budget.utilization)}</b></span></div>
+    <div class="receipt-inputs">${receipt.requiredInputs.map((item) => `<div><span class="badge ${item.verified ? 'pass' : 'fail'}">${item.verified ? 'VERIFIED' : 'FAILED'}</span><strong>${escapeHtml(item.path)}</strong><small>${item.includedInModelRequest ? `serialized · ${escapeHtml(item.requestSegmentSha256?.slice(0, 10) || '')}` : 'not serialized'}</small></div>`).join('') || '<div class="empty">필수 입력이 없는 팩입니다.</div>'}</div>`;
+}
+
+async function lockCurrentContextPack() {
+  if (!state.currentContextPack) return;
+  const button = document.querySelector('#context-pack-lock');
+  button.disabled = true;
+  button.textContent = '해시 검증 중…';
+  try {
+    const payload = await api(`/api/context-packs/${encodeURIComponent(state.currentContextPack.id)}/lock`, { method: 'POST', body: {} });
+    state.currentContextPack = payload.record;
+    state.contextPacks = state.contextPacks.map((item) => item.id === payload.record.id ? contextPackSummary(payload.record) : item);
+    renderContextPackDetail(payload.record);
+    renderContextPackHistory();
+    showToast('컨텍스트팩을 검증하고 잠갔습니다.');
+  } catch (error) {
+    document.querySelector('#context-pack-error').textContent = error.message;
+    button.disabled = false;
+    button.textContent = '검증 후 잠금';
+  }
+}
+
+function renderContextCompareOptions() {
+  const select = document.querySelector('#context-pack-compare');
+  const selected = select.value;
+  select.innerHTML = '<option value="">비교하지 않음</option>' + state.contextPacks
+    .filter((item) => item.id !== state.currentContextPack?.id)
+    .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.goal)} · ${formatNumber(item.estimatedTokens)} 토큰</option>`).join('');
+  if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+}
+
+async function renderContextPackComparison() {
+  const target = document.querySelector('#context-pack-comparison');
+  const previousId = document.querySelector('#context-pack-compare').value;
+  if (!state.currentContextPack || !previousId) {
+    target.innerHTML = '<div class="empty">이전 팩을 선택하면 추가·제외된 소스와 토큰 변화를 비교합니다.</div>';
+    return;
+  }
+  try {
+    const previous = (await api(`/api/context-packs/${encodeURIComponent(previousId)}`)).record;
+    const currentSources = new Set(state.currentContextPack.pack.sources.sources.map((item) => item.path));
+    const previousSources = new Set(previous.pack.sources.sources.map((item) => item.path));
+    const added = [...currentSources].filter((item) => !previousSources.has(item));
+    const removed = [...previousSources].filter((item) => !currentSources.has(item));
+    const tokenDelta = state.currentContextPack.pack.sources.estimatedTokens - previous.pack.sources.estimatedTokens;
+    target.innerHTML = `<div class="context-diff-summary"><span>토큰 변화<b>${tokenDelta >= 0 ? '+' : ''}${formatNumber(tokenDelta)}</b></span><span>추가 소스<b>${added.length}</b></span><span>제외 소스<b>${removed.length}</b></span></div><div class="context-diff-lists"><div><strong>추가됨</strong>${added.map((item) => `<span>+ ${escapeHtml(item)}</span>`).join('') || '<span>없음</span>'}</div><div><strong>제외됨</strong>${removed.map((item) => `<span>− ${escapeHtml(item)}</span>`).join('') || '<span>없음</span>'}</div></div>`;
+  } catch (error) {
+    target.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderTaskArtifacts(task) {

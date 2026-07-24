@@ -35,8 +35,8 @@
     <section id="workspace-view" class="hidden">
       <header class="topbar">
         <div>
-          <p class="eyebrow">TEAM LOOP · AI WORK INTELLIGENCE</p>
-          <h1>검증 학습 루프</h1>
+          <p class="eyebrow">LOCAL AI ORCHESTRATION</p>
+          <h1>개인 루프 관제실</h1>
           <p id="workspace-root" class="muted mono"></p>
         </div>
         <div class="top-actions">
@@ -49,7 +49,9 @@
       </header>
 
       <nav class="view-tabs" aria-label="주 화면">
-        <button type="button" class="view-tab active" data-view="loop">학습 루프</button>
+        <button type="button" class="view-tab active" data-view="loop">오늘의 루프</button>
+        <button type="button" class="view-tab" data-view="balance">밸런싱 실험실</button>
+        <button type="button" class="view-tab" data-view="context">컨텍스트 스튜디오</button>
         <button type="button" class="view-tab" data-view="board">작업</button>
         <button type="button" class="view-tab" data-view="harnesses">실패 · 하네스 · 스킬</button>
         <button type="button" class="view-tab" data-view="case-wiki">근거 탐색</button>
@@ -57,7 +59,28 @@
       </nav>
 
       <section id="loop-view" class="view-section">
-        <div class="loop-hero"><div><p class="eyebrow">VERIFIED LEARNING LOOP</p><h2>실패가 다음 작업의 규칙이 됩니다</h2><p>작업 결과를 프로그램으로 검증하고, 반복 실패를 하네스와 스킬로 승격해 다음 실행에 자동 적용합니다.</p></div><button class="primary" type="button" data-loop-view="board">새 작업 시작</button></div>
+        <div class="loop-hero"><div><p class="eyebrow">TODAY'S PERSONAL LOOP</p><h2>AI가 무엇을 알고, 시험하고, 배웠는지</h2><p>밸런싱 실험과 컨텍스트 준비부터 경험의 위키·스킬·하네스 승격까지 한 흐름으로 관제합니다.</p></div><button class="primary" type="button" data-loop-view="board">새 루프 시작</button></div>
+        <div id="home-status" class="notice hidden" role="status"></div>
+        <section id="entry-console" class="entry-console" aria-label="Project and agent entry">
+          <div class="entry-console-head">
+            <div><p class="eyebrow">SHARED ENTRY PROTOCOL</p><h3>프로젝트 진입과 작업 인계</h3><p class="muted">사람과 AI가 같은 상태를 보고, 필요한 작업 문서만 선택해서 읽습니다.</p></div>
+            <span id="entry-revision" class="badge mono">REVISION</span>
+          </div>
+          <div class="entry-console-grid">
+            <div><h4>프로젝트</h4><div id="entry-projects" class="entry-project-list"></div></div>
+            <div><h4>활성 작업과 다음 행동</h4><div id="entry-works" class="entry-work-list"></div></div>
+          </div>
+          <div id="entry-work-detail" class="entry-work-detail hidden" aria-live="polite"></div>
+        </section>
+        <section id="home-goal" class="home-goal-card" aria-live="polite"></section>
+        <section class="personal-home-grid" aria-label="오늘의 개인 오케스트레이션">
+          <article id="home-balance" class="home-card"></article>
+          <article id="home-context" class="home-card"></article>
+          <article id="home-learning" class="home-card"></article>
+          <article id="home-experiences" class="home-card home-card-wide"></article>
+          <article id="home-promotions" class="home-card"></article>
+        </section>
+        <div class="loop-detail-heading"><div><p class="eyebrow">LOOP OPERATIONS</p><h2>운영 상세</h2><p class="muted">검증, 실패 분류와 자동 실행 모드의 세부 상태입니다.</p></div></div>
         <section id="loop-kpis" class="loop-kpis"></section>
         <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">AUTOMATIC RUN MODE</p><h3>AI가 선택한 작업 모드</h3><p class="muted">모드는 자동 적용되며 여기서는 판정 결과만 확인합니다.</p></div><span id="loop-mode-count" class="badge"></span></div><div id="loop-run-modes" class="loop-mode-grid"></div></section>
         <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">ACTION QUEUE</p><h3>지금 처리할 것</h3></div><span id="loop-action-count" class="badge"></span></div><div id="loop-pipeline" class="loop-pipeline"></div></section>
@@ -66,6 +89,93 @@
           <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">LEARNING IMPACT</p><h3>활성 학습의 근거</h3></div><button class="ghost compact" type="button" data-loop-view="harnesses">관리</button></div><div id="loop-impact" class="loop-impact-list"></div></section>
         </div>
         <section class="loop-section"><div class="loop-section-head"><div><p class="eyebrow">RECENT VERIFIED WORK</p><h3>최근 루프 결과</h3></div><button class="ghost compact" type="button" data-loop-view="board">작업 보드</button></div><div id="loop-recent" class="loop-recent-grid"></div></section>
+      </section>
+
+      <section id="balance-view" class="view-section hidden">
+        <div class="balance-heading">
+          <div><p class="eyebrow">DISTRIBUTION-FIRST BALANCE LAB</p><h2>밸런싱 실험실</h2><p class="report-lead">기준 데이터를 보존한 채 후보를 탐색하고, 평균이 아닌 분포와 목표 이탈률로 승인 여부를 판단합니다.</p></div>
+          <div class="balance-heading-status"><span id="balance-engine-status" class="badge">COMBAT-V1</span><span class="muted">후보는 승인 전까지 적용되지 않습니다.</span></div>
+        </div>
+
+        <ol class="balance-steps" aria-label="실험 단계">
+          <li class="active"><b>1</b><span>기준 데이터</span></li><li><b>2</b><span>탐색 조건</span></li><li><b>3</b><span>분포 검토</span></li><li><b>4</b><span>승인 적용</span></li>
+        </ol>
+
+        <form id="balance-form" class="balance-workbench">
+          <section class="balance-editor-card">
+            <div class="card-heading"><div><p class="eyebrow">BASELINE</p><h3>1. 기준 데이터 선택</h3></div><select id="balance-preset" aria-label="밸런스 계약 시드"><option value="">시드 불러오는 중</option></select></div>
+            <p id="balance-seed-description" class="muted">도메인별 시드는 동일한 밸런스 계약으로 편집기와 실행기를 구성합니다.</p>
+            <label>실험 이름<input name="title" value="새 밸런스 실험" maxlength="160"></label>
+            <label>기준 JSON<textarea id="balance-baseline" name="baseline" rows="16" spellcheck="false" class="mono" required></textarea></label>
+          </section>
+
+          <section class="balance-editor-card">
+            <div class="card-heading"><div><p class="eyebrow">SEARCH SPACE</p><h3>2. 조절 파라미터와 범위</h3></div><button id="balance-add-parameter" class="ghost compact" type="button">파라미터 추가</button></div>
+            <div id="balance-parameters" class="balance-row-list"></div>
+          </section>
+
+          <section class="balance-editor-card">
+            <div class="card-heading"><div><p class="eyebrow">TARGET METRICS</p><h3>3. 목표 지표</h3></div><button id="balance-add-metric" class="ghost compact" type="button">지표 추가</button></div>
+            <div id="balance-metrics" class="balance-row-list"></div>
+          </section>
+
+          <section class="balance-editor-card balance-run-card">
+            <div class="card-heading"><div><p class="eyebrow">ENSEMBLE</p><h3>4. 시드와 반복 횟수</h3></div></div>
+            <div class="balance-run-fields"><label>시드 목록<input id="balance-seeds" value="11, 23, 42, 71, 101"></label><label>시드당 반복<input id="balance-runs" type="number" min="10" max="100000" value="500"></label><label>최대 후보<input id="balance-candidates" type="number" min="1" max="10000" value="1000"></label></div>
+            <button id="balance-run" class="primary" type="submit">분포 기반 실험 실행</button>
+            <p id="balance-error" class="error" role="alert"></p>
+            <div id="balance-progress" class="balance-progress hidden" aria-live="polite"><div class="balance-progress-track"><i></i></div><strong>실험 준비 중</strong><span>기준 검증 → 후보 탐색 → 분포 집계</span></div>
+          </section>
+        </form>
+
+        <section id="balance-results" class="balance-results hidden">
+          <div class="balance-result-head"><div><p class="eyebrow">BASELINE VS CANDIDATE</p><h2>분포 비교</h2><p id="balance-result-summary" class="muted"></p></div><div><span id="balance-solved" class="badge"></span><button id="balance-apply" class="primary" type="button">후보 승인 및 적용</button></div></div>
+          <div id="balance-distributions" class="balance-distribution-list"></div>
+          <div class="balance-result-grid">
+            <section class="balance-editor-card"><div class="card-heading"><div><p class="eyebrow">PATCH</p><h3>후보 패치</h3></div><button id="balance-copy-patch" class="ghost compact" type="button">복사</button></div><pre id="balance-patch" class="balance-patch"></pre></section>
+            <section class="balance-editor-card"><div class="card-heading"><div><p class="eyebrow">HISTORY COMPARE</p><h3>이전 실험과 비교</h3></div><select id="balance-compare"><option value="">비교하지 않음</option></select></div><div id="balance-history-compare" class="balance-history-compare"></div></section>
+          </div>
+        </section>
+
+        <section class="balance-editor-card balance-history-card"><div class="card-heading"><div><p class="eyebrow">EXPERIMENT LEDGER</p><h3>실험 이력</h3></div><span id="balance-history-count" class="badge">0개</span></div><div id="balance-history" class="balance-history"></div></section>
+      </section>
+
+      <section id="context-view" class="view-section hidden">
+        <div class="context-heading"><div><p class="eyebrow">SEE WHAT THE MODEL ACTUALLY RECEIVES</p><h2>컨텍스트 스튜디오</h2><p>목표에 필요한 근거만 구성하고, 입력 무결성과 모델 요청 포함 여부를 영수증으로 남깁니다.</p></div><span id="context-index-badge" class="badge">INDEX READY</span></div>
+        <div class="context-layout">
+          <form id="context-pack-form" class="context-builder">
+            <section class="context-card">
+              <div class="card-heading"><div><p class="eyebrow">CONTEXT SEED</p><h3>1. 목적과 시드</h3></div><select id="context-seed" name="seedId"><option value="">시드 불러오는 중</option></select></div>
+              <p id="context-seed-description" class="muted"></p>
+              <label>이번 작업의 목표<textarea name="goal" rows="4" maxlength="2000" required placeholder="예: 경제 시뮬레이션 provider 계약과 첫 시드를 설계한다."></textarea></label>
+              <label>완료 조건<textarea name="criteria" rows="3" placeholder="한 줄에 하나씩 입력"></textarea></label>
+              <label>쓰기 허용 경로<textarea name="allowedPaths" rows="2" placeholder="한 줄에 하나. 비워두면 읽기 전용 컨텍스트"></textarea></label>
+            </section>
+            <section class="context-card">
+              <div class="card-heading"><div><p class="eyebrow">BUDGET</p><h3>2. 컨텍스트 예산</h3></div><span id="context-budget-tokens" class="badge">—</span></div>
+              <div class="context-budget-fields"><label>소스 청크<input name="maxSourceChunks" type="number" min="1" max="12"></label><label>최대 문자<input name="maxSourceCharacters" type="number" min="1000" max="24000" step="1000"></label><label>위키 항목<input name="maxWikiEntries" type="number" min="1" max="20"></label></div>
+              <div class="context-budget-bar"><i id="context-budget-bar"></i></div>
+              <button id="context-prepare" class="primary" type="submit">컨텍스트팩 구성</button>
+              <p id="context-pack-error" class="error" role="alert"></p>
+            </section>
+          </form>
+
+          <aside class="context-card context-history-card">
+            <div class="card-heading"><div><p class="eyebrow">PRIVATE PACKS</p><h3>내 컨텍스트팩</h3></div><span id="context-pack-count" class="badge">0개</span></div>
+            <div id="context-pack-history" class="context-pack-history"></div>
+          </aside>
+        </div>
+
+        <section id="context-pack-detail" class="context-detail hidden">
+          <div class="context-detail-head"><div><p class="eyebrow">PACK INSPECTOR</p><h2 id="context-pack-title"></h2><p id="context-pack-meta" class="muted"></p></div><div><span id="context-pack-status" class="badge"></span><button id="context-pack-lock" class="primary" type="button">검증 후 잠금</button></div></div>
+          <div class="context-layer-grid">
+            <section class="context-card"><div class="card-heading"><div><p class="eyebrow">L0 · L1</p><h3>목표·규칙·계약</h3></div></div><div id="context-pack-contract"></div></section>
+            <section class="context-card"><div class="card-heading"><div><p class="eyebrow">L2</p><h3>선택된 소스</h3></div><span id="context-source-count" class="badge"></span></div><div id="context-pack-sources" class="context-source-list"></div></section>
+            <section class="context-card"><div class="card-heading"><div><p class="eyebrow">L2 · KNOWLEDGE</p><h3>위키와 과거 실패</h3></div></div><div id="context-pack-knowledge" class="context-source-list"></div></section>
+            <section class="context-card"><div class="card-heading"><div><p class="eyebrow">L3 · RECEIPT</p><h3>실행 컨텍스트 영수증</h3></div></div><div id="context-pack-receipt"></div></section>
+          </div>
+          <section class="context-card context-compare-card"><div class="card-heading"><div><p class="eyebrow">PACK DIFF</p><h3>이전 팩과 비교</h3></div><select id="context-pack-compare"><option value="">비교하지 않음</option></select></div><div id="context-pack-comparison" class="context-pack-comparison"></div></section>
+        </section>
       </section>
 
       <section id="usage-view" class="view-section hidden">
@@ -240,6 +350,12 @@
         </div>
 
         <section id="harness-summary" class="kpi-grid harness-kpis"></section>
+
+        <section id="promotion-panel" class="dashboard-card promotion-panel">
+          <div class="card-heading"><div><p class="eyebrow">OPTIMISTIC PROMOTION</p><h3>자동 승격과 원복</h3><p class="muted">가역적인 개인 학습은 스냅샷 후 바로 시험하고, 같은 실패가 재발하면 자동 격리·원복합니다.</p></div><div class="inline-actions"><button id="promotion-audit" class="ghost compact" type="button">악화 검사</button><button id="promotion-scan" class="primary compact" type="button">지금 스캔</button></div></div>
+          <div id="promotion-policy" class="promotion-policy"></div>
+          <div class="promotion-grid"><div><h4>새 후보</h4><div id="promotion-candidates" class="promotion-list"></div></div><div><h4>승격 영수증</h4><div id="promotion-receipts" class="promotion-list"></div></div></div>
+        </section>
 
         <section id="learning-audit-panel" class="dashboard-card learning-audit-card"></section>
 

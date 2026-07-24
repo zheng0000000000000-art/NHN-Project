@@ -38,8 +38,8 @@ export function tuneBalance({ spec: inputSpec, baseline, simulate, maxCandidates
 
   return {
     balanceId: spec.balanceId,
-    baseline: { outputs: baselineEvaluation.outputs, score: baselineEvaluation.score },
-    candidate: { parameters: best.parameters, outputs: best.outputs, score: best.score, data: best.data },
+    baseline: { outputs: baselineEvaluation.outputs, statistics: baselineEvaluation.statistics, score: baselineEvaluation.score },
+    candidate: { parameters: best.parameters, outputs: best.outputs, statistics: best.statistics, score: best.score, data: best.data },
     solved: best.score.violations === 0,
     changed: JSON.stringify(best.data) !== JSON.stringify(untouchedBaseline),
     observationSet: normalizeObservationSet({

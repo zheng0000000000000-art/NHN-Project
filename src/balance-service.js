@@ -17,12 +17,20 @@ export function runBalanceOperation(input = {}) {
     for (const metric of input.spec?.metrics || []) {
       const metricId = metric.metricId || metric.id || metric.name;
       const values = metricRows.map((row) => Number(row[metricId]));
+      const sorted = [...values].sort((a, b) => a - b);
+      const outsideTarget = values.filter((value) =>
+        (metric.minimum != null && value < Number(metric.minimum))
+        || (metric.maximum != null && value > Number(metric.maximum))).length;
       metrics[metricId] = mean(values);
       statistics[metricId] = {
         mean: metrics[metricId],
+        median: percentile(sorted, 0.5),
+        p10: percentile(sorted, 0.1),
+        p90: percentile(sorted, 0.9),
         standardDeviation: standardDeviation(values),
         minimum: Math.min(...values),
         maximum: Math.max(...values),
+        failureRate: outsideTarget / Math.max(1, values.length),
         samples: values.length,
       };
     }
@@ -50,4 +58,13 @@ function mean(values) {
 function standardDeviation(values) {
   const average = mean(values);
   return Math.sqrt(values.reduce((sum, value) => sum + ((value - average) ** 2), 0) / Math.max(1, values.length));
+}
+
+function percentile(sorted, ratio) {
+  if (!sorted.length) return 0;
+  const position = (sorted.length - 1) * ratio;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + ((sorted[upper] - sorted[lower]) * (position - lower));
 }

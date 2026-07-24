@@ -39,6 +39,95 @@ async function fetchTask(client, taskId) {
 
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
+  portfolio_enter: {
+    description: 'Lowest-cost entry point for a new agent session. Lists registered projects, active-work counts, attention counts, entry references, and a portfolio revision without loading project internals.',
+    inputSchema: { type: 'object', properties: {} },
+    async run(client) {
+      return client.request('/api/entry');
+    },
+  },
+  project_enter: {
+    description: 'Enter one project and receive its compact status, active work, attention queue, recommended next action, and read-plan reference.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string', default: 'team-loop' } },
+    },
+    async run(client, args) {
+      return client.request(`/api/projects/${encodeURIComponent(args.projectId || 'team-loop')}/entry`);
+    },
+  },
+  project_read_plan: {
+    description: 'Return the required, optional, and excluded resources for an intent under a bounded context budget. Use this before reading broad project context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', default: 'team-loop' },
+        intent: { type: 'string', enum: ['enter', 'resume', 'new-work'], default: 'enter' },
+        workId: { type: 'string' },
+        maxTokens: { type: 'number' },
+      },
+    },
+    async run(client, args) {
+      const query = new URLSearchParams({ intent: args.intent || 'enter' });
+      if (args.workId) query.set('workId', args.workId);
+      if (args.maxTokens) query.set('maxTokens', String(args.maxTokens));
+      return client.request(`/api/projects/${encodeURIComponent(args.projectId || 'team-loop')}/read-plan?${query}`);
+    },
+  },
+  work_inspect: {
+    description: 'Inspect one work ledger: execution contract, compact event timeline, verification evidence, checkpoints, and latest handoff.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', default: 'team-loop' },
+        workId: { type: 'string' },
+      },
+      required: ['workId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/projects/${encodeURIComponent(args.projectId || 'team-loop')}/works/${encodeURIComponent(args.workId)}`);
+    },
+  },
+  handoff_read: {
+    description: 'Read only the latest structured handoff for a work item. This is the fastest resume path after project entry.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', default: 'team-loop' },
+        workId: { type: 'string' },
+      },
+      required: ['workId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/projects/${encodeURIComponent(args.projectId || 'team-loop')}/works/${encodeURIComponent(args.workId)}/handoff`);
+    },
+  },
+  handoff_write: {
+    description: 'Write a structured end-of-command handoff. Runtime facts and evidence are filled from the work ledger; provide only decisions, failed attempts, and concise notes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', default: 'team-loop' },
+        workId: { type: 'string' },
+        trigger: { type: 'string' },
+        decisions: { type: 'array', items: { type: 'string' } },
+        failedAttempts: { type: 'array', items: { type: 'string' } },
+        notes: { type: 'string' },
+      },
+      required: ['workId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/projects/${encodeURIComponent(args.projectId || 'team-loop')}/works/${encodeURIComponent(args.workId)}/handoff`, {
+        method: 'POST',
+        body: {
+          trigger: args.trigger || 'AGENT_COMMAND_COMPLETED',
+          decisions: args.decisions || [],
+          failedAttempts: args.failedAttempts || [],
+          notes: args.notes || '',
+        },
+      });
+    },
+  },
   balance_run: {
     description: 'Evaluate or deterministically tune a stochastic simulation through a registered provider. Supports multi-seed ensembles, returns immutable observations and statistics, and never applies the candidate.',
     inputSchema: {
@@ -77,11 +166,105 @@ const TOOLS = {
         acceptanceCriteria: { type: 'array', items: { type: 'string' } },
         maxWikiEntries: { type: 'number' },
         maxSourceChunks: { type: 'number' },
+        historicalContext: { type: 'boolean', description: 'Search only archived historical documents. Archived sources never override current contracts.' },
       },
       required: ['goal'],
     },
     async run(client, args) {
       return client.request('/api/experience/prepare', { method: 'POST', body: args });
+    },
+  },
+  context_archive_search: {
+    description: 'Explicitly search the historical documentation archive. Results are marked historical and may describe superseded behavior; do not use them to override current contracts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        maxChunks: { type: 'number' },
+        maxCharacters: { type: 'number' },
+      },
+      required: ['query'],
+    },
+    async run(client, args) {
+      const query = new URLSearchParams({ q: String(args.query), historical: 'true' });
+      if (args.maxChunks) query.set('maxChunks', String(args.maxChunks));
+      if (args.maxCharacters) query.set('maxCharacters', String(args.maxCharacters));
+      return client.request(`/api/context-index/search?${query}`);
+    },
+  },
+  context_pack_prepare: {
+    description: 'Prepare and persist a private, seed-driven context pack. Returns selected wiki, sources, failures, skills, harness, budgets, and an immutable context contract.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string' },
+        description: { type: 'string' },
+        seedId: { type: 'string' },
+        allowedPaths: { type: 'array', items: { type: 'string' } },
+        acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+        maxSourceChunks: { type: 'number' },
+        maxSourceCharacters: { type: 'number' },
+        maxWikiEntries: { type: 'number' },
+        historicalContext: { type: 'boolean', description: 'Build from archived historical sources only.' },
+      },
+      required: ['goal', 'seedId'],
+    },
+    async run(client, args) {
+      return client.request('/api/context-packs/prepare', { method: 'POST', body: args });
+    },
+  },
+  context_pack_list: {
+    description: 'List the current user’s private persisted context packs and their lock, integrity, source, and token status.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    async run(client, args) {
+      const query = new URLSearchParams();
+      if (args.limit) query.set('limit', String(args.limit));
+      return client.request(`/api/context-packs?${query}`);
+    },
+  },
+  context_pack_get: {
+    description: 'Read one private persisted context pack with selected evidence and its deterministic context receipt.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+    async run(client, args) {
+      return client.request(`/api/context-packs/${encodeURIComponent(args.id)}`);
+    },
+  },
+  context_pack_lock: {
+    description: 'Verify input hashes, create a deterministic serialization receipt, and lock a context pack before an agent run. Fails closed on missing or stale inputs.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+    async run(client, args) {
+      return client.request(`/api/context-packs/${encodeURIComponent(args.id)}/lock`, { method: 'POST', body: {} });
+    },
+  },
+  promotion_status: {
+    description: 'Inspect the private optimistic-promotion policy, unhandled failure candidates, promotion receipts, probation, stability, quarantine, and automatic rollbacks.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    async run(client, args) {
+      const query = new URLSearchParams();
+      if (args.limit) query.set('limit', String(args.limit));
+      return client.request(`/api/promotions?${query}`);
+    },
+  },
+  promotion_scan: {
+    description: 'Scan accumulated private failures, score candidates, snapshot artifacts, and optimistically activate reversible skill or harness candidates. Irreversible or external effects remain awaiting approval.',
+    inputSchema: { type: 'object', properties: {} },
+    async run(client) {
+      return client.request('/api/promotions/scan', { method: 'POST', body: {} });
+    },
+  },
+  promotion_audit: {
+    description: 'Compare probation artifacts with later failures. Clean audits move artifacts toward STABLE; recurrence automatically disables and rolls back the artifact.',
+    inputSchema: { type: 'object', properties: {} },
+    async run(client) {
+      return client.request('/api/promotions/audit', { method: 'POST', body: {} });
     },
   },
   experience_reflect: {

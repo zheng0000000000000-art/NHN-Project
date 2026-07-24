@@ -56,4 +56,14 @@ test('multi-seed simulation aggregates reproducible statistics instead of optimi
   assert.equal(first.statistics.completionRate.samples, 4);
   assert.ok(first.statistics.completionRate.maximum >= first.statistics.completionRate.minimum);
   assert.ok(first.statistics.completionRate.standardDeviation >= 0);
+  assert.ok(first.statistics.completionRate.p10 <= first.statistics.completionRate.median);
+  assert.ok(first.statistics.completionRate.median <= first.statistics.completionRate.p90);
+  assert.ok(first.statistics.completionRate.failureRate >= 0 && first.statistics.completionRate.failureRate <= 1);
+});
+
+test('tuning exposes baseline and candidate distributions for review', () => {
+  const result = runBalanceOperation({ spec, baseline, seeds: [11, 23, 42, 71], runs: 100 });
+  assert.equal(result.baseline.statistics.completionRate.samples, 4);
+  assert.equal(result.candidate.statistics.completionRate.samples, 4);
+  assert.equal(typeof result.candidate.statistics.completionRate.failureRate, 'number');
 });

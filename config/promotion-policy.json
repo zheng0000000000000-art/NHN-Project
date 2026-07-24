@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "mode": "OPTIMISTIC",
+  "minimumOccurrences": 1,
+  "stableAfterCleanAudits": 3,
+  "snapshotRequired": true,
+  "autoRollback": true,
+  "approvalRequiredFor": [
+    "EXTERNAL_SIDE_EFFECT",
+    "SHARED_POLICY",
+    "IRREVERSIBLE_CHANGE",
+    "PAID_OPERATION"
+  ]
+}

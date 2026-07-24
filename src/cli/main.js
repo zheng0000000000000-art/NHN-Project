@@ -522,8 +522,9 @@ async function autoLearnFromFailures(client, taskId, failureCases, { json }) {
       return { type: 'SKILL', id: activated.skill.id, status: 'ACTIVE_APPLIED', sourceFailureCaseIds: failureCaseIds };
     }
     if (crafted.type === 'HARNESS' && crafted.harness?.id) {
-      if (!json) process.stdout.write(`Auto-learned draft harness ${crafted.harness.id}; it will be tested after the task passes.\n`);
-      return { type: 'HARNESS', id: crafted.harness.id, status: 'DRAFT', sourceFailureCaseIds: failureCaseIds };
+      const status = crafted.promotion?.status === 'PROBATION' ? 'ACTIVE' : crafted.harness.status;
+      if (!json) process.stdout.write(`Auto-learned harness ${crafted.harness.id}; promotion status ${crafted.promotion?.status || status}.\n`);
+      return { type: 'HARNESS', id: crafted.harness.id, status, sourceFailureCaseIds: failureCaseIds, promotionReceiptId: crafted.promotion?.id };
     }
   } catch (error) {
     if (!json) process.stdout.write(`Auto-learning skipped: ${error.message}\n`);

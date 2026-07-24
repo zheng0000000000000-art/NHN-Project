@@ -109,4 +109,4 @@ Docker 모드에서는 네트워크와 자원을 제한하며 Docker가 없으�
 
 JSON 쓰기는 임시 파일과 rename으로 원자적으로 처리됩니다. 동일 데이터 디렉터리를 여러 서버 프로세스가 동시에 수정하는 완전한 다중 프로세스 트랜잭션은 아직 지원하지 않으므로 데이터 디렉터리당 서버 프로세스 하나를 사용하세요.
 
-상세 설계는 [프로젝트 의도와 루프](docs/PROJECT-INTENT-LOOP.md)를 참고하세요.
+현재 AI 운용 원칙은 [Agent Constitution](docs/AGENT-CONSTITUTION.md), 문서 읽기 순서는 [문서 목차](docs/README.md)를 참고하세요.

@@ -30,6 +30,7 @@ export class ExperienceEngine {
     const sources = this.contextIndex.search(query, {
       maxChunks: clamp(input.maxSourceChunks, 1, 12, 6),
       maxCharacters: clamp(input.maxSourceCharacters, 1000, 24000, 9000),
+      historical: input.historicalContext === true,
     });
     const sourceFiles = [...new Map(sources.sources.map((source) => [source.path, source])).values()];
     const requiredInputs = sourceFiles

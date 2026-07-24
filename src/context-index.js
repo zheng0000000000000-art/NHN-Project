@@ -22,6 +22,7 @@ export class ContextIndex {
     this.maxFileBytes = maxFileBytes;
     this.chunkChars = chunkChars;
     this.chunks = [];
+    this.archiveChunks = [];
     this.snapshot = emptySnapshot();
   }
 
@@ -32,9 +33,12 @@ export class ContextIndex {
   async refresh() {
     const files = await walkFiles(this.workspaceRoot);
     const chunks = [];
+    const archiveChunks = [];
     let indexedFiles = 0;
+    let archivedFiles = 0;
     let skippedFiles = 0;
     let indexedCharacters = 0;
+    let archivedCharacters = 0;
 
     for (const absolutePath of files) {
       const extension = path.extname(absolutePath).toLowerCase();
@@ -55,12 +59,20 @@ export class ContextIndex {
       const relativePath = path.relative(this.workspaceRoot, absolutePath).replaceAll('\\', '/');
       const fileChunks = chunkText(content, this.chunkChars);
       const fileSha256 = sha256(content);
-      fileChunks.forEach((text, index) => chunks.push(makeChunk(relativePath, index, text, fileSha256)));
-      indexedFiles += 1;
-      indexedCharacters += content.length;
+      const historical = isArchivePath(relativePath);
+      const target = historical ? archiveChunks : chunks;
+      fileChunks.forEach((text, index) => target.push(makeChunk(relativePath, index, text, fileSha256, historical)));
+      if (historical) {
+        archivedFiles += 1;
+        archivedCharacters += content.length;
+      } else {
+        indexedFiles += 1;
+        indexedCharacters += content.length;
+      }
     }
 
     this.chunks = chunks;
+    this.archiveChunks = archiveChunks;
     this.snapshot = {
       indexedAt: nowIso(),
       indexedFiles,
@@ -68,6 +80,14 @@ export class ContextIndex {
       chunks: chunks.length,
       indexedCharacters,
       estimatedTokens: estimateTokens(indexedCharacters),
+      archive: {
+        indexedFiles: archivedFiles,
+        chunks: archiveChunks.length,
+        indexedCharacters: archivedCharacters,
+        estimatedTokens: estimateTokens(archivedCharacters),
+        defaultExcluded: true,
+        fingerprint: sha256(archiveChunks.map((item) => `${item.path}:${item.sha256}`).join('|')),
+      },
       fingerprint: sha256(chunks.map((item) => `${item.path}:${item.sha256}`).join('|')),
     };
     return this.status();
@@ -77,11 +97,14 @@ export class ContextIndex {
     return { ...this.snapshot };
   }
 
-  search(query, { maxChunks = 6, maxCharacters = 9_000, maxChunksPerFile = 2 } = {}) {
+  search(query, { maxChunks = 6, maxCharacters = 9_000, maxChunksPerFile = 2, historical = false } = {}) {
+    maxChunks = positiveNumber(maxChunks, 6);
+    maxCharacters = positiveNumber(maxCharacters, 9_000);
+    maxChunksPerFile = positiveNumber(maxChunksPerFile, 2);
     const queryTokens = tokenize(query);
-    if (queryTokens.size === 0) return packResult([], query, maxCharacters);
+    if (queryTokens.size === 0) return packResult([], query, maxCharacters, historical);
 
-    const scored = this.chunks
+    const scored = (historical ? this.archiveChunks : this.chunks)
       .map((chunk) => ({ chunk, score: scoreChunk(chunk, queryTokens) }))
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score || a.chunk.path.localeCompare(b.chunk.path) || a.chunk.index - b.chunk.index);
@@ -103,16 +126,20 @@ export class ContextIndex {
         fileSha256: item.chunk.fileSha256,
         contentSha256: item.chunk.sha256,
         truncated: text.length < item.chunk.text.length,
+        historical: item.chunk.historical,
       });
       selectedPerFile.set(item.chunk.path, (selectedPerFile.get(item.chunk.path) || 0) + 1);
       characters += text.length;
     }
-    return packResult(selected, query, maxCharacters);
+    return packResult(selected, query, maxCharacters, historical);
   }
 }
 
 function emptySnapshot() {
-  return { indexedAt: null, indexedFiles: 0, skippedFiles: 0, chunks: 0, indexedCharacters: 0, estimatedTokens: 0, fingerprint: null };
+  return {
+    indexedAt: null, indexedFiles: 0, skippedFiles: 0, chunks: 0, indexedCharacters: 0, estimatedTokens: 0, fingerprint: null,
+    archive: { indexedFiles: 0, chunks: 0, indexedCharacters: 0, estimatedTokens: 0, defaultExcluded: true, fingerprint: null },
+  };
 }
 
 async function walkFiles(root) {
@@ -154,10 +181,10 @@ function chunkText(content, maxChars) {
   return chunks.filter(Boolean);
 }
 
-function makeChunk(relativePath, index, text, fileSha256) {
+function makeChunk(relativePath, index, text, fileSha256, historical = false) {
   const pathTokens = tokenize(relativePath.replaceAll('/', ' '));
   const textTokens = tokenize(text);
-  return { path: relativePath, index, text, pathTokens, textTokens, sha256: sha256(text), fileSha256 };
+  return { path: relativePath, index, text, pathTokens, textTokens, sha256: sha256(text), fileSha256, historical };
 }
 
 function scoreChunk(chunk, queryTokens) {
@@ -183,7 +210,7 @@ function estimateTokens(characters) {
   return Math.ceil(Number(characters || 0) / 4);
 }
 
-function packResult(items, query, maxCharacters) {
+function packResult(items, query, maxCharacters, historical = false) {
   const characters = items.reduce((sum, item) => sum + item.text.length, 0);
   return {
     query: String(query || '').slice(0, 1000),
@@ -192,5 +219,16 @@ function packResult(items, query, maxCharacters) {
     characters,
     estimatedTokens: estimateTokens(characters),
     budgetCharacters: maxCharacters,
+    historical,
+    warning: historical ? 'Historical archive sources may describe superseded behavior and must not override current contracts.' : null,
   };
+}
+
+function isArchivePath(relativePath) {
+  return String(relativePath).replaceAll('\\', '/').startsWith('docs/archive/');
+}
+
+function positiveNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }

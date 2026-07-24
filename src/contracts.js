@@ -242,7 +242,7 @@ export function normalizeGateManifest(input = {}) {
 export const KNOWLEDGE_PROMOTION_CONTRACT = Object.freeze({
   schemaVersion: CONTRACT_VERSION,
   kind: 'team-loop-knowledge-promotion',
-  minimumOccurrences: 2,
+  minimumOccurrences: 1,
   priority: ['HARNESS', 'SKILL', 'WIKI'],
   scoring: {
     dimensions: ['repeatability', 'decidability', 'failureInjection', 'isolation', 'observability', 'maintenanceValue'],
@@ -251,7 +251,11 @@ export const KNOWLEDGE_PROMOTION_CONTRACT = Object.freeze({
     thresholds: { rejectMax: 4, holdMax: 7, extendMax: 10, createMin: 11 },
   },
   requiresEvidence: true,
-  automaticPromotion: false,
+  automaticPromotion: true,
+  promotionMode: 'OPTIMISTIC',
+  snapshotRequired: true,
+  autoRollback: true,
+  approvalRequiredFor: ['EXTERNAL_SIDE_EFFECT', 'SHARED_POLICY', 'IRREVERSIBLE_CHANGE', 'PAID_OPERATION'],
 });
 
 function safePath(value) {

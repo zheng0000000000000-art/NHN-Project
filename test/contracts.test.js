@@ -103,6 +103,8 @@ test('harness and gate adapters retain order, expected exits, and mutation truth
     gates: [{ gateId: 'POST-EXECUTOR', checks: [{ command: 'context-pack-integrity', expectedExit: 0 }] }],
   });
   assert.equal(manifest.gates[0].checks[0].harnessId, 'context-pack-integrity');
-  assert.equal(KNOWLEDGE_PROMOTION_CONTRACT.minimumOccurrences, 2);
-  assert.equal(KNOWLEDGE_PROMOTION_CONTRACT.automaticPromotion, false);
+  assert.equal(KNOWLEDGE_PROMOTION_CONTRACT.minimumOccurrences, 1);
+  assert.equal(KNOWLEDGE_PROMOTION_CONTRACT.automaticPromotion, true);
+  assert.equal(KNOWLEDGE_PROMOTION_CONTRACT.promotionMode, 'OPTIMISTIC');
+  assert.equal(KNOWLEDGE_PROMOTION_CONTRACT.autoRollback, true);
 });

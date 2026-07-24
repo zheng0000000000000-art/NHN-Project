@@ -41,8 +41,12 @@
     "requiredCheckFields": ["order", "harnessId", "args", "expectedExit", "mutatesState"]
   },
   "knowledgePromotion": {
-    "minimumOccurrences": 2,
+    "minimumOccurrences": 1,
     "priority": ["HARNESS", "SKILL", "WIKI"],
-    "automaticPromotion": false
+    "automaticPromotion": true,
+    "promotionMode": "OPTIMISTIC",
+    "snapshotRequired": true,
+    "autoRollback": true,
+    "approvalRequiredFor": ["EXTERNAL_SIDE_EFFECT", "SHARED_POLICY", "IRREVERSIBLE_CHANGE", "PAID_OPERATION"]
   }
 }

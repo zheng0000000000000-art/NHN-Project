@@ -42,3 +42,27 @@ test('context index returns an empty pack for a query with no useful tokens', as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('documentation archive is excluded by default and available only as marked historical context', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'team-loop-index-archive-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(path.join(directory, 'docs', 'archive', 'legacy-guides'), { recursive: true });
+  await writeFile(path.join(directory, 'docs', 'CURRENT.md'), 'promotion policy uses probation and rollback');
+  await writeFile(path.join(directory, 'docs', 'archive', 'legacy-guides', 'OLD.md'), 'promotion policy required external manual approval');
+  const index = new ContextIndex({ workspaceRoot: directory });
+  const status = await index.initialize();
+  assert.equal(status.indexedFiles, 1);
+  assert.equal(status.archive.indexedFiles, 1);
+  assert.equal(status.archive.defaultExcluded, true);
+
+  const current = index.search('promotion policy');
+  assert.deepEqual(current.sources.map((item) => item.path), ['docs/CURRENT.md']);
+  assert.equal(current.historical, false);
+  assert.equal(current.warning, null);
+
+  const historical = index.search('promotion policy', { historical: true });
+  assert.deepEqual(historical.sources.map((item) => item.path), ['docs/archive/legacy-guides/OLD.md']);
+  assert.equal(historical.sources[0].historical, true);
+  assert.equal(historical.historical, true);
+  assert.match(historical.warning, /superseded/);
+});
