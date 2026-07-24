@@ -7,10 +7,11 @@ export class OrchestrationEngine {
   }
 
   async enter({ projectId = null, intent = '', currentPath = '' } = {}, tasks = []) {
+    const startedAt = performance.now();
     const policy = this.constitution.policy();
     const portfolio = await this.entryService.portfolio(tasks);
     const selection = selectProject(policy, portfolio.projects, { projectId, currentPath });
-    if (selection.decision !== 'YES') return envelope(policy, selection);
+    if (selection.decision !== 'YES') return envelope(policy, selection, startedAt);
 
     const selectedProject = selection.project;
     const entry = await this.entryService.projectEntry(selectedProject.id, selectedProject.id === 'team-loop' ? tasks : [], []);
@@ -23,7 +24,7 @@ export class OrchestrationEngine {
         project: projectSummary(selectedProject),
         work,
         readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'resume', workId: work.id, maxTokens: policy.defaultReadBudgetTokens }),
-      });
+      }, startedAt);
     }
     if (activeWorks.length) {
       const work = newest(activeWorks);
@@ -34,20 +35,20 @@ export class OrchestrationEngine {
         project: projectSummary(selectedProject),
         work,
         readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'resume', workId: work.id, maxTokens: policy.defaultReadBudgetTokens }),
-      });
+      }, startedAt);
     }
     if (String(intent).trim()) {
       return envelope(policy, {
         ...ruleResult(policy, 'NO_ACTIVE_WORK_WITH_GOAL', { projectId: selectedProject.id, goal: String(intent).trim().slice(0, 2000) }),
         project: projectSummary(selectedProject),
         readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'new-work', maxTokens: policy.defaultReadBudgetTokens }),
-      });
+      }, startedAt);
     }
     return envelope(policy, {
       ...ruleResult(policy, 'USER_GOAL_REQUIRED', { projectId: selectedProject.id }),
       project: projectSummary(selectedProject),
       readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'new-work', maxTokens: policy.defaultReadBudgetTokens }),
-    });
+    }, startedAt);
   }
 }
 
@@ -69,7 +70,7 @@ function selectProject(policy, projects, { projectId, currentPath }) {
   return ruleResult(policy, 'PROJECT_AMBIGUOUS', { candidates: projects.map(projectSummary) });
 }
 
-function envelope(policy, result) {
+function envelope(policy, result, startedAt) {
   return {
     schemaVersion: 1,
     kind: 'LOOP_DECISION',
@@ -82,6 +83,7 @@ function envelope(policy, result) {
     readPlan: result.readPlan || null,
     constitutionVersion: policy.constitutionVersion,
     constitutionStatus: policy.constitutionStatus,
+    latencyMs: Number((performance.now() - startedAt).toFixed(3)),
     decidedAt: new Date().toISOString(),
   };
 }

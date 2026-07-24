@@ -21,6 +21,7 @@ test('MCP exposes remote file exchange and no client-side worktree tools', async
   child.stdin.end();
   const names = response.result.tools.map((tool) => tool.name);
   assert.ok(names.includes('loop_enter'));
+  assert.ok(names.includes('constitution_status'));
   assert.ok(names.includes('read_task_files'));
   assert.ok(names.includes('submit_task_result'));
   assert.ok(names.includes('experience_prepare'));
@@ -65,5 +66,5 @@ test('MCP initialize teaches an unexplained agent to enter through the compiled 
   child.stdin.end();
   assert.match(response.result.instructions, /Begin an unexplained session with loop_enter/);
   assert.match(response.result.instructions, /constitution 0\.1\.0/);
-  assert.match(response.result.instructions, /constitution 0\.1\.0 \(DRAFT\)/);
+  assert.match(response.result.instructions, /constitution 0\.1\.0 \(PROBATION\)/);
 });

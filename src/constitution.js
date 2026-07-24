@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteJson, atomicWriteText, nowIso, sha256 } from './utils.js';
+import { atomicWriteJson, atomicWriteText, nowIso, readJson, sha256 } from './utils.js';
 
 const REQUIRED_DECISIONS = ['YES', 'NO', 'ASK', 'BLOCKED'];
 const REQUIRED_LIFECYCLE = ['ENTER', 'PLAN', 'EXECUTE', 'VERIFY', 'LEARN', 'HANDOFF', 'CLOSE'];
@@ -73,6 +73,72 @@ export class ConstitutionCompiler {
   }
 }
 
+export class ConstitutionObservationStore {
+  constructor(dataDirectory) {
+    this.path = path.join(dataDirectory, 'constitution-observations.json');
+    this.lock = Promise.resolve();
+  }
+
+  async initialize() {
+    await this.#withLock(async () => {
+      const db = await readJson(this.path, { schemaVersion: 1, observations: [] });
+      if (!Array.isArray(db.observations)) throw new Error('Invalid constitution observation ledger.');
+      await atomicWriteJson(this.path, db);
+    });
+  }
+
+  async record(actor, decision) {
+    const observation = {
+      id: `obs_${sha256(`${actor.id}:${decision.decidedAt}:${decision.reasonCode}`).slice(0, 20)}`,
+      constitutionVersion: decision.constitutionVersion,
+      constitutionStatus: decision.constitutionStatus,
+      actorUserId: actor.id,
+      decision: decision.decision,
+      reasonCode: decision.reasonCode,
+      action: decision.action?.name || null,
+      latencyMs: Number(decision.latencyMs || 0),
+      successful: decision.decision !== 'BLOCKED',
+      observedAt: decision.decidedAt,
+    };
+    return this.#withLock(async () => {
+      const db = await readJson(this.path, { schemaVersion: 1, observations: [] });
+      db.observations.unshift(observation);
+      db.observations = db.observations.slice(0, 2_000);
+      await atomicWriteJson(this.path, db);
+      return observation;
+    });
+  }
+
+  async audit(constitutionVersion, { limit = 50 } = {}) {
+    const db = await readJson(this.path, { schemaVersion: 1, observations: [] });
+    const matching = db.observations.filter((item) => item.constitutionVersion === constitutionVersion);
+    const latencies = matching.map((item) => item.latencyMs).sort((a, b) => a - b);
+    return {
+      schemaVersion: 1,
+      constitutionVersion,
+      observations: matching.length,
+      successful: matching.filter((item) => item.successful).length,
+      blocked: matching.filter((item) => !item.successful).length,
+      decisions: countBy(matching, 'decision'),
+      reasonCodes: countBy(matching, 'reasonCode'),
+      latencyMs: {
+        median: percentile(latencies, 0.5),
+        p95: percentile(latencies, 0.95),
+        max: latencies.at(-1) || 0,
+        budget: 300,
+        withinBudget: latencies.length === 0 || (latencies.at(-1) || 0) <= 300,
+      },
+      recent: matching.slice(0, Math.max(1, Math.min(200, Number(limit) || 50))),
+    };
+  }
+
+  #withLock(work) {
+    const result = this.lock.then(work, work);
+    this.lock = result.catch(() => {});
+    return result;
+  }
+}
+
 export async function compileConstitutionInMemory(sourcePath) {
   const source = await readFile(sourcePath, 'utf8');
   const summary = extractMachineSummary(source);
@@ -116,6 +182,10 @@ export function validateSummary(value) {
     reasonCodes.add(rule.reasonCode);
   }
   if (!Array.isArray(value.acceptanceScenarios) || !value.acceptanceScenarios.length) throw new TypeError('Constitution acceptance scenarios are required.');
+  for (const scenario of value.acceptanceScenarios) {
+    const rule = value.decisionTable.find((item) => item.action === scenario.expectedAction && item.decision === scenario.expectedDecision);
+    if (!scenario?.id || !rule) throw new TypeError(`Acceptance scenario ${scenario?.id || '(missing id)'} does not match the decision table.`);
+  }
   if (!Number.isInteger(value.defaultReadBudgetTokens) || value.defaultReadBudgetTokens < 1000) throw new TypeError('Default read budget is invalid.');
   return value;
 }
@@ -139,4 +209,17 @@ function buildScenarios(policy) {
     constitutionVersion: policy.constitutionVersion,
     scenarios: policy.acceptanceScenarios,
   };
+}
+
+function countBy(items, key) {
+  return Object.fromEntries([...items.reduce((counts, item) => {
+    const value = String(item[key] || 'UNKNOWN');
+    counts.set(value, (counts.get(value) || 0) + 1);
+    return counts;
+  }, new Map()).entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
+}
+
+function percentile(values, ratio) {
+  if (!values.length) return 0;
+  return values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * ratio) - 1))];
 }

@@ -789,6 +789,9 @@ async function bootstrap({ quiet = true } = {}) {
     const constitutionBadge = document.querySelector('#constitution-status');
     constitutionBadge.textContent = `헌법 ${state.constitution?.constitutionVersion || '미컴파일'} · ${state.constitution?.constitutionStatus || 'UNKNOWN'}`;
     constitutionBadge.className = `badge ${state.constitution?.constitutionStatus === 'ACTIVE' ? 'pass' : ''}`;
+    constitutionBadge.title = state.constitutionAudit
+      ? `진입 관찰 ${state.constitutionAudit.observations}회 · 차단 ${state.constitutionAudit.blocked}회 · 최대 ${state.constitutionAudit.latencyMs?.max || 0}ms`
+      : '모든 화면과 AI 오케스트레이션에 적용되는 최상위 운영 헌법';
     populateTaskForm();
     populateBoardFilters();
     renderAIStatus();

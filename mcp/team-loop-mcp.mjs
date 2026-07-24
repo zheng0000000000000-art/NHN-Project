@@ -41,6 +41,17 @@ async function fetchTask(client, taskId) {
 
 // --- Tools: name -> { description, inputSchema, run(client, args) } ---
 const TOOLS = {
+  constitution_status: {
+    description: 'Inspect the compiled top-level agent constitution and its probation observations, decision distribution, blocked outcomes, and entry-latency budget.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    async run(client, args) {
+      const [constitution, audit] = await Promise.all([
+        client.request('/api/constitution'),
+        client.request(`/api/constitution/audit?limit=${encodeURIComponent(args.limit || 20)}`),
+      ]);
+      return { constitution: constitution.constitution, audit: audit.audit };
+    },
+  },
   loop_enter: {
     description: 'Default zero-manual entry point. Let the constitution-derived decision engine select the project, active work, bounded read plan, and one next action. Call this first unless a more specific active tool flow is already known.',
     inputSchema: {

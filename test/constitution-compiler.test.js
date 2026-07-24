@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { ConstitutionCompiler, extractMachineSummary, validateSummary } from '../src/constitution.js';
+import { ConstitutionCompiler, ConstitutionObservationStore, extractMachineSummary, validateSummary } from '../src/constitution.js';
 
 test('constitution compiles one source into policy, MCP instructions, and acceptance scenarios', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'team-loop-constitution-'));
@@ -12,6 +12,7 @@ test('constitution compiles one source into policy, MCP instructions, and accept
   const compiler = new ConstitutionCompiler({ sourcePath, outputDirectory: directory });
   const status = await compiler.compile();
   assert.equal(status.constitutionVersion, '0.1.0');
+  assert.equal(status.constitutionStatus, 'PROBATION');
   assert.deepEqual(status.decisions, ['YES', 'NO', 'ASK', 'BLOCKED']);
   assert.match(compiler.instructions(), /Begin an unexplained session with loop_enter/);
   const policy = JSON.parse(await readFile(path.join(directory, 'orchestration-policy.json'), 'utf8'));
@@ -19,6 +20,27 @@ test('constitution compiles one source into policy, MCP instructions, and accept
   assert.ok(policy.decisionTable.some((item) => item.reasonCode === 'USER_GOAL_REQUIRED'));
   await access(path.join(directory, 'mcp-instructions.txt'));
   await access(path.join(directory, 'acceptance-scenarios.json'));
+});
+
+test('constitution probation observations retain decision evidence and latency budgets', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'team-loop-constitution-audit-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const observations = new ConstitutionObservationStore(directory);
+  await observations.initialize();
+  await observations.record({ id: 'usr_1' }, {
+    constitutionVersion: '0.1.0',
+    constitutionStatus: 'PROBATION',
+    decision: 'YES',
+    reasonCode: 'NO_ACTIVE_WORK_WITH_GOAL',
+    action: { name: 'create_task' },
+    latencyMs: 12.5,
+    decidedAt: '2026-07-25T00:00:00.000Z',
+  });
+  const audit = await observations.audit('0.1.0');
+  assert.equal(audit.observations, 1);
+  assert.equal(audit.successful, 1);
+  assert.equal(audit.latencyMs.max, 12.5);
+  assert.equal(audit.latencyMs.withinBudget, true);
 });
 
 test('constitution summary fails closed when its decision contract is incomplete', () => {

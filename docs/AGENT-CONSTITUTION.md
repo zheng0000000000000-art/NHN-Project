@@ -1,6 +1,6 @@
 # Team Loop Agent Constitution
 
-Status: `DRAFT`  
+Status: `PROBATION`
 Constitution version: `0.1.0`  
 Contract version: `1`  
 Primary language: Korean  
@@ -328,7 +328,7 @@ Team Loop에 연결된 에이전트는 다음을 지켜야 한다.
 {
   "schemaVersion": 1,
   "constitutionVersion": "0.1.0",
-  "status": "DRAFT",
+  "status": "PROBATION",
   "entryOrder": [
     "PORTFOLIO_ENTRY",
     "PROJECT_ENTRY",

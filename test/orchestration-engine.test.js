@@ -32,6 +32,7 @@ test('zero-manual entry resumes the only active work with a bounded read plan', 
   assert.equal(decision.action.name, 'work_inspect');
   assert.deepEqual(decision.readPlan.required, ['project://team-loop/entry', 'work://tsk_1/contract', 'work://tsk_1/handoff/latest']);
   assert.equal(decision.constitutionVersion, '0.1.0');
+  assert.equal(decision.latencyMs >= 0, true);
 });
 
 test('ambiguous projects ask instead of loading or mixing both projects', async () => {
