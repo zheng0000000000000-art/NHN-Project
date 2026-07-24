@@ -44,6 +44,7 @@ import { PromotionEngine } from './src/promotion-engine.js';
 import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
+import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
@@ -92,6 +93,10 @@ const balanceJobs = new BalanceJobManager({
   },
 });
 const balanceSeeds = new BalanceSeedRegistry({ projectRoot, manifestPath: balanceSeedManifestPath });
+const auctionPlaySessions = new AuctionPlaySessionStore({
+  dataDirectory,
+  seedPath: path.join(projectRoot, 'examples', 'balance', 'unknown-auction-economy.json'),
+});
 const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
 const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
 const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry });
@@ -105,7 +110,7 @@ const orchestrationEngine = new OrchestrationEngine({ constitutionCompiler, entr
 const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
-await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balancePortfolio.initialize(), balanceJobs.initialize(), balanceSeeds.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
+await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balancePortfolio.initialize(), balanceJobs.initialize(), balanceSeeds.initialize(), auctionPlaySessions.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
 const capturedPortfolioIds = new Set((await balancePortfolio.list({ limit: 1_000 })).map((item) => item.experimentId));
 for (const experiment of await balanceExperiments.list({ limit: 100 })) {
   if (!capturedPortfolioIds.has(experiment.id)) await balancePortfolio.capture(experiment);
@@ -640,7 +645,7 @@ async function handleApi(request, response) {
   if (url.pathname.startsWith('/api/balance/')) {
     await handleBalanceRoute({
       method, url, request, response, actor, readBody, sendJson, assertPlainObject,
-      balanceExperiments, balancePortfolio, balanceJobs, balanceSeeds,
+      balanceExperiments, balancePortfolio, balanceJobs, balanceSeeds, auctionPlaySessions,
       audit: (...arguments_) => store.recordAudit(...arguments_),
     });
     return;

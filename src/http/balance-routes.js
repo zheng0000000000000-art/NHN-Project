@@ -4,9 +4,39 @@ import { HttpError } from '../utils.js';
 
 export async function handleBalanceRoute({
   method, url, request, response, actor, readBody, sendJson, assertPlainObject,
-  balanceExperiments, balancePortfolio, balanceJobs, balanceSeeds, audit,
+  balanceExperiments, balancePortfolio, balanceJobs, balanceSeeds, auctionPlaySessions, audit,
 }) {
   if (!url.pathname.startsWith('/api/balance/')) return false;
+
+  if (method === 'GET' && url.pathname === '/api/balance/play/sessions') {
+    sendJson(response, 200, { sessions: auctionPlaySessions.list(actor, { limit: url.searchParams.get('limit') }) });
+    return true;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/balance/play/sessions') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const session = await auctionPlaySessions.start(actor, body);
+    await audit(actor.id, 'AUCTION_PLAY_STARTED', { sessionId: session.id, seed: session.seed });
+    sendJson(response, 201, { session });
+    return true;
+  }
+
+  const playMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)(?:\/actions)?$/);
+  if (playMatch) {
+    const sessionId = decodeURIComponent(playMatch[1]);
+    if (method === 'GET') {
+      sendJson(response, 200, { session: auctionPlaySessions.get(sessionId, actor) });
+      return true;
+    }
+    if (method === 'POST' && url.pathname.endsWith('/actions')) {
+      const body = await readBody(request);
+      assertPlainObject(body);
+      const session = await auctionPlaySessions.act(sessionId, actor, body);
+      sendJson(response, 200, { session });
+      return true;
+    }
+  }
 
   if (method === 'POST' && url.pathname === '/api/balance/run') {
     const body = await readBody(request);

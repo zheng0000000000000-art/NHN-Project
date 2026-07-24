@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>미지의 경매장 · 그레이박스</title>
+  <link rel="stylesheet" href="/roguelite.css">
+</head>
+<body>
+  <main class="game-shell">
+    <header>
+      <div>
+        <p class="eyebrow">HUMAN-IN-THE-LOOP ECONOMY LAB</p>
+        <h1>미지의 경매장 <span>그레이박스</span></h1>
+        <p>AI 시뮬레이션과 같은 경제 계약에서 직접 판단하고, 정보의 실제 가치를 검증합니다.</p>
+      </div>
+      <div class="header-actions">
+        <button id="new-game" class="primary">새 시드 시작</button>
+        <a href="/">관제실로 돌아가기</a>
+      </div>
+    </header>
+
+    <section id="empty-state" class="empty-state">
+      <strong>플레이 세션을 시작하세요.</strong>
+      <span>모든 물건은 즉시 재판매되어 판단과 경제 흐름만 빠르게 시험합니다.</span>
+    </section>
+
+    <section id="game" class="hidden">
+      <div class="status-grid">
+        <article><small>보유 자산</small><strong id="cash">-</strong><span id="roi">-</span></article>
+        <article><small>진행</small><strong id="day">-</strong><span id="progress">-</span></article>
+        <article><small>정보 지출</small><strong id="info-spend">-</strong><span>감정 + 수요 조사</span></article>
+        <article><small>낙찰</small><strong id="wins">-</strong><span id="profit">-</span></article>
+      </div>
+
+      <div class="play-grid">
+        <section class="lot-card">
+          <div class="lot-heading">
+            <div><p class="eyebrow">CURRENT LOT</p><h2 id="lot-title">-</h2></div>
+            <span id="lot-slot" class="badge">-</span>
+          </div>
+          <div class="object-placeholder"><i></i><span>LOT PREVIEW</span></div>
+          <dl>
+            <div><dt>시작가</dt><dd id="start-bid">-</dd></div>
+            <div><dt>육안 추정가</dt><dd id="blind-estimate">-</dd></div>
+            <div><dt>감정 추정가</dt><dd id="appraisal-estimate" class="locked">정보 필요</dd></div>
+            <div><dt>수요 배율</dt><dd id="demand-estimate" class="locked">정보 필요</dd></div>
+          </dl>
+        </section>
+
+        <section class="decision-card">
+          <p class="eyebrow">INFORMATION & DECISION</p>
+          <h2>무엇을 확인하고, 얼마까지 살까?</h2>
+          <p class="hint">정보를 사도 정답이 직접 공개되지는 않습니다. 오차가 줄어든 관측값만 얻습니다.</p>
+          <div class="info-actions">
+            <button id="buy-appraisal">감정 정보 구매</button>
+            <button id="buy-demand">수요 정보 구매</button>
+          </div>
+          <form id="bid-form">
+            <label>최대 입찰가
+              <input id="bid-amount" type="number" min="0" step="100" required>
+            </label>
+            <button class="primary" type="submit">입찰 제출</button>
+            <button id="pass" type="button">이번 물건 넘기기</button>
+          </form>
+          <p id="error" class="error" role="alert"></p>
+        </section>
+      </div>
+
+      <section class="ledger">
+        <div><p class="eyebrow">DECISION LEDGER</p><h2>최근 판단</h2></div>
+        <div id="decisions"></div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="/roguelite.js"></script>
+</body>
+</html>

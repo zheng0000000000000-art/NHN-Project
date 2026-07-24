@@ -2,7 +2,7 @@ const DEFAULT_POLICIES = ['blind', 'appraisal', 'demand', 'informed'];
 
 export function simulateAuctionEconomy(gameData, { seed = 42, runs = 500, policies = DEFAULT_POLICIES } = {}) {
   const baseline = structuredClone(gameData);
-  const random = seededRandom(seed);
+  const random = createSeededRandom(seed);
   const policyContracts = normalizePolicies(policies);
   const results = Object.fromEntries(policyContracts.map((policy) => [policy.id, []]));
 
@@ -68,8 +68,8 @@ export function economyMetric(metricId, result) {
 }
 
 function simulateRun(config, policy, worldSeed) {
-  const random = seededRandom(worldSeed);
-  const observationRandom = seededRandom(worldSeed ^ hashString(policy.id));
+  const random = createSeededRandom(worldSeed);
+  const observationRandom = createSeededRandom(worldSeed ^ hashString(policy.id));
   const startAssets = number(config.economy?.startingAssets, 20_000);
   const days = integer(config.economy?.days, 12);
   const lotsPerDay = integer(config.auction?.lotsPerDay, 8);
@@ -85,7 +85,7 @@ function simulateRun(config, policy, worldSeed) {
   const profitableGradeNoContests = {};
   let acquisitionSpent = 0;
   let netSales = 0;
-  const botProfiles = createBotProfiles(config, random);
+  const botProfiles = createAuctionBotProfiles(config, random);
   const timeline = [];
   const eventCounts = {
     lotsOpened: 0,
@@ -104,7 +104,7 @@ function simulateRun(config, policy, worldSeed) {
     let informationPurchasesRemaining = policy.maxPurchasesPerDay;
     for (let lotIndex = 0; lotIndex < lotsPerDay; lotIndex += 1) {
       eventCounts.lotsOpened += 1;
-      const lot = createLot(config, random);
+      const lot = createAuctionLot(config, random);
       const information = observeLot(config, lot, policy, cash, observationRandom, informationPurchasesRemaining);
       cash -= information.cost;
       informationSpent += information.cost;
@@ -114,7 +114,7 @@ function simulateRun(config, policy, worldSeed) {
         informationPurchasesRemaining -= 1;
       }
       const playerMax = Math.max(0, information.expectedSale * (1 - number(config.player?.targetMarginRate, 0.08)));
-      const botBids = createBotBids(config, lot, cash, random, botProfiles);
+      const botBids = createAuctionBotBids(config, lot, cash, random, botProfiles);
       const activeBots = botBids.filter((bid) => bid >= lot.startBid);
       gradeLots[lot.gradeId] = (gradeLots[lot.gradeId] || 0) + 1;
       const profitableAtStart = lot.trueSalePrice * (1 - feeRate) > lot.startBid;
@@ -186,7 +186,7 @@ function simulateRun(config, policy, worldSeed) {
   };
 }
 
-function createLot(config, random) {
+export function createAuctionLot(config, random) {
   const grades = Array.isArray(config.grades) ? config.grades : [];
   const grade = weightedChoice(grades, random);
   const baseValue = number(grade?.baseValue, 1_500);
@@ -305,7 +305,7 @@ function hashString(value) {
   return hash >>> 0;
 }
 
-function createBotProfiles(config, random) {
+export function createAuctionBotProfiles(config, random) {
   const count = integer(config.bots?.count, 3);
   const categories = Array.isArray(config.categories) && config.categories.length ? config.categories : ['general'];
   return Array.from({ length: count }, (_, index) => ({
@@ -317,7 +317,7 @@ function createBotProfiles(config, random) {
   }));
 }
 
-function createBotBids(config, lot, playerCash, random, profiles = createBotProfiles(config, random)) {
+export function createAuctionBotBids(config, lot, playerCash, random, profiles = createAuctionBotProfiles(config, random)) {
   const bids = [];
   for (const profile of profiles) {
     const estimate = lot.baseValue * lot.demandMultiplier
@@ -351,14 +351,14 @@ function createBotBids(config, lot, playerCash, random, profiles = createBotProf
 }
 
 function botValueLeakageResidual(config, seed, samples) {
-  const random = seededRandom(seed ^ 0xA53C9E1);
+  const random = createSeededRandom(seed ^ 0xA53C9E1);
   const values = [];
   const bids = [];
   const groups = [];
   for (let index = 0; index < samples; index += 1) {
-    const lot = createLot(config, random);
+    const lot = createAuctionLot(config, random);
     values.push(lot.trueSalePrice);
-    bids.push(Math.max(...createBotBids(config, lot, number(config.economy?.startingAssets, 20_000), random)));
+    bids.push(Math.max(...createAuctionBotBids(config, lot, number(config.economy?.startingAssets, 20_000), random)));
     groups.push(`${lot.baseValue}:${lot.category}`);
   }
   return Math.abs(correlation(residualize(values, groups), residualize(bids, groups)));
@@ -441,7 +441,7 @@ function percentile(sorted, ratioValue) {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
 }
 
-function seededRandom(seed) {
+export function createSeededRandom(seed) {
   let state = (Number(seed) || 1) >>> 0;
   return () => {
     state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
