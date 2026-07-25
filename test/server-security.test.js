@@ -398,6 +398,42 @@ test('project context GET returns stable context without requiring a write', asy
   assert.deepEqual(secondContext, firstContext);
 });
 
+test('AI review failures are persisted as failure cases and audit evidence', async (t) => {
+  const base = await startServer(t);
+  const registration = await post(base, '/api/auth/register', {
+    name: 'ReviewFailureOwner', password: 'correct-password', signupCode: 'test-signup-code',
+  });
+  const cookie = registration.headers.get('set-cookie').split(';', 1)[0];
+  const headers = { Cookie: cookie };
+  const { user } = await registration.json();
+  const creation = await post(base, '/api/tasks', {
+    title: 'Persist review contract failures',
+    assigneeUserId: user.id,
+    allowedPaths: ['test/**'],
+    acceptanceCriteria: ['Failure evidence is retained.'],
+    verificationProfile: 'repository-basic',
+  }, headers);
+  const task = (await creation.json()).task;
+
+  const recorded = await post(base, `/api/tasks/${task.id}/review-failure`, {
+    reviewerProfileId: 'codex-review',
+    kind: 'AI_REVIEW_VERDICT_INVALID',
+    message: 'Reviewer returned APPROVE|REJECT.',
+    outputExcerpt: 'TEAM_LOOP_REVIEW: {"verdict":"APPROVE|REJECT"}',
+  }, headers);
+  assert.equal(recorded.status, 200);
+  const payload = await recorded.json();
+  assert.equal(payload.failureCase.kind, 'AI_REVIEW_VERDICT_INVALID');
+  assert.deepEqual(payload.failureCase.taskIds, [task.id]);
+
+  const failures = await fetch(`${base}/api/failures`, { headers });
+  const stored = (await failures.json()).failures.find((item) => item.id === payload.failureCase.id);
+  assert.equal(stored.lastEvidence.reviewerProfileId, 'codex-review');
+  assert.match(stored.lastEvidence.outputExcerpt, /APPROVE\|REJECT/);
+  assert.equal(payload.handoff.trigger, 'AI_REVIEW_FAILED');
+  assert.match(payload.handoff.notes, new RegExp(payload.failureCase.id));
+});
+
 test('balance API requires authentication and returns an unapplied observation set', async (t) => {
   const base = await startServer(t);
   const request = {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recordAutomationResult } from '../src/automation-guard.js';
+import { effectiveAutomationTokens, recordAutomationResult } from '../src/automation-guard.js';
 
 test('automation circuit opens after the same failure repeats twice', () => {
   const first = recordAutomationResult({}, { passed: false, failureSignature: 'scope:a' });
@@ -52,4 +52,12 @@ test('automation cost accumulates across attempts', () => {
   assert.equal(second.guard.circuitOpen, true);
   assert.equal(second.guard.cumulativeCostUsd, 5);
   assert.match(second.reason, /cost budget/);
+});
+
+test('automation token budget discounts cached input while preserving output', () => {
+  assert.equal(effectiveAutomationTokens({
+    inputTokens: 2_158_558,
+    inputCachedTokens: 2_158_478,
+    outputTokens: 17_688,
+  }), 233_616);
 });

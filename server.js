@@ -46,7 +46,7 @@ import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
-import { recordAutomationResult } from './src/automation-guard.js';
+import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
 import { classifyDeliveryFailure } from './src/delivery-failures.js';
 import { loadConfig } from './src/cli/session.js';
 import { normalizeWorkerConfig, selectExecutor, selectReviewer } from './src/executor-router.js';
@@ -1389,7 +1389,7 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|ai-review|review|block|unblock|archive|unarchive|schedule|activity|heartbeat|automation-result|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|ai-review|review-failure|review|block|unblock|archive|unarchive|schedule|activity|heartbeat|automation-result|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request, action === 'artifact' ? 12 * 1024 * 1024 : undefined);
@@ -1519,6 +1519,10 @@ async function handleApi(request, response) {
     const signature = String(body.failureSignature || '').trim().slice(0, 500);
     const executionUsage = body.executionUsage && typeof body.executionUsage === 'object' ? body.executionUsage : {};
     const usage = executionUsage.usage && typeof executionUsage.usage === 'object' ? executionUsage.usage : {};
+    const effectiveUsage = {
+      ...usage,
+      totalTokens: effectiveAutomationTokens(usage),
+    };
     const currentForBudget = await store.getTask(taskId);
     const task = await store.mutateTask(taskId, actor, null, 'TASK_AUTOMATION_RESULT_RECORDED', async (next) => {
       requireAssigneeOrAdmin(next, actor);
@@ -1526,14 +1530,14 @@ async function handleApi(request, response) {
         passed,
         failureSignature: signature,
         at: nowIso(),
-        usage,
+        usage: effectiveUsage,
         budget: {
           tokenBudget: currentForBudget?.delegation?.budget?.tokenBudget || process.env.AUTOMATION_TASK_TOKEN_BUDGET || 500_000,
           costBudgetUsd: currentForBudget?.delegation?.budget?.costBudgetUsd || process.env.AUTOMATION_TASK_COST_BUDGET_USD || 10,
         },
       });
       next.automationGuard = result.guard;
-      if (result.guard.circuitOpen) {
+      if (result.guard.circuitOpen && !(passed && next.status === 'REVIEW')) {
         next.status = 'BLOCKED';
         next.executionState = 'IDLE';
         next.blocked = {
@@ -1721,6 +1725,54 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (action === 'review-failure') {
+    const current = await store.getTask(taskId);
+    if (!current) throw new HttpError(404, 'Task not found.');
+    requireAssigneeOrAdmin(current, actor);
+    const kind = String(body.kind || '').trim().toUpperCase();
+    const message = String(body.message || '').trim().slice(0, 4000);
+    if (!kind || !message) throw new HttpError(400, 'Review failure kind and message are required.');
+    const failure = await failureCases.recordProcessFailure({
+      harnessId: 'ai-review-contract',
+      kind,
+      title: `AI review failed: ${message}`.slice(0, 500),
+      taskIds: [current.id],
+      identity: {
+        stage: 'AI_REVIEW',
+        reviewerProfileId: String(body.reviewerProfileId || current.reviewerProfileId || ''),
+      },
+      evidence: {
+        message,
+        taskStatus: current.status,
+        taskVersion: current.version,
+        reviewerProfileId: String(body.reviewerProfileId || current.reviewerProfileId || ''),
+        exitCode: Number.isFinite(Number(body.exitCode)) ? Number(body.exitCode) : null,
+        outputExcerpt: String(body.outputExcerpt || '').slice(0, 2000),
+      },
+    }, actor.id);
+    await store.recordAudit(actor.id, 'AI_REVIEW_FAILED', {
+      taskId: current.id,
+      kind,
+      failureCaseId: failure.id,
+      occurrences: failure.occurrences,
+      reviewerProfileId: String(body.reviewerProfileId || current.reviewerProfileId || ''),
+      message,
+    });
+    const handoff = await entryService.writeHandoff(
+      actor,
+      'team-loop',
+      current,
+      await store.listAuditEvents(),
+      {
+        trigger: 'AI_REVIEW_FAILED',
+        failedAttempts: [`${kind}: ${message}`],
+        notes: `Failure case ${failure.id} recorded. Task remains in review.`,
+      },
+    );
+    sendJson(response, 200, { failureCase: failure, handoff });
+    return;
+  }
+
   if (action === 'review') {
     const current = await store.getTask(taskId);
     if (!current) throw new HttpError(404, 'Task not found.');
@@ -1848,10 +1900,13 @@ async function handleApi(request, response) {
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_UNBLOCKED', async (next) => {
       requireTaskParticipantOrAdmin(next, actor);
       if (next.status !== 'BLOCKED') throw new HttpError(409, 'Task is not blocked.');
-      next.status = 'READY';
+      const resumeReview = Boolean(next.verification?.passed && next.review?.status === 'PENDING');
+      next.status = resumeReview ? 'REVIEW' : 'READY';
       next.blocked = null;
-      next.verification = null;
-      next.review = null;
+      if (!resumeReview) {
+        next.verification = null;
+        next.review = null;
+      }
       next.automationGuard = {
         ...(next.automationGuard || {}),
         failedRuns: 0,
@@ -1931,6 +1986,7 @@ function contextUsage(contextPack) {
     indexedTokens: contextIndex.status().estimatedTokens,
   };
 }
+
 
 async function recordDeliveryFailure(task, actor, error, phase) {
   const classified = classifyDeliveryFailure(error, { phase });

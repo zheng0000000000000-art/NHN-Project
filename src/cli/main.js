@@ -1251,7 +1251,10 @@ async function runWorkerOnce(client, options, json) {
     });
     if (!reviewSelection.candidate) throw new Error('No eligible AI review profile.');
     const reviewResult = await runAiProfileReview(client, completedTask, reviewSelection.candidate, {
-      workspace: (await client.request('/api/bootstrap')).workspace?.root || process.cwd(),
+      workspace: await taskReviewWorkspace(
+        (await client.request('/api/bootstrap')).workspace?.root || process.cwd(),
+        completedTask.id,
+      ),
       json,
     });
     completedTask = reviewResult.task;
@@ -1273,8 +1276,11 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     `Allowed paths: ${JSON.stringify(task.allowedPaths || [])}`,
     'Inspect the current git diff and the verification evidence below.',
     JSON.stringify(compactVerificationForPrompt(task.verification || {}), null, 2),
-    'Return exactly one final line in this format:',
-    'TEAM_LOOP_REVIEW: {"verdict":"APPROVE|REJECT","summary":"concise evidence-based summary","concerns":["item"]}',
+    'Choose exactly one verdict. Use "APPROVE" when the diff satisfies the contract, otherwise use "REJECT".',
+    'Never copy the placeholder text "APPROVE|REJECT" into verdict.',
+    'Return exactly one final line using one of these concrete forms:',
+    'TEAM_LOOP_REVIEW: {"verdict":"APPROVE","summary":"concise evidence-based summary","concerns":[]}',
+    'TEAM_LOOP_REVIEW: {"verdict":"REJECT","summary":"concise evidence-based summary","concerns":["specific blocking item"]}',
   ].join('\n\n');
   const run = await runExecutor(profile.tool, prompt, {
     workspace,
@@ -1284,17 +1290,45 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     inherit: false,
     timeoutMs: 15 * 60_000,
   });
-  if (run.code !== 0) throw new Error(`AI reviewer ${profile.id} failed with exit code ${run.code}.`);
+  if (run.code !== 0) {
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_EXECUTOR_FAILED',
+      message: `AI reviewer ${profile.id} failed with exit code ${run.code}.`,
+      exitCode: run.code,
+      outputExcerpt: run.output,
+    });
+    throw new Error(`AI reviewer ${profile.id} failed with exit code ${run.code}.`);
+  }
   const match = String(run.output || '').match(/TEAM_LOOP_REVIEW:\s*(\{[^\r\n]*\})/);
-  if (!match) throw new Error(`AI reviewer ${profile.id} did not return the review contract.`);
+  if (!match) {
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_CONTRACT_MISSING',
+      message: `AI reviewer ${profile.id} did not return the review contract.`,
+      outputExcerpt: run.output,
+    });
+    throw new Error(`AI reviewer ${profile.id} did not return the review contract.`);
+  }
   let recommendation;
   try {
     recommendation = JSON.parse(match[1]);
   } catch {
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_JSON_INVALID',
+      message: `AI reviewer ${profile.id} returned invalid JSON.`,
+      outputExcerpt: match[1],
+    });
     throw new Error(`AI reviewer ${profile.id} returned invalid JSON.`);
   }
-  const verdict = String(recommendation.verdict || '').toUpperCase();
-  if (!['APPROVE', 'REJECT'].includes(verdict)) throw new Error(`AI reviewer ${profile.id} returned an invalid verdict.`);
+  const verdict = normalizeAiReviewVerdict(recommendation.verdict);
+  if (!verdict) {
+    const invalidVerdict = String(recommendation.verdict || '(missing)').slice(0, 80);
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_VERDICT_INVALID',
+      message: `AI reviewer ${profile.id} returned an invalid verdict: ${invalidVerdict}.`,
+      outputExcerpt: match[1],
+    });
+    throw new Error(`AI reviewer ${profile.id} returned an invalid verdict: ${invalidVerdict}.`);
+  }
   let reviewed = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/ai-review`, {
     method: 'POST',
     body: {
@@ -1321,6 +1355,32 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
   return { task: reviewed, verdict, automaticApproval };
 }
 
+async function recordAiReviewFailure(client, task, profile, failure) {
+  try {
+    await client.request(`/api/tasks/${encodeURIComponent(task.id)}/review-failure`, {
+      method: 'POST',
+      body: {
+        reviewerProfileId: profile.id,
+        kind: failure.kind,
+        message: failure.message,
+        exitCode: failure.exitCode,
+        outputExcerpt: String(failure.outputExcerpt || '').slice(-2000),
+      },
+    });
+  } catch (recordError) {
+    const error = new Error(`${failure.message} Failure recording also failed: ${recordError.message}`);
+    error.cause = recordError;
+    throw error;
+  }
+}
+
+export function normalizeAiReviewVerdict(value) {
+  const verdict = String(value || '').trim().toUpperCase().replaceAll('-', '_').replaceAll(' ', '_');
+  if (['APPROVE', 'APPROVED', 'PASS', 'PASSED', 'ACCEPT', 'ACCEPTED'].includes(verdict)) return 'APPROVE';
+  if (['REJECT', 'REJECTED', 'FAIL', 'FAILED', 'CHANGES_REQUESTED', 'REQUEST_CHANGES'].includes(verdict)) return 'REJECT';
+  return '';
+}
+
 async function runProfileReview(client, positionals, options, json) {
   const taskId = requirePositional(positionals, 0, 'Task ID is required.');
   const bootstrap = await client.request('/api/bootstrap');
@@ -1333,11 +1393,21 @@ async function runProfileReview(client, positionals, options, json) {
   });
   if (!selection.candidate) throw new Error('No eligible AI review profile.');
   const result = await runAiProfileReview(client, task, selection.candidate, {
-    workspace: bootstrap.workspace?.root || process.cwd(),
+    workspace: await taskReviewWorkspace(bootstrap.workspace?.root || process.cwd(), task.id),
     json,
   });
   if (json) printValue(result, { json: true });
   return result.task.status === 'IN_PROGRESS' && result.verdict === 'REJECT' ? 2 : 0;
+}
+
+async function taskReviewWorkspace(repositoryRoot, taskId) {
+  const isolated = worktreePath(repositoryRoot, taskId);
+  try {
+    await access(isolated);
+    return isolated;
+  } catch {
+    return repositoryRoot;
+  }
 }
 
 function isLowRiskTask(task) {

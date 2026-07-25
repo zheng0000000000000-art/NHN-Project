@@ -7,6 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { parseCliArgs, listOption, repeatedOption } from '../src/cli/args.js';
 import { CliClient, ApiError } from '../src/cli/client.js';
 import { clearSession, loadSession, normalizeServer, saveSession } from '../src/cli/session.js';
+import { normalizeAiReviewVerdict } from '../src/cli/main.js';
 
 test('CLI parser keeps repeated task scope and criteria options', () => {
   const parsed = parseCliArgs([
@@ -26,6 +27,13 @@ test('CLI parser keeps repeated task scope and criteria options', () => {
   assert.deepEqual(globalFlag.positionals, ['tasks']);
   assert.equal(globalFlag.options.json, true);
   assert.equal(globalFlag.options.mine, true);
+});
+
+test('AI review verdict adapter accepts explicit model synonyms and rejects ambiguity', () => {
+  assert.equal(normalizeAiReviewVerdict('PASS'), 'APPROVE');
+  assert.equal(normalizeAiReviewVerdict('approved'), 'APPROVE');
+  assert.equal(normalizeAiReviewVerdict('changes requested'), 'REJECT');
+  assert.equal(normalizeAiReviewVerdict('maybe'), '');
 });
 
 test('CLI client captures login cookie and sends it to protected requests', async (t) => {

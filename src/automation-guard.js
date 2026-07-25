@@ -46,6 +46,13 @@ export function recordAutomationResult(previous = {}, {
   };
 }
 
+export function effectiveAutomationTokens(usage = {}) {
+  const input = Math.max(0, Number(usage.inputTokens) || 0);
+  const cached = Math.min(input, Math.max(0, Number(usage.inputCachedTokens) || 0));
+  const output = Math.max(0, Number(usage.outputTokens) || 0);
+  return Math.round((input - cached) + output + (cached * 0.1));
+}
+
 function nonNegative(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;
