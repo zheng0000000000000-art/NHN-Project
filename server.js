@@ -508,10 +508,13 @@ async function handleApi(request, response) {
       return;
     }
     if (current.status !== 'READY') {
+      // 재개는 팩을 다시 조립하지 않고 처음 집을 때 정해 기록해 둔 예산을 그대로 쓴다.
+      // 안 넘기면 워커가 제 기본값 12로 떨어진다 — 팩이 정한 40의 3분의 1도 안 된다.
+      // 실측 2026-07-25: 같은 작업이 최초 40, 재개 세 번 모두 12로 돌았다.
       const worker = body.launchWorker && current.executionMode === 'AGENT'
-        ? launchBoardWorker(current, actor, workerSessionCookie(request), body)
+        ? launchBoardWorker(current, actor, workerSessionCookie(request), { maxTurns: current.workBudget?.maxTurns, ...body })
         : null;
-      sendJson(response, 200, { outcome: 'RESUMED', decision, task: current, worker });
+      sendJson(response, 200, { outcome: 'RESUMED', decision, task: current, worker, workBudget: current.workBudget ?? null });
       return;
     }
     await requireCompletedDependencies(current);
