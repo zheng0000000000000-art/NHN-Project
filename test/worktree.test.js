@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createTaskWorktree, removeTaskWorktree, listTaskWorktrees, taskBranchMerged, worktreeBranch, worktreeHasChanges } from '../src/worktree.js';
+import { createTaskWorktree, commitTaskWorktree, mergePreparedWorktree, removeTaskWorktree, listTaskWorktrees, taskBranchMerged, worktreeBranch, worktreeHasChanges } from '../src/worktree.js';
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-repo-'));
@@ -92,4 +92,34 @@ test('detects a task branch that was manually integrated before approval', async
 
 test('sanitizes task id and rejects empty', async () => {
   await assert.rejects(() => createTaskWorktree('/tmp', ''), /Task id is required/);
+});
+
+test('a conflicting merge is aborted so the integration tree never keeps conflict markers', async () => {
+  const repo = gitRepo();
+  const run = (...args) => spawnSync('git', args, { cwd: repo });
+  try {
+    const { dir } = await createTaskWorktree(repo, 'tsk_CONFLICT');
+    fs.writeFileSync(path.join(dir, 'main.txt'), 'written by the task worktree');
+    await commitTaskWorktree(repo, 'tsk_CONFLICT', { message: 'task edit', remove: false });
+
+    // The integration tree moves on independently, so the same file diverges.
+    fs.writeFileSync(path.join(repo, 'main.txt'), 'written on the integration branch');
+    run('add', '-A');
+    run('commit', '-q', '-m', 'integration edit');
+
+    await assert.rejects(
+      () => mergePreparedWorktree(repo, 'tsk_CONFLICT'),
+      /merge/i,
+      'a conflicting merge must still surface as a delivery failure',
+    );
+
+    assert.ok(!fs.existsSync(path.join(repo, '.git', 'MERGE_HEAD')), 'no merge may be left in progress');
+    assert.ok(
+      !fs.readFileSync(path.join(repo, 'main.txt'), 'utf8').includes('<<<<<<<'),
+      'no conflict marker may be left in the integration tree',
+    );
+    assert.equal(spawnSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).stdout.trim(), '');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

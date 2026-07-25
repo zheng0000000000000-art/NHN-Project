@@ -15,13 +15,19 @@
     },
     "node-project": {
       "label": "Node project",
-      "description": "Runs the Node test suite and Git patch checks.",
+      "description": "Runs the Node test suite, an integration-tree check, and Git patch checks.",
       "commands": [
         {
           "file": "node",
           "args": ["--test"],
           "expectedExit": 0,
           "timeoutMs": 180000
+        },
+        {
+          "file": "node",
+          "args": ["tools/verification/check-integration-tree.mjs"],
+          "expectedExit": 0,
+          "timeoutMs": 60000
         },
         {
           "file": "git",

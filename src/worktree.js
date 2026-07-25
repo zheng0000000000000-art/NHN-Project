@@ -114,7 +114,16 @@ export async function mergePreparedWorktree(repoRoot, taskId, { trailers } = {})
   const branch = worktreeBranch(taskId);
   const trailerLines = Object.entries(trailers || {}).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`);
   const mergeMsg = trailerLines.length ? `Merge ${branch}\n\n${trailerLines.join('\n')}` : `Merge ${branch}`;
-  await git(['merge', '--no-ff', branch, '-m', mergeMsg], repoRoot);
+  // A conflicted merge must not survive the failure. Without the abort the integration
+  // tree keeps conflict markers and a live MERGE_HEAD, while every task still verifies
+  // green inside its own worktree — the breakage stays invisible until someone runs the
+  // suite by hand. Delivery failure is still reported: the original error is rethrown.
+  try {
+    await git(['merge', '--no-ff', branch, '-m', mergeMsg], repoRoot);
+  } catch (error) {
+    await git(['merge', '--abort'], repoRoot).catch(() => {});
+    throw error;
+  }
   const head = (await git(['rev-parse', 'HEAD'], repoRoot)).trim();
   await removeTaskWorktree(repoRoot, taskId).catch(() => {});
   return { merged: true, branch, commit: head };
