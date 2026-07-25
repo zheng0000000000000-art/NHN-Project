@@ -523,7 +523,16 @@ async function handleApi(request, response) {
       sendJson(response, 200, { outcome: 'ASK', decision, task: current, reason: 'Selected work belongs to another user.' });
       return;
     }
-    const executionModeValue = String(body.executionMode || 'HUMAN').toUpperCase() === 'AGENT' ? 'AGENT' : 'HUMAN';
+    // queue-agent가 executionState=QUEUED로 의도를 기록해 두는데, 시작 시점이 그것을 보지
+    // 않고 본문 기본값 HUMAN으로 덮어썼다. 그래서 에이전트 큐에 넣은 작업이 사람 작업으로
+    // 바뀌어 되살아나고, 워커는 뜨지 않는다(실측: 큐에서 37분간 시작되지 않았다).
+    // 본문이 명시하면 그것이 이기고, 없으면 작업에 적힌 의도를 따른다.
+    const requestedMode = String(body.executionMode || '').toUpperCase();
+    const queuedForAgent = current.executionState === 'QUEUED'
+      || String(current.executionMode || '').toUpperCase() === 'AGENT';
+    const executionModeValue = requestedMode === 'AGENT' ? 'AGENT'
+      : requestedMode === 'HUMAN' ? 'HUMAN'
+        : (queuedForAgent ? 'AGENT' : 'HUMAN');
     const config = await loadConfig();
     // 팩을 먼저 조립하고 그 사실에서 예산을 정한다. 반대 순서로는 "파일 하나만 고치는 일"과
     // "파일 하나만 고치되 참조를 읽어야 하는 일"이 같은 예산을 받고, 후자는 빈손으로 끝난다.
