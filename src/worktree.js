@@ -20,8 +20,13 @@ function git(args, cwd) {
     child.stderr.on('data', (chunk) => { err += chunk; });
     child.on('error', reject);
     child.on('close', (code) => {
-      if (code === 0) resolve(out.trim());
-      else reject(new Error(`git ${args.join(' ')} failed (exit ${code}): ${err.trim()}`));
+      if (code === 0) return resolve(out.trim());
+      // Callers that ask git a yes/no question need to tell "git answered no" apart from
+      // "git could not answer" — carry the exit status and stderr, not just a message.
+      const error = new Error(`git ${args.join(' ')} failed (exit ${code}): ${err.trim()}`);
+      error.exitCode = code;
+      error.stderr = err.trim();
+      reject(error);
     });
   });
 }
@@ -76,6 +81,21 @@ export async function worktreeHasChanges(repoRoot, taskId) {
   }
 }
 
+// Only one kind of failure means "there is no such branch": `rev-parse --verify --quiet`
+// exits 1 and says nothing when the ref is missing. Anything else — a broken repo (exit
+// 128 with a fatal on stderr), a missing git binary (spawn ENOENT, no exit status) — is a
+// question git could not answer, and reporting that as an absent branch would let the
+// delete path treat a real error as nothing to clean. Those propagate.
+export async function taskBranchExists(repoRoot, taskId) {
+  try {
+    await git(['rev-parse', '--verify', '--quiet', `refs/heads/${worktreeBranch(taskId)}`], repoRoot);
+    return true;
+  } catch (error) {
+    if (error?.exitCode === 1 && !error.stderr) return false;
+    throw error;
+  }
+}
+
 export async function taskBranchMerged(repoRoot, taskId) {
   try {
     await git(['merge-base', '--is-ancestor', worktreeBranch(taskId), 'HEAD'], repoRoot);
@@ -83,6 +103,21 @@ export async function taskBranchMerged(repoRoot, taskId) {
   } catch {
     return false;
   }
+}
+
+// Delete a task's branch — but only when it carries nothing that isn't already saved.
+// A branch holding commits unreachable from HEAD is unlanded work, and deleting it
+// loses that work permanently, so this refuses instead of forcing: the merged check is
+// explicit and `git branch -d` (never `-D`) refuses on its own if the check is ever
+// wrong. A task that never had a branch is nothing to clean, not a cleanup failure.
+export async function removeTaskBranch(repoRoot, taskId) {
+  const branch = worktreeBranch(taskId);
+  if (!(await taskBranchExists(repoRoot, taskId))) return { branch, removed: false, error: null, absent: true };
+  if (!(await taskBranchMerged(repoRoot, taskId))) {
+    throw new Error(`Branch ${branch} has commits that are not reachable from HEAD.`);
+  }
+  await git(['branch', '-d', branch], repoRoot);
+  return { branch, removed: true, error: null };
 }
 
 // Land a task's verified worktree changes into the repo's current branch: commit the
