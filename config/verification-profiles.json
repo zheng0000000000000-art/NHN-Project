@@ -128,6 +128,18 @@
         }
       ]
     },
+    "harness-injection-simulation": {
+      "label": "Harness injection simulation",
+      "description": "Idle-time proof that each harness fails when it should. Injects a known fault, requires the harness to exit nonzero, reverts, and requires it to go green again. Also reports harnesses that have no injection spec yet.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["tools/verification/check-harness-injection.mjs"],
+          "expectedExit": 0,
+          "timeoutMs": 300000
+        }
+      ]
+    },
     "failure-dedupe-regression": {
       "label": "Failure dedupe regression",
       "description": "Ensures repeated failure events do not explode into duplicate file-level cases.",
