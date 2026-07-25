@@ -17,7 +17,7 @@ import { executionMode } from './public/task-execution.js';
 import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
 import { findActiveScopeOverlap, scopesOverlap } from './src/scope.js';
-import { mergeTaskWorktree, removeTaskWorktree, taskBranchMerged, worktreeHasChanges, worktreePath } from './src/worktree.js';
+import { mergeTaskWorktree, removeTaskBranch, removeTaskWorktree, taskBranchExists, taskBranchMerged, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
@@ -2204,6 +2204,11 @@ async function handleApi(request, response) {
     if (await worktreeHasChanges(workspaceRoot, taskId)) {
       throw new HttpError(409, 'Delete blocked: this task still has unlanded worktree changes.');
     }
+    // 브랜치도 같은 가드를 받는다. HEAD에서 닿지 않는 커밋을 담은 task 브랜치는 착지하지 않은
+    // 작업이고, 그걸 지우면 되돌릴 수 없다 — 강제로 밀지 않고 worktree와 똑같이 거절한다.
+    if (await taskBranchExists(workspaceRoot, taskId) && !await taskBranchMerged(workspaceRoot, taskId)) {
+      throw new HttpError(409, 'Delete blocked: this task branch has commits that are not reachable from HEAD.');
+    }
     const result = await store.deleteTask(taskId, actor, expectedVersion);
     // 없던 worktree를 지우려다 실패했다고 보고하면 그건 오보다. 있을 때만 시도한다.
     const worktree = existsSync(worktreePath(workspaceRoot, taskId))
@@ -2215,7 +2220,13 @@ async function handleApi(request, response) {
       // 정리 실패를 조용히 삼키지 않는다.
       await store.recordAudit(actor.id, 'TASK_WORKTREE_CLEANUP_FAILED', { taskId, error: worktree.error }).catch(() => {});
     }
-    sendJson(response, 200, { ...result, worktree });
+    // worktree를 먼저 치운 뒤라야 브랜치를 지울 수 있다(체크아웃된 브랜치는 삭제되지 않는다).
+    const branch = await removeTaskBranch(workspaceRoot, taskId)
+      .catch((error) => ({ branch: null, removed: false, error: String(error.message || error).slice(0, 300) }));
+    if (!branch.removed && !branch.absent) {
+      await store.recordAudit(actor.id, 'TASK_BRANCH_CLEANUP_FAILED', { taskId, error: branch.error }).catch(() => {});
+    }
+    sendJson(response, 200, { ...result, worktree, branch });
   }
 }
 
