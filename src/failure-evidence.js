@@ -20,6 +20,28 @@ export function isRerunnableFailure(failure) {
   return true;
 }
 
+// 인위적으로 다시 만들 수 있는 실패인지 판정한다.
+//
+// 이전에는 이 축이 decidability를 그대로 복사했다. 그러면 12점 중 4점이 한 번의 측정에서
+// 나오고, 판정자에게 같은 증거를 두 번 세어 주는 셈이 된다. 두 질문은 실제로 다르다:
+// decidability는 "다시 돌릴 명령이 있나", 여기는 "무엇을 망가뜨려야 그 명령이 실패하나".
+// 실제 주입 명세(tools/verification/check-harness-injection.mjs)가 돌릴 하네스와 손댈
+// file을 둘 다 요구하므로, 둘 다 있어야 명세를 쓸 수 있다.
+// 2 = 명령과 대상이 다 있다 · 1 = 하나만 있다 · 0 = 둘 다 없다.
+export function injectionReadiness(cases) {
+  const list = Array.isArray(cases) ? cases : [cases];
+  const hasCommand = list.some((item) => isRerunnableFailure(item));
+  const hasTarget = list.some((item) => {
+    const evidence = item?.lastEvidence ?? {};
+    return Boolean(
+      evidence.changedPaths?.length
+      || evidence.paths?.length
+      || String(evidence.path ?? '').trim(),
+    );
+  });
+  return (hasCommand ? 1 : 0) + (hasTarget ? 1 : 0);
+}
+
 // 근거의 성격을 한 낱말로 돌려준다. 승격 후보에 실어 사람이 판정 이유를 볼 수 있게 한다.
 export function evidenceBasis(cases) {
   const list = Array.isArray(cases) ? cases : [cases];

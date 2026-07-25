@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { atomicWriteJson, HttpError, nowIso, randomId, readJson } from './utils.js';
-import { evidenceBasis } from './failure-evidence.js';
+import { evidenceBasis, injectionReadiness } from './failure-evidence.js';
 
 const EMPTY_LEDGER = { schemaVersion: 1, receipts: [] };
 
@@ -251,9 +251,10 @@ function scoreCandidate(cases) {
   const dimensions = {
     repeatability: occurrences >= 3 ? 2 : occurrences >= 2 ? 1 : 0,
     decidability,
-    // 재현 난이도는 지금 같은 근거에서 파생한다. 다시 실행할 수 있으면 인위적 재현이 자명하고,
-    // 보고된 결과뿐이면 심을 결함 자체가 없다. 더 나은 신호가 생기면 갈라야 한다.
-    failureInjection: decidability,
+    // 이전에는 decidability를 그대로 복사했다. 12점 중 4점이 한 번의 측정에서 나왔다는 뜻이고,
+    // 판정자에게 같은 증거를 두 번 세어 주는 것이었다. 실측: 코퍼스 52건 중 7건이 갈린다 —
+    // 다시 돌릴 명령은 있는데 망가뜨릴 대상이 없어 주입 명세를 쓸 수 없는 케이스들이다.
+    failureInjection: injectionReadiness(cases),
     isolation: readOnly ? 2 : 1,
     observability: observable ? 2 : 1,
     maintenanceValue: occurrences >= 2 ? 2 : 1,
