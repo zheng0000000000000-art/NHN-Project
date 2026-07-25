@@ -2107,6 +2107,19 @@ async function handleApi(request, response) {
         reviewedAt: nowIso(),
         solo: soloMode && actor.id === next.assigneeUserId,
         adminOverride: actor.role === 'admin' && (actor.id === next.assigneeUserId || (next.reviewerUserId && next.reviewerUserId !== actor.id)),
+        // reviewerProfileId는 "배정된 프로필"이지 리뷰가 실제로 돌았다는 증거가 아니다.
+        // 그것만 남기면 ①독립 리뷰가 승인한 뒤 사람이 확정한 것 ②독립 리뷰가 거절한 것을
+        // 사람이 뒤집은 것 ③독립 리뷰가 아예 없던 것이 기록상 같아 보인다. 실제로 무엇이
+        // 있었는지 승인 시점 그대로 박아 둔다. 리뷰가 없었으면 null이지 통과가 아니다.
+        independentReview: next.aiReview?.status === 'COMPLETED'
+          ? {
+            verdict: next.aiReview.verdict ?? null,
+            reviewerProfileId: next.aiReview.reviewerProfileId ?? null,
+            reviewedAt: next.aiReview.reviewedAt ?? null,
+            // 사람이 독립 리뷰를 뒤집었는지. 막지는 않되 숨기지도 않는다.
+            overriddenByHuman: decision === 'APPROVE' && next.aiReview.verdict === 'REJECT',
+          }
+          : null,
       };
       if (decision === 'APPROVE') {
         const completedAt = nowIso();

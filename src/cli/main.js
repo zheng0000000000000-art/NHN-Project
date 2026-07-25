@@ -703,6 +703,10 @@ export function computePreflightDecision({ task = {}, contextPlan = {}, tool = '
       id: contextPlan.id || null,
       sourceCount: Array.isArray(contextPlan.sources) ? contextPlan.sources.length : 0,
       estimatedTokens: estimatedContextTokens,
+      // 서버 팩을 재사용했는지는 워커 메모리에만 있었고 관측에는 undefined로 찍혔다.
+      // 중복 조립이 다시 생겨도 기록으로는 알 수 없었다는 뜻이다. 여기 실어 보낸다.
+      // 모르는 것은 false가 아니라 null이다 — 부재를 "아니오"로 적지 않는다.
+      reusedServerPack: typeof contextPlan.reusedServerPack === 'boolean' ? contextPlan.reusedServerPack : null,
     },
     executor: { tool: String(tool || ''), model: String(model || '') || null },
     maxTurns: turns,

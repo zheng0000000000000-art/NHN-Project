@@ -74,6 +74,10 @@ export function observationFromTask(task) {
       ? Number(preflight.selectedContext.estimatedTokens) : null,
     contextSourceCount: Number.isFinite(Number(preflight?.selectedContext?.sourceCount))
       ? Number(preflight.selectedContext.sourceCount) : null,
+    // 서버가 조립·잠금한 팩을 실제로 받아 썼는지. 중복 조립으로 되돌아가면 여기서 보인다.
+    // 기록이 없는 실행은 false가 아니라 null이다.
+    reusedServerPack: typeof preflight?.selectedContext?.reusedServerPack === 'boolean'
+      ? preflight.selectedContext.reusedServerPack : null,
     // 실제로 쓴 것과 나온 것
     numTurns: telemetry.numTurns,
     terminalReason: telemetry.terminalReason,
