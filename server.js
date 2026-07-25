@@ -1559,6 +1559,7 @@ async function handleApi(request, response) {
         durationMs: Math.max(0, Number(body.executionUsage.durationMs) || 0),
         usage: body.executionUsage.usage || {},
         error: passed ? null : signature,
+        context: body.executionUsage.context || null,
       });
     }
     sendJson(response, 200, { task, circuitOpen: Boolean(task.automationGuard?.circuitOpen) });

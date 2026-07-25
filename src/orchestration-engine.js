@@ -28,7 +28,7 @@ export class OrchestrationEngine {
     }
     const executableWorks = activeWorks.filter((item) => !item.dependencyBlocked);
     if (executableWorks.length) {
-      const work = selectWork(executableWorks);
+      const work = selectWork(executableWorks, { intent });
       const handoff = await this.entryService.latestHandoff(selectedProject.id, work.id);
       const valid = handoff && Number(handoff.revision) === Number(work.version);
       return envelope(policy, {
@@ -98,8 +98,10 @@ function envelope(policy, result, startedAt) {
   };
 }
 
-function selectWork(items) {
-  const statusOrder = { IN_PROGRESS: 0, REVIEW: 1, READY: 2, BLOCKED: 3 };
+function selectWork(items, { intent = '' } = {}) {
+  const statusOrder = String(intent).toUpperCase() === 'START_WORK'
+    ? { IN_PROGRESS: 0, READY: 1, REVIEW: 2, BLOCKED: 3 }
+    : { IN_PROGRESS: 0, REVIEW: 1, READY: 2, BLOCKED: 3 };
   return [...items].sort((a, b) =>
     (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
     || Number(a.priority || 100) - Number(b.priority || 100)

@@ -58,7 +58,7 @@ test('usage tracker aggregates by user, source, feature and budget', async (t) =
     actorUserId: 'usr_a', feature: 'task-draft', model: 'test-model', source: 'cli',
     usage: { inputTokens: 100, inputCachedTokens: 25, outputTokens: 50, totalTokens: 150 },
     durationMs: 200,
-    context: { selectedTokens: 900, sourceCount: 4, indexedTokens: 90_000 },
+    context: { contextPackId: 'ctx_test', receiptId: 'rcpt_test', selectedTokens: 900, sourceCount: 4, indexedTokens: 90_000 },
   });
   await tracker.record({
     actorUserId: 'usr_b', feature: 'task-brief', model: 'test-model', source: 'web',
@@ -77,6 +77,8 @@ test('usage tracker aggregates by user, source, feature and budget', async (t) =
   assert.equal(summary.bySource.find((item) => item.source === 'cli').requests, 1);
   assert.equal(summary.byFeature.find((item) => item.feature === 'task-draft').totalTokens, 125);
   assert.equal(summary.recent.length, 2);
+  assert.equal(summary.recent.find((item) => item.context)?.context.contextPackId, 'ctx_test');
+  assert.equal(summary.recent.find((item) => item.context)?.context.receiptId, 'rcpt_test');
   assert.equal(summary.totals.pricedRequests, 2);
   assert.ok(summary.totals.estimatedCostUsd > 0);
   assert.equal(summary.context.requests, 1);

@@ -370,7 +370,7 @@ async function reviewOneTask(client, taskId, approveComment, rejectComment) {
   }
 }
 
-function buildDispatchPrompt(task, rules, workspace) {
+function buildDispatchPrompt(task, rules, workspace, contextPlan = null) {
   const lines = [];
   lines.push(`You are an autonomous coding agent completing ONE task in the git repository at ${workspace}.`);
   lines.push('');
@@ -387,13 +387,21 @@ function buildDispatchPrompt(task, rules, workspace) {
     lines.push('', '# Team rules (shared skills):');
     for (const rule of rules) lines.push(`- ${rule}`);
   }
+  if (contextPlan?.sources?.length) {
+    lines.push('', '# Preselected context (read this before searching)');
+    lines.push(`Context pack: ${contextPlan.id} / estimated ${contextPlan.estimatedTokens} tokens.`);
+    lines.push('Use these excerpts first. Do not scan the whole repository. Read another file only when a concrete unresolved question requires it.');
+    for (const source of contextPlan.sources) {
+      lines.push('', `## ${source.path} (chunk ${source.chunk})`, source.text);
+    }
+  }
   lines.push('', '# Finish');
   lines.push('Make the smallest change that satisfies the acceptance criteria, then stop. Do NOT run git commit, push, or any network calls.');
   return lines.join('\n');
 }
 
-function buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts) {
-  const lines = [buildDispatchPrompt(task, rules, workspace)];
+function buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts, contextPlan = null) {
+  const lines = [buildDispatchPrompt(task, rules, workspace, contextPlan)];
   lines.push('', '# Previous verification failed');
   lines.push(`This is repair attempt ${attempt} of ${maxAttempts}. Fix the cause, then stop.`);
   if (verifyResult?.task?.verification) {
@@ -431,7 +439,7 @@ function compactVerificationForPrompt(verification) {
   };
 }
 
-function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inherit, timeoutMs = 30 * 60_000 }) {
+function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inherit, timeoutMs = 30 * 60_000, maxTurns = 12 }) {
   return new Promise((resolve, reject) => {
     const normalized = String(tool || 'claude-code');
     let exe;
@@ -439,6 +447,7 @@ function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inhe
     if (normalized === 'claude-code') {
       args = ['-p', '--permission-mode', permission || 'acceptEdits'];
       if (model) args.push('--model', model);
+      args.push('--max-turns', String(Math.max(1, Math.min(100, Number(maxTurns) || 12))));
       if (!inherit) args.push('--output-format', 'json');
       exe = process.env.TEAM_LOOP_CLAUDE_BIN || 'claude';
     } else if (normalized === 'codex') {
@@ -680,12 +689,18 @@ async function runDispatch(client, positionals, options, json) {
   }
   const maxAttempts = Math.max(1, Math.min(10, numberOption(options, 'retry', 1)));
   const autoLearn = Boolean(options['auto-learn']);
-  const prompt = buildDispatchPrompt(task, rules, workspace);
+  const contextPlan = await prepareExecutorContext(client, task, bootstrap.contextIndex?.estimatedTokens);
+  const prompt = buildDispatchPrompt(task, rules, workspace, contextPlan);
 
   if (!options.execute) {
     const plan = {
       dryRun: true, taskId: task.id, status: task.status, executor: tool, model: model || null,
       workspace, allowedPaths: task.allowedPaths, skillRules: rules, prompt,
+      contextPlan: {
+        id: contextPlan.id,
+        sourceCount: contextPlan.sources.length,
+        estimatedTokens: contextPlan.estimatedTokens,
+      },
       wouldRun: executorPreview(tool, model, { workspace, permission, sandbox }),
     };
     printValue(plan, { json: true });
@@ -710,7 +725,7 @@ async function runDispatch(client, positionals, options, json) {
     maxAttempts,
   });
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const attemptPrompt = attempt === 1 ? prompt : buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts);
+    const attemptPrompt = attempt === 1 ? prompt : buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts, contextPlan);
     if (!json) process.stdout.write(`Dispatching ${task.id} to ${tool} in ${workspace} (attempt ${attempt}/${maxAttempts}) ...\n`);
     task = await reportTaskActivity(client, task, {
       phase: 'executor-running',
@@ -727,6 +742,7 @@ async function runDispatch(client, positionals, options, json) {
       run = await runWithTaskHeartbeat(client, task, () => runExecutor(tool, attemptPrompt, {
         workspace, model, permission, sandbox, inherit: !json,
         timeoutMs: Math.max(1, numberOption(options, 'max-minutes', 30)) * 60_000,
+        maxTurns: numberOption(options, 'max-turns', 12),
       }));
     } catch (error) {
       run = { code: 1, output: error.message, error: error.message };
@@ -874,6 +890,13 @@ async function runDispatch(client, positionals, options, json) {
         model: model || selectedModelLabel(tool),
         durationMs: run?.durationMs || 0,
         usage: run?.usage || {},
+        context: {
+          contextPackId: contextPlan.id,
+          receiptId: contextPlan.receiptId,
+          selectedTokens: contextPlan.estimatedTokens,
+          sourceCount: contextPlan.sources.length,
+          indexedTokens: contextPlan.indexedTokens,
+        },
       },
     },
   });
@@ -885,6 +908,40 @@ async function runDispatch(client, positionals, options, json) {
     if (!passed) process.stdout.write(`Failure cases: ${(verifyResult.failureCases || []).map((f) => f.id).join(', ') || 'none'}\n`);
   }
   return passed ? 0 : 2;
+}
+
+async function prepareExecutorContext(client, task, indexedTokens = 0) {
+  const prepared = await client.request('/api/context-packs/prepare', {
+    method: 'POST',
+    body: {
+      seedId: 'implementation',
+      goal: task.title,
+      description: task.description,
+      allowedPaths: task.allowedPaths || [],
+      acceptanceCriteria: task.acceptanceCriteria || [],
+      defaultHarnessId: task.verificationProfile,
+      maxSourceChunks: 6,
+      maxSourceCharacters: 9000,
+      maxWikiEntries: 6,
+    },
+  });
+  const locked = await client.request(`/api/context-packs/${encodeURIComponent(prepared.record.id)}/lock`, {
+    method: 'POST',
+    body: {},
+  });
+  const record = locked.record;
+  const sources = Array.isArray(record.pack?.sources?.sources) ? record.pack.sources.sources : [];
+  return {
+    id: record.id,
+    receiptId: record.receipt?.receiptId || null,
+    sources: sources.map((source) => ({
+      path: source.path,
+      chunk: source.chunk,
+      text: String(source.text || ''),
+    })),
+    estimatedTokens: Number(record.receipt?.budget?.estimatedTokens || record.pack?.sources?.estimatedTokens || 0),
+    indexedTokens: Math.max(0, Number(indexedTokens) || 0),
+  };
 }
 
 // Full loop orchestration: the current account acts as worker (create -> claim ->
@@ -1289,6 +1346,7 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     sandbox: 'read-only',
     inherit: false,
     timeoutMs: 15 * 60_000,
+    maxTurns: 8,
   });
   if (run.code !== 0) {
     await recordAiReviewFailure(client, task, profile, {

@@ -84,6 +84,19 @@ test('orchestration selects the highest-priority executable plan step', async ()
   assert.equal(decision.work.id, 'higher-priority');
 });
 
+test('START_WORK does not let pending approval hide ready execution work', async () => {
+  const works = [
+    { ...work('awaiting-approval', 'REVIEW'), priority: 1 },
+    { ...work('ready-to-run', 'READY'), priority: 100 },
+  ];
+  const engine = new OrchestrationEngine({
+    constitutionCompiler: { policy: () => policy },
+    entryService: entryService({ projects: [project('team-loop', 2)], works }),
+  });
+  const decision = await engine.enter({ intent: 'START_WORK', projectId: 'team-loop' }, works);
+  assert.equal(decision.work.id, 'ready-to-run');
+});
+
 function entryService({ projects, works, handoff = null }) {
   return {
     portfolio: async () => ({ projects }),

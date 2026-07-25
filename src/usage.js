@@ -224,6 +224,8 @@ export function normalizeUsage(value = {}) {
 function normalizeContextUsage(value) {
   if (!value || typeof value !== 'object') return null;
   return {
+    contextPackId: String(value.contextPackId || '').trim().slice(0, 120) || null,
+    receiptId: String(value.receiptId || '').trim().slice(0, 120) || null,
     selectedTokens: Math.max(0, Math.round(Number(value.selectedTokens) || 0)),
     sourceCount: Math.max(0, Math.round(Number(value.sourceCount) || 0)),
     indexedTokens: Math.max(0, Math.round(Number(value.indexedTokens) || 0)),
