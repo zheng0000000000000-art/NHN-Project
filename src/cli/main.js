@@ -418,6 +418,47 @@ function buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAtte
   return lines.join('\n');
 }
 
+export function maxTurnRecovery(run = {}, task = {}, changedPaths = []) {
+  let payload = null;
+  try {
+    payload = JSON.parse(String(run.output || '').trim());
+  } catch {
+    payload = null;
+  }
+  const maxTurnsReached = payload?.subtype === 'error_max_turns'
+    || payload?.terminal_reason === 'max_turns'
+    || /maximum number of turns/i.test(String(run.output || run.error || ''));
+  if (!maxTurnsReached) return null;
+  const paths = Array.isArray(changedPaths) ? changedPaths.filter(Boolean) : [];
+  const criteria = Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria.filter(Boolean) : [];
+  return {
+    reason: 'MAX_TURNS',
+    action: paths.length ? 'RESUME_PARTIAL' : 'RETRY_FOCUSED',
+    preserveChangedPaths: paths,
+    focus: criteria[0] || task.description || task.title,
+    remainingCriteria: criteria.slice(1),
+  };
+}
+
+function buildMaxTurnRetryPrompt(task, rules, workspace, recovery, contextPlan = null) {
+  const lines = [buildDispatchPrompt({
+    ...task,
+    description: `Recovery run after the previous executor reached its turn limit. Work ONLY on this bounded objective: ${recovery.focus}`,
+    acceptanceCriteria: [recovery.focus],
+  }, rules, workspace, contextPlan)];
+  lines.push('', '# Turn-limit recovery contract');
+  lines.push(`Recovery action: ${recovery.action}.`);
+  if (recovery.preserveChangedPaths.length) {
+    lines.push(`Preserve and continue the existing partial changes in: ${recovery.preserveChangedPaths.join(', ')}.`);
+  } else {
+    lines.push('The previous run produced no deliverable. Do not repeat broad repository exploration.');
+  }
+  lines.push('Read only files directly required for the bounded objective.');
+  lines.push('Do not run the full test suite; the orchestrator performs verification after you stop.');
+  lines.push('Make one coherent patch for the bounded objective, then stop immediately.');
+  return lines.join('\n');
+}
+
 function compactVerificationForPrompt(verification) {
   return {
     status: verification.status,
@@ -795,6 +836,7 @@ async function runDispatch(client, positionals, options, json) {
   let run = null;
   let verifyResult = null;
   let passed = false;
+  let recovery = null;
   const attempts = [];
   const learnedArtifacts = [];
   task = await reportTaskActivity(client, task, {
@@ -809,7 +851,11 @@ async function runDispatch(client, positionals, options, json) {
     maxAttempts,
   });
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const attemptPrompt = attempt === 1 ? prompt : buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts, contextPlan);
+    const attemptPrompt = attempt === 1
+      ? prompt
+      : recovery
+        ? buildMaxTurnRetryPrompt(task, rules, workspace, recovery, contextPlan)
+        : buildRetryPrompt(task, rules, workspace, verifyResult, attempt, maxAttempts, contextPlan);
     if (!json) process.stdout.write(`Dispatching ${task.id} to ${tool} in ${workspace} (attempt ${attempt}/${maxAttempts}) ...\n`);
     task = await reportTaskActivity(client, task, {
       phase: 'executor-running',
@@ -860,6 +906,7 @@ async function runDispatch(client, positionals, options, json) {
     });
     task = verifyResult.task;
     passed = Boolean(task.verification?.passed);
+    recovery = maxTurnRecovery(run, task, task.verification?.changedPaths);
     attempts.push({
       attempt,
       executorExit: run.code,

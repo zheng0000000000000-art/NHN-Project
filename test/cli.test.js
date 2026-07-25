@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { parseCliArgs, listOption, repeatedOption } from '../src/cli/args.js';
 import { CliClient, ApiError } from '../src/cli/client.js';
 import { clearSession, loadSession, normalizeServer, saveSession } from '../src/cli/session.js';
-import { computePreflightDecision, normalizeAiReviewVerdict } from '../src/cli/main.js';
+import { computePreflightDecision, maxTurnRecovery, normalizeAiReviewVerdict } from '../src/cli/main.js';
 
 test('CLI parser keeps repeated task scope and criteria options', () => {
   const parsed = parseCliArgs([
@@ -70,6 +70,35 @@ test('execution preflight asks before launch when the task token budget cannot f
   assert.equal(result.decision, 'ASK');
   assert.equal(result.hardLimitExceeded, true);
   assert.match(result.reason, /only 5000 remain/);
+});
+
+test('max-turn recovery narrows an empty run to the first acceptance criterion', () => {
+  const recovery = maxTurnRecovery({
+    code: 1,
+    output: JSON.stringify({ subtype: 'error_max_turns', terminal_reason: 'max_turns' }),
+  }, {
+    title: 'Broad task',
+    acceptanceCriteria: ['meter review usage', 'enforce review budget'],
+  }, []);
+  assert.equal(recovery.action, 'RETRY_FOCUSED');
+  assert.equal(recovery.focus, 'meter review usage');
+  assert.deepEqual(recovery.remainingCriteria, ['enforce review budget']);
+});
+
+test('max-turn recovery preserves a partial deliverable instead of restarting it', () => {
+  const recovery = maxTurnRecovery({
+    code: 1,
+    output: 'Reached maximum number of turns (12)',
+  }, {
+    title: 'Broad task',
+    acceptanceCriteria: ['finish the patch'],
+  }, ['src/usage.js']);
+  assert.equal(recovery.action, 'RESUME_PARTIAL');
+  assert.deepEqual(recovery.preserveChangedPaths, ['src/usage.js']);
+});
+
+test('ordinary executor failure does not trigger max-turn recovery', () => {
+  assert.equal(maxTurnRecovery({ code: 1, output: 'syntax error' }, { title: 'Task' }, []), null);
 });
 
 test('CLI client captures login cookie and sends it to protected requests', async (t) => {
