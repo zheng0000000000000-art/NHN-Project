@@ -6,7 +6,14 @@
 // 명령 check와 모양이 같지만 그 file은 실행 파일이 아니라 라벨이라, 그대로 쓰면 하네스는
 // spawn ENOENT로만 끝나고 승격 점수는 실행 가능한 근거가 있는 것처럼 부풀려진다.
 
-export const SYNTHETIC_FAILURE_KINDS = new Set(['EXECUTOR_FAILED', 'NO_DELIVERABLE']);
+// delivery gate가 붙이는 이름 전부. 하나라도 빠지면 그 라벨이 실행 가능한 명령으로 세어져
+// decidability와 injectionReadiness가 부풀어 오른다.
+export const SYNTHETIC_FAILURE_KINDS = new Set([
+  'EXECUTOR_FAILED',
+  'EXECUTOR_TIMED_OUT',
+  'EXECUTOR_RESULT_MISSING',
+  'NO_DELIVERABLE',
+]);
 export const SYNTHETIC_COMMAND_FILES = new Set(['agent-executor', 'agent-delivery']);
 
 // 실패 케이스가 다시 실행 가능한 명령 근거를 가졌는지 판정한다.
