@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "seeds": [
     {
+      "id": "single-file",
+      "label": "단일 파일 수정",
+      "description": "범위가 하나의 파일로 좁혀진 소규모 작업을 위한 최소 컨텍스트입니다. 교차 파일 계약 없이 대상 파일과 직접 근거만 포함합니다.",
+      "maxSourceChunks": 3,
+      "maxSourceCharacters": 4000,
+      "maxWikiEntries": 2,
+      "forbiddenActions": ["approve", "reject", "promote-knowledge-without-review"],
+      "layers": ["L0_GOAL", "L2_IMPLEMENTATION"]
+    },
+    {
       "id": "implementation",
       "label": "구현 작업",
       "description": "계약과 인터페이스를 우선하고 관련 구현·테스트·실패 사례를 제한된 예산으로 구성합니다.",
