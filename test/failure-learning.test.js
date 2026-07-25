@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { FailureCaseStore } from '../src/failure-cases.js';
-import { HarnessRegistry } from '../src/harness-registry.js';
+import { HarnessRegistry, isRerunnableFailure } from '../src/harness-registry.js';
 import { SkillRegistry } from '../src/skill-registry.js';
 import { FailureLearningService } from '../src/failure-learning.js';
 import { Store } from '../src/store.js';
@@ -123,4 +123,38 @@ test('only active harnesses and skills can be applied to a task', async (t) => {
   assert.deepEqual(applied.task.skillIds, [skillResult.skill.id]);
   assert.equal(applied.task.learning.applications.length, 1);
   assert.deepEqual(applied.task.learning.applications[0].sourceFailureCaseIds, [commandFailure.id]);
+});
+
+
+test('delivery-gate verdicts are not rerunnable command evidence', () => {
+  const executorFailure = { kind: 'EXECUTOR_FAILED', lastEvidence: { file: 'agent-executor', args: [], expectedExit: 0 } };
+  const noDeliverable = { kind: 'NO_DELIVERABLE', lastEvidence: { file: 'agent-delivery', args: [], expectedExit: 0 } };
+  const spawnFailed = { kind: 'SPAWN_ERROR', lastEvidence: { file: 'missing-binary', args: [], spawnError: true } };
+  const realCommand = { kind: 'EXIT_MISMATCH', lastEvidence: { file: 'node', args: ['--test'], expectedExit: 0 } };
+
+  assert.equal(isRerunnableFailure(executorFailure), false);
+  assert.equal(isRerunnableFailure(noDeliverable), false);
+  assert.equal(isRerunnableFailure(spawnFailed), false);
+  assert.equal(isRerunnableFailure(realCommand), true);
+  assert.equal(isRerunnableFailure({}), false);
+});
+
+test('a harness cannot be derived from delivery-gate verdicts alone', async (t) => {
+  const { failureCases, learning, actor } = await fixture(t);
+  const recorded = await failureCases.recordVerification({
+    task: { id: 'tsk_agent_only', verificationProfile: 'builtin' },
+    verification: {
+      profile: 'builtin', status: 'FAILED', passed: false, changedPaths: [], scopeViolations: [],
+      checks: [
+        { file: 'agent-executor', args: [], expectedExit: 0, actualExit: 1, passed: false, failureKind: 'EXECUTOR_FAILED', title: 'Agent executor exited with code 1' },
+        { file: 'agent-delivery', args: [], expectedExit: 0, actualExit: 1, passed: false, failureKind: 'NO_DELIVERABLE', title: 'Agent completed without a changed deliverable' },
+      ],
+    },
+    actorUserId: actor.id,
+  });
+  assert.equal(recorded.length, 2);
+
+  await assert.rejects(() => learning.craft(actor, {
+    type: 'HARNESS', id: 'agent-verdicts-only', label: 'Agent verdicts only', failureCaseIds: recorded.map((item) => item.id),
+  }), /do not contain executable command evidence/i);
 });

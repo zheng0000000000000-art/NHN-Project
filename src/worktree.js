@@ -87,7 +87,8 @@ export async function taskBranchMerged(repoRoot, taskId) {
 
 // Land a task's verified worktree changes into the repo's current branch: commit the
 // working-tree changes onto task/<id>, merge (no-ff) into the main branch, then remove
-// the worktree. Throws on merge conflict (caller reports; a human merges manually).
+// the worktree. Throws on merge conflict, and the conflicted merge is aborted first, so
+// the caller reports a delivery failure against a clean tree rather than a half-merged one.
 export async function mergeTaskWorktree(repoRoot, taskId, { message, trailers } = {}) {
   const branch = worktreeBranch(taskId);
   await commitTaskWorktree(repoRoot, taskId, { message, trailers });
