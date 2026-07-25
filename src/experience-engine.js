@@ -31,6 +31,8 @@ export class ExperienceEngine {
       maxChunks: clamp(input.maxSourceChunks, 1, 12, 6),
       maxCharacters: clamp(input.maxSourceCharacters, 1000, 24000, 9000),
       historical: input.historicalContext === true,
+      // 고칠 파일을 관련도에 맡기면 이웃만 담긴다. 범위에 든 실제 경로는 먼저 싣는다.
+      pinnedPaths: descriptor.allowedPaths,
     });
     const sourceFiles = [...new Map(sources.sources.map((source) => [source.path, source])).values()];
     const requiredInputs = sourceFiles

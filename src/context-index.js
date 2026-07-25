@@ -11,6 +11,9 @@ const DEFAULT_EXCLUDED = new Set([
   '.git', '.team-loop-worktrees', 'node_modules', 'dist', 'build', 'coverage',
   '.next', '.cache', 'data',
 ]);
+// 관련도 점수와 섞이지 않도록 고정 선택에는 별도의 표식 값을 쓴다. 실제 점수가 아니다.
+const PINNED_SCORE = -1;
+
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'this', 'that', 'into', 'then', 'than',
   '있는', '하는', '위한', '그리고', '에서', '으로', '기능', '작업', '파일', '코드',
@@ -97,39 +100,65 @@ export class ContextIndex {
     return { ...this.snapshot };
   }
 
-  search(query, { maxChunks = 6, maxCharacters = 9_000, maxChunksPerFile = 2, historical = false } = {}) {
+  // pinnedPaths: 작업이 고쳐야 할 파일. 관련도 검색은 질의어가 겹치는 이웃을 올리므로,
+  // 정작 손댈 파일이 빠진 팩이 나온다(실측: 기록된 팩 34건 중 21건). 먼저 담고 남은 예산으로
+  // 검색 결과를 채운다. 예산은 늘리지 않는다 — 고칠 파일이 이웃보다 우선일 뿐이다.
+  search(query, { maxChunks = 6, maxCharacters = 9_000, maxChunksPerFile = 2, historical = false, pinnedPaths = [] } = {}) {
     maxChunks = positiveNumber(maxChunks, 6);
     maxCharacters = positiveNumber(maxCharacters, 9_000);
     maxChunksPerFile = positiveNumber(maxChunksPerFile, 2);
-    const queryTokens = tokenize(query);
-    if (queryTokens.size === 0) return packResult([], query, maxCharacters, historical);
+    const pool = historical ? this.archiveChunks : this.chunks;
+    const selected = [];
+    const selectedPerFile = new Map();
+    const taken = new Set();
+    let characters = 0;
+    const take = (chunk, score) => {
+      if (selected.length >= maxChunks) return false;
+      const key = `${chunk.path}#${chunk.index}`;
+      if (taken.has(key)) return true;
+      if ((selectedPerFile.get(chunk.path) || 0) >= maxChunksPerFile) return true;
+      const remaining = maxCharacters - characters;
+      if (remaining < 32) return false;
+      const text = chunk.text.length > remaining ? chunk.text.slice(0, remaining) : chunk.text;
+      selected.push({
+        path: chunk.path,
+        chunk: chunk.index,
+        score,
+        text,
+        fileSha256: chunk.fileSha256,
+        contentSha256: chunk.sha256,
+        truncated: text.length < chunk.text.length,
+        historical: chunk.historical,
+        pinned: score === PINNED_SCORE,
+      });
+      taken.add(key);
+      selectedPerFile.set(chunk.path, (selectedPerFile.get(chunk.path) || 0) + 1);
+      characters += text.length;
+      return true;
+    };
 
-    const scored = (historical ? this.archiveChunks : this.chunks)
+    const pinned = new Set(
+      (Array.isArray(pinnedPaths) ? pinnedPaths : [])
+        .map((item) => String(item ?? '').trim().replace(/\\/g, '/'))
+        .filter((item) => item && !/[*?[\]]/.test(item)),
+    );
+    if (pinned.size) {
+      const inScope = pool
+        .filter((chunk) => pinned.has(chunk.path))
+        .sort((a, b) => a.path.localeCompare(b.path) || a.index - b.index);
+      for (const chunk of inScope) if (!take(chunk, PINNED_SCORE)) break;
+    }
+
+    const queryTokens = tokenize(query);
+    if (queryTokens.size === 0) return packResult(selected, query, maxCharacters, historical);
+
+    const scored = pool
       .map((chunk) => ({ chunk, score: scoreChunk(chunk, queryTokens) }))
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score || a.chunk.path.localeCompare(b.chunk.path) || a.chunk.index - b.chunk.index);
 
-    const selected = [];
-    const selectedPerFile = new Map();
-    let characters = 0;
     for (const item of scored) {
-      if (selected.length >= maxChunks) break;
-      if ((selectedPerFile.get(item.chunk.path) || 0) >= maxChunksPerFile) continue;
-      const remaining = maxCharacters - characters;
-      if (remaining < 32) break;
-      const text = item.chunk.text.length > remaining ? item.chunk.text.slice(0, remaining) : item.chunk.text;
-      selected.push({
-        path: item.chunk.path,
-        chunk: item.chunk.index,
-        score: item.score,
-        text,
-        fileSha256: item.chunk.fileSha256,
-        contentSha256: item.chunk.sha256,
-        truncated: text.length < item.chunk.text.length,
-        historical: item.chunk.historical,
-      });
-      selectedPerFile.set(item.chunk.path, (selectedPerFile.get(item.chunk.path) || 0) + 1);
-      characters += text.length;
+      if (!take(item.chunk, item.score)) break;
     }
     return packResult(selected, query, maxCharacters, historical);
   }
