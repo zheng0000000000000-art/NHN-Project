@@ -697,6 +697,11 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (method === 'GET' && url.pathname === '/api/project-context') {
+    sendJson(response, 200, { projectContext: await projectContext.get() });
+    return;
+  }
+
   if (method === 'PUT' && url.pathname === '/api/project-context') {
     const body = await readBody(request);
     assertPlainObject(body);

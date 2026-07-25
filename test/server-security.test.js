@@ -374,6 +374,30 @@ test('experience API prepares context and turns reflection discoveries into wiki
   assert.equal((await review.json()).entries[0].sourceExperienceId, reflection.experience.id);
 });
 
+test('project context GET returns stable context without requiring a write', async (t) => {
+  const base = await startServer(t);
+  const registration = await post(base, '/api/auth/register', {
+    name: 'ContextReader', password: 'correct-password', signupCode: 'test-signup-code',
+  });
+  const cookie = registration.headers.get('set-cookie').split(';', 1)[0];
+  const headers = { Cookie: cookie };
+  const updated = await fetch(`${base}/api/project-context`, {
+    method: 'PUT',
+    headers: { ...headers, 'Content-Type': 'application/json', 'X-Team-Loop-Client': 'web' },
+    body: JSON.stringify({ content: 'Private stable project direction.' }),
+  });
+  assert.equal(updated.status, 200);
+
+  const first = await fetch(`${base}/api/project-context`, { headers });
+  const second = await fetch(`${base}/api/project-context`, { headers });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstContext = (await first.json()).projectContext;
+  const secondContext = (await second.json()).projectContext;
+  assert.equal(firstContext.content, 'Private stable project direction.');
+  assert.deepEqual(secondContext, firstContext);
+});
+
 test('balance API requires authentication and returns an unapplied observation set', async (t) => {
   const base = await startServer(t);
   const request = {

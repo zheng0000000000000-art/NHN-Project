@@ -667,12 +667,12 @@ const TOOLS = {
     async run(client) { return (await client.request('/api/harnesses')).harnesses.map((h) => ({ id: h.id, status: h.status, source: h.source, commands: h.commands?.length ?? 0 })); },
   },
   get_project_context: {
-    description: 'Read the shared project context pack (goals, rules) that all agents see.',
+    description: 'Read the private stable project context (current direction, boundaries, and operating rules) without changing it.',
     inputSchema: { type: 'object', properties: {} },
     async run(client) { return (await client.request('/api/project-context')).projectContext; },
   },
   set_project_context: {
-    description: 'Replace the shared project context pack (max ~12000 chars). Visible to every agent.',
+    description: 'Replace the private stable project context (max ~12000 chars). Agents entering this personal Team Loop can read it.',
     inputSchema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
     async run(client, args) { return (await client.request('/api/project-context', { method: 'PUT', body: { content: String(args.content ?? '') } })).projectContext; },
   },
