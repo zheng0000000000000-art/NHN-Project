@@ -83,9 +83,81 @@ test('a change set with no files cannot demand a citation', () => {
   assert.equal(citesChangedFile('nothing to inspect', undefined), true);
 });
 
-test('the prompt tells the reviewer the command to run and what the summary must name', async () => {
+// 실측 3·4회차: 예시 요약을 지우자 내가 보여준 JSON 골격 줄을 그대로 냈다.
+// 문면을 열거하는 대응은 예시를 고칠 때마다 뚫린다. 형식 자체를 프롬프트에서 없앤다.
+test('the prompt hands the reviewer no output shape it could copy back', async () => {
   const source = await readFile('src/cli/main.js', 'utf8');
-  assert.match(source, /git --no-pager diff HEAD~1/, 'the reviewer must be told how to look');
-  assert.match(source, /must name at least one changed file/);
+  assert.match(source, /Look at the work before deciding, and look at all of it/,
+    'the reviewer must still be told how to look');
+  assert.ok(!source.includes('TEAM_LOOP_REVIEW:'),
+    'a marker contract is a string the reviewer can emit without reading the diff');
+  assert.ok(!/'\s*\{"verdict"/.test(source), 'nor may the prompt show a JSON skeleton');
+  assert.match(source, /the single word APPROVE or REJECT and nothing else on that line/);
+  assert.match(source, /Write no JSON, no headings, and no code fences/);
+});
+
+test('the verdict is assembled by the program, not by the reviewer', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  assert.match(source, /import \{ parseReviewProse, partitionChangedPaths \} from '\.\.\/review-contract\.js'/);
+  assert.match(source, /const recommendation = parseReviewProse\(run\.output\)/);
+  // 산문에서 못 뽑으면 조용히 통과시키지 않고 실패로 기록한다.
+  assert.match(source, /AI_REVIEW_CONTRACT_MISSING/);
   assert.match(source, /AI_REVIEW_SUMMARY_CITES_NOTHING/);
+});
+
+test('the citation and placeholder guards still gate what the parser produced', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  const parseAt = source.indexOf('const recommendation = parseReviewProse(run.output)');
+  const guardAt = source.indexOf('isPlaceholderReviewSummary(recommendation.summary)');
+  const recordAt = source.indexOf('/ai-review`, {');
+  assert.ok(parseAt > 0 && guardAt > parseAt && recordAt > guardAt,
+    'parse, then refuse, then record — in that order');
+});
+
+// 실측 6회차: 산문 계약으로 진짜 리뷰가 나왔으나 REJECT의 요약이 "무엇을 하는가"라
+// 이유가 아니었다. concerns에 우려가 아닌 서술이 들어갔다.
+test('the reviewer is asked for the reason for its verdict, not a description', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  assert.match(source, /giving the reason for your/);
+  assert.match(source, /when approving, what in that file satisfies the acceptance criteria/);
+  assert.match(source, /rejecting, what about that file is wrong or missing/);
+  assert.match(source, /it is the only sentence recorded/,
+    'the reviewer must know the sentence stands alone');
+});
+
+// 실패한 리뷰만 원문을 남기면 승인 판정은 사후에 대조할 근거가 없다.
+test('a completed review keeps the output that produced it, not only the verdict', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  assert.match(source, /outputExcerpt: retainExecutorReport\(run\.output\)\?\.outputExcerpt \|\| ''/,
+    'retainExecutorReport returns a record, not a string; storing the record yields "[object Object]"');
+  const server = await readFile('server.js', 'utf8');
+  // 구간을 좁히지 않으면 아래 review-failure 핸들러의 같은 문면을 잡고 통과한다.
+  const recordAt = server.indexOf("action === 'ai-review'");
+  const endAt = server.indexOf("action === 'review-failure'", recordAt);
+  assert.ok(recordAt > 0 && endAt > recordAt);
+  const handler = server.slice(recordAt, endAt);
+  assert.match(handler, /outputExcerpt:/, 'the server must persist it alongside the verdict');
+  assert.match(handler, /slice\(-EXECUTOR_REPORT_LIMIT\)/, 'bounded, like the executor report');
+  // 실측 7회차: 근거 자리에 "[object Object]"가 저장됐다. 없는 근거보다 나쁘다.
+  assert.match(handler, /typeof body\.outputExcerpt === 'string'/,
+    'a non-string must be dropped rather than stringified into the evidence slot');
+});
+
+// 실측 8회차: 리뷰어가 새 파일을 못 보고 "테스트가 없다"고 거절했다. HEAD~1은 이 작업이
+// 손대지 않은 커밋까지 보여주고, untracked 새 파일은 빠뜨린다.
+test('the reviewer is pointed at this task change set, not at the previous commit', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  assert.ok(!source.includes('git --no-pager diff HEAD~1'),
+    'HEAD~1 shows commits this task never touched and hides its new files');
+  assert.match(source, /git --no-pager diff HEAD --unified=3 -- \$\{changed\.modified\.join\(' '\)\}/);
+  assert.match(source, /appear in no commit, so no diff will show them — open and read each one/);
+});
+
+test('the split between new and modified files is made by the program', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  assert.match(source, /import \{ parseReviewProse, partitionChangedPaths \}/);
+  assert.match(source, /const changed = await classifyChangedPaths\(workspace, task\.verification\?\.changedPaths \|\| \[\]\)/);
+  // status를 못 읽었으면 새 파일이 없다고 단정하지 않고 그 사실을 리뷰어에게 말한다.
+  assert.match(source, /statusRead: false/);
+  assert.match(source, /Git status could not be read/);
 });

@@ -46,7 +46,7 @@ import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { IdleRunner } from './src/idle-runner.js';
-import { TurnBudgetObservationStore, retainExecutorReport } from './src/turn-budget-observations.js';
+import { EXECUTOR_REPORT_LIMIT, TurnBudgetObservationStore, retainExecutorReport } from './src/turn-budget-observations.js';
 import { decideWorkBudget } from './src/work-budget.js';
 import { selectContextTier } from './src/cli/main.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
@@ -1943,6 +1943,12 @@ async function handleApi(request, response) {
         concerns: Array.isArray(body.concerns)
           ? body.concerns.map((item) => String(item).trim().slice(0, 1000)).filter(Boolean).slice(0, 20)
           : [],
+        // 승인 판정도 나중에 대조할 수 있도록 판정이 나온 출력을 함께 남긴다.
+        // 문자열이 아닌 값을 String()으로 밀어넣으면 "[object Object]"가 근거 자리에 남는다.
+        // 없는 근거보다 나쁘므로, 문자열이 아니면 보관하지 않는다.
+        outputExcerpt: typeof body.outputExcerpt === 'string'
+          ? body.outputExcerpt.slice(-EXECUTOR_REPORT_LIMIT)
+          : '',
         reviewedAt: nowIso(),
       };
       next.aiReviewBudget = accumulateReviewBudget(next.aiReviewBudget, reviewUsage);

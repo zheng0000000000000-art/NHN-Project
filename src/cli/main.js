@@ -14,7 +14,8 @@ import { auditSkills, buildSkillPolicy } from '../skill-policy.js';
 import { ScopeLeaseService } from '../scope-leases.js';
 import { RunLedger } from '../run-ledger.js';
 import { initializeProject, loadProjectConfig } from '../project-setup.js';
-import { EXECUTOR_REPORT_LIMIT } from '../turn-budget-observations.js';
+import { EXECUTOR_REPORT_LIMIT, retainExecutorReport } from '../turn-budget-observations.js';
+import { parseReviewProse, partitionChangedPaths } from '../review-contract.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -380,6 +381,15 @@ function buildDispatchPrompt(task, rules, workspace, contextPlan = null) {
   if (task.acceptanceCriteria?.length) {
     lines.push('', '# Acceptance criteria (all must hold when you finish):');
     for (const item of task.acceptanceCriteria) lines.push(`- ${item}`);
+  }
+  // 거절 사유를 기록만 하고 고칠 쪽에 전달하지 않으면, 재개한 에이전트가 같은 코드를 다시
+  // 내고 다시 거절당한다. 돈만 드는 순환이 된다. 판정이 남아 있으면 프롬프트에 싣는다.
+  const rejection = task.aiReview?.verdict === 'REJECT' ? task.aiReview : null;
+  if (rejection) {
+    lines.push('', '# A reviewer already rejected this work — address this first');
+    lines.push(`Reviewer ${rejection.reviewerProfileId || 'unknown'} rejected it: ${rejection.summary}`);
+    for (const concern of rejection.concerns || []) lines.push(`- ${concern}`);
+    lines.push('The work from that attempt is still in this worktree. Fix what the reviewer named rather than starting over.');
   }
   lines.push('', '# HARD scope constraint');
   lines.push(`Create or modify ONLY files matching these path patterns: ${task.allowedPaths.join(', ')}.`);
@@ -1519,7 +1529,24 @@ async function runWorkerOnce(client, options, json) {
   };
 }
 
+// 워크스페이스의 git status를 읽어 변경 파일을 새 파일/고친 파일로 가른다. 못 읽으면
+// 전부 고친 파일로 두되, 그 사실을 숨기지 않는다(리뷰 지시문이 달라지므로).
+async function classifyChangedPaths(workspace, changedPaths) {
+  const porcelain = await new Promise((resolve) => {
+    const child = spawn(process.env.TEAM_LOOP_GIT_BIN || 'git', ['status', '--porcelain'], {
+      cwd: workspace, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+    });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => resolve(code === 0 ? out : null));
+  });
+  if (porcelain === null) return { created: [], modified: [...(changedPaths || [])], statusRead: false };
+  return { ...partitionChangedPaths(porcelain, changedPaths), statusRead: true };
+}
+
 async function runAiProfileReview(client, task, profile, { workspace, json }) {
+  const changed = await classifyChangedPaths(workspace, task.verification?.changedPaths || []);
   const prompt = [
     'You are an independent read-only reviewer. Do not edit files.',
     `Task: ${task.title}`,
@@ -1529,15 +1556,30 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     'Inspect the current git diff and the verification evidence below.',
     JSON.stringify(compactVerificationForPrompt(task.verification || {}), null, 2),
     `Changed files: ${JSON.stringify(task.verification?.changedPaths || [])}`,
-    'First run this and read the output before deciding:',
-    '  git --no-pager diff HEAD~1 --unified=3',
-    'Then decide. Use APPROVE when the diff satisfies the acceptance criteria, otherwise REJECT.',
-    'Your summary must name at least one changed file above and state what that file now does.',
-    'A summary that names no file is refused as a non-review, and so is any text left in angle brackets.',
-    'Never copy the placeholder text "APPROVE|REJECT" into verdict.',
-    'End with exactly one line: the marker TEAM_LOOP_REVIEW: followed by a JSON object',
-    'with keys verdict (APPROVE or REJECT), summary (one sentence, naming a changed file),',
-    'and concerns (an array, empty when approving).',
+    // HEAD~1은 이 작업이 손대지 않은 이전 커밋까지 끌고 오고, 새 파일은 빠뜨린다.
+    'Look at the work before deciding, and look at all of it:',
+    ...(changed.modified.length
+      ? [`  git --no-pager diff HEAD --unified=3 -- ${changed.modified.join(' ')}`]
+      : []),
+    ...(changed.created.length
+      ? [
+        `These files are new and appear in no commit, so no diff will show them — open and read each one: ${changed.created.join(' ')}`,
+      ]
+      : []),
+    ...(changed.statusRead ? [] : ['Git status could not be read, so new files may not be listed above; check for them yourself.']),
+    // 출력 형식을 문면으로 보여주면 리뷰어가 diff를 열지 않고 그 문자열을 베낀다(실측 4회:
+    // 예시 요약 → 바꾼 예시 요약 → JSON 골격). 형식 없이 산문으로 물었을 때만 실제로 읽고
+    // 답했다. 그래서 조립을 시키지 않고 산문만 받아 parseReviewProse가 뽑아낸다.
+    'Answer in exactly two parts, nothing else.',
+    // 실측: "무엇을 하는가"만 물었더니 REJECT인데 요약은 칭찬이었고, concerns에 우려가 아닌
+    // 서술이 들어갔다. 판정의 이유를 묻는다.
+    'Part 1: one sentence naming one of the changed files above and giving the reason for your',
+    'verdict — when approving, what in that file satisfies the acceptance criteria; when',
+    'rejecting, what about that file is wrong or missing. This sentence must stand alone as',
+    'the reason, because it is the only sentence recorded.',
+    'Part 2: on the final line, the single word APPROVE or REJECT and nothing else on that line.',
+    'Choose APPROVE when the diff satisfies the acceptance criteria, otherwise REJECT.',
+    'Write no JSON, no headings, and no code fences.',
   ].join('\n\n');
   const reviewPreflight = computeReviewPreflight(task, {
     profileId: profile.id,
@@ -1571,27 +1613,18 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     });
     throw new Error(`AI reviewer ${profile.id} failed with exit code ${run.code}.`);
   }
-  const match = String(run.output || '').match(/TEAM_LOOP_REVIEW:\s*(\{[^\r\n]*\})/);
-  if (!match) {
+  const recommendation = parseReviewProse(run.output);
+  if (recommendation.reason) {
+    const message = recommendation.reason === 'NO_VERDICT_LINE'
+      ? `AI reviewer ${profile.id} ended without a verdict line.`
+      : `AI reviewer ${profile.id} gave a verdict with no finding above it.`;
     await recordAiReviewFailure(client, task, profile, {
       kind: 'AI_REVIEW_CONTRACT_MISSING',
-      message: `AI reviewer ${profile.id} did not return the review contract.`,
+      message,
       outputExcerpt: run.output,
       executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
-    throw new Error(`AI reviewer ${profile.id} did not return the review contract.`);
-  }
-  let recommendation;
-  try {
-    recommendation = JSON.parse(match[1]);
-  } catch {
-    await recordAiReviewFailure(client, task, profile, {
-      kind: 'AI_REVIEW_JSON_INVALID',
-      message: `AI reviewer ${profile.id} returned invalid JSON.`,
-      outputExcerpt: match[1],
-      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
-    });
-    throw new Error(`AI reviewer ${profile.id} returned invalid JSON.`);
+    throw new Error(message);
   }
   const verdict = normalizeAiReviewVerdict(recommendation.verdict);
   if (!verdict) {
@@ -1632,6 +1665,9 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       verdict,
       summary: recommendation.summary || '',
       concerns: Array.isArray(recommendation.concerns) ? recommendation.concerns : [],
+      // 실패한 리뷰만 원문을 남기고 성공한 리뷰는 버리고 있었다. 그러면 승인 판정을
+      // 나중에 감사할 근거가 없다. 판정을 남기면 그 판정이 나온 출력도 같이 남긴다.
+      outputExcerpt: retainExecutorReport(run.output)?.outputExcerpt || '',
       executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     },
   })).task;
