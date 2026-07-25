@@ -1,0 +1,105 @@
+{
+  "provider": "auction-economy-v1",
+  "mode": "tune",
+  "seeds": [11, 23, 42, 71, 101],
+  "runs": 300,
+  "maxCandidates": 144,
+  "spec": {
+    "balanceId": "information-price-tuning-v1",
+    "objective": "Search appraisal and demand information prices so that neither an always-buy nor an always-ignore strategy dominates a selective buyer.",
+    "parameters": {
+      "appraisalPriceRate": 0.05,
+      "demandPriceAssetRate": 0.01
+    },
+    "parameterSpace": [
+      {
+        "parameterId": "appraisalPriceRate",
+        "path": "information/appraisalPriceRate",
+        "minimum": 0.01,
+        "maximum": 0.12,
+        "step": 0.01
+      },
+      {
+        "parameterId": "demandPriceAssetRate",
+        "path": "information/demandPriceAssetRate",
+        "minimum": 0.002,
+        "maximum": 0.024,
+        "step": 0.002
+      }
+    ],
+    "metrics": [
+      { "metricId": "informationTransactionAdvantage", "minimum": 3, "maximum": 20, "weight": 3 },
+      { "metricId": "informedRuinRate", "minimum": 0, "maximum": 8, "weight": 2 },
+      { "metricId": "selectiveInformationSpendRate", "minimum": 3, "maximum": 40, "weight": 2 },
+      { "metricId": "selectiveVsAlwaysBuyRoiAdvantage", "minimum": 0, "maximum": null, "weight": 2 },
+      { "metricId": "selectiveVsAlwaysIgnoreRoiAdvantage", "minimum": 0, "maximum": null, "weight": 2 }
+    ],
+    "constraints": [
+      "The always-buy policy (EVERY_LOT appraisal+demand) must not weakly dominate the selective policy - buying information on every lot regardless of priority must not be the optimal strategy.",
+      "The always-ignore policy (blind, no purchases) must not weakly dominate the selective policy - skipping information entirely must not be the optimal strategy.",
+      "Report distributions and failure rates across seeds instead of relying on one mean."
+    ],
+    "search": {
+      "deterministic": true,
+      "seed": "42",
+      "strategy": "explicit-grid"
+    },
+    "simulation": {
+      "horizon": 12,
+      "runsPerSeed": 300,
+      "seeds": [11, 23, 42, 71, 101],
+      "policies": [
+        { "id": "blind", "information": [], "acquisition": "EVERY_LOT" },
+        { "id": "informed", "information": ["appraisal", "demand"], "acquisition": "EVERY_LOT" },
+        { "id": "selective", "information": ["appraisal", "demand"], "acquisition": "SELECTIVE", "maxPurchasesPerDay": 2, "minimumPriority": 1 }
+      ]
+    }
+  },
+  "baseline": {
+    "schemaVersion": 1,
+    "economy": {
+      "startingAssets": 20000,
+      "days": 12,
+      "saleFeeRate": 0.05,
+      "expectedDemandMultiplier": 1.05,
+      "ruinThresholdRatio": 0.1
+    },
+    "auction": {
+      "lotsPerDay": 8,
+      "startBidRatio": 0.5,
+      "minimumIncrementRate": 0.1
+    },
+    "player": {
+      "targetMarginRate": 0.08
+    },
+    "information": {
+      "blindValueErrorRate": 0.35,
+      "appraisalErrorRate": 0.2,
+      "demandErrorRate": 0.15,
+      "appraisalPriceRate": 0.05,
+      "demandPriceAssetRate": 0.01
+    },
+    "bots": {
+      "count": 3,
+      "estimateErrorRate": 0.3,
+      "interestThreshold": 0.65,
+      "minimumExpectedMargin": 0.08,
+      "reserveCashRate": 0.35,
+      "gradeInterestBonus": 0.15,
+      "minimumBudget": 30000,
+      "circumstanceDensity": 0.9,
+      "circumstanceMinimumRatio": 0.45,
+      "circumstanceMaximumRatio": 1.8,
+      "budgetMinimumRatio": 0.6,
+      "budgetMaximumRatio": 1.2,
+      "marketBidRatio": 0.92
+    },
+    "categories": ["art", "relic", "machinery", "curio"],
+    "grades": [
+      { "id": "common", "weight": 0.3, "informationPriority": 0, "baseValue": 1500, "demandMinimum": 0.95, "demandMaximum": 1.1 },
+      { "id": "rare", "weight": 0.43, "informationPriority": 1, "baseValue": 4000, "demandMinimum": 0.8, "demandMaximum": 1.35 },
+      { "id": "epic", "weight": 0.195, "informationPriority": 2, "baseValue": 12000, "demandMinimum": 0.6, "demandMaximum": 1.75 },
+      { "id": "legendary", "weight": 0.075, "informationPriority": 3, "baseValue": 25000, "demandMinimum": 0.4, "demandMaximum": 2.4 }
+    ]
+  }
+}
