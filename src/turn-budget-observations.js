@@ -7,6 +7,7 @@ import path from 'node:path';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { nowIso } from './utils.js';
 import { classifyWorkKind } from './work-kind.js';
+import { unverifiedClaims } from './unverified-claims.js';
 
 const TERMINAL_MAX_TURNS = 'max_turns';
 
@@ -45,6 +46,15 @@ export function observationFromTask(task) {
     // 종류 판정과 그 근거를 함께 남긴다. 판정이 틀린 것으로 드러나면 근거를 보고 고칠 수 있다.
     workKind: classifyWorkKind(task).kind,
     readOnlyReferenceCount: classifyWorkKind(task).evidence.readOnlyReferenceCount,
+    // 실행자가 Y/N을 주장했는데 프로그램 판정이 뒷받침하지 않으면 하네스가 빠진 자리다.
+    claimAudit: (() => {
+      const audited = unverifiedClaims({
+        report: executorReport(verification),
+        verification,
+        source: task?.executor?.tool ?? null,
+      });
+      return { claims: audited.claims.map((item) => item.id), missingHarness: audited.missingHarness, contradicted: audited.contradicted };
+    })(),
     // 준 예산
     maxTurns: Number.isFinite(Number(preflight?.maxTurns)) ? Number(preflight.maxTurns) : null,
     contextEstimatedTokens: Number.isFinite(Number(preflight?.selectedContext?.estimatedTokens))
@@ -61,6 +71,13 @@ export function observationFromTask(task) {
     cumulativeTokens: Number(task?.automationGuard?.cumulativeTokens) || 0,
     cumulativeCostUsd: Number(task?.automationGuard?.cumulativeCostUsd) || 0,
   };
+}
+
+// 실행자가 남긴 보고 문면을 꺼낸다. 없으면 빈 문자열이지 null이 아니다.
+function executorReport(verification) {
+  const checks = Array.isArray(verification?.checks) ? verification.checks : [];
+  const failure = [...checks].reverse().find((check) => check?.executorFailure)?.executorFailure;
+  return String(failure?.outputExcerpt ?? failure?.reason ?? '');
 }
 
 // 결과를 한 낱말로 요약한다. 턴이 모자라 죽은 것과 그냥 실패한 것을 구분한다.
