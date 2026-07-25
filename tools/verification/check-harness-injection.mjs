@@ -68,6 +68,15 @@ export const INJECTIONS = [
   },
   {
     harness: 'tools/verification/check-writing.mjs',
+    args: ['brainstorm'],
+    contract: 'writing-review-brainstorm',
+    name: 'candidate-drops-required-verification-section',
+    file: 'test/fixtures/writing/candidates/injection-candidate.md',
+    mutate: (text) => text.replaceAll('Verification', 'Validation').replaceAll('verification', 'validation'),
+    baseline: (text) => `${text}\n\nBaseline note: candidate structure remains complete.\n`,
+  },
+  {
+    harness: 'tools/verification/check-writing.mjs',
     args: ['document'],
     contract: 'writing-review',
     name: 'unresolved-placeholder-left-in-a-document',
