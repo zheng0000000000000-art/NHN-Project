@@ -4,6 +4,7 @@ export function applyAgentDeliveryGate(verification, task, executionResult = {})
   const failures = [];
   const exitCode = Number(executionResult.exitCode);
   if (!Number.isFinite(exitCode) || exitCode !== 0) {
+    const failure = normalizeExecutorFailure(executionResult);
     failures.push({
       file: 'agent-executor',
       args: [],
@@ -13,7 +14,9 @@ export function applyAgentDeliveryGate(verification, task, executionResult = {})
       timedOut: executionResult.timedOut === true,
       spawnError: !Number.isFinite(exitCode),
       failureKind: 'EXECUTOR_FAILED',
-      title: Number.isFinite(exitCode) ? `Agent executor exited with code ${exitCode}` : 'Agent executor result is missing',
+      title: failure.reason || (Number.isFinite(exitCode) ? `Agent executor exited with code ${exitCode}` : 'Agent executor result is missing'),
+      stdoutTail: failure.outputExcerpt,
+      executorFailure: failure,
     });
   }
   const changedPaths = Array.isArray(result.changedPaths) ? result.changedPaths : [];
@@ -41,4 +44,28 @@ export function applyAgentDeliveryGate(verification, task, executionResult = {})
     failureKinds: failures.map((item) => item.failureKind),
   };
   return result;
+}
+
+export function normalizeExecutorFailure(executionResult = {}) {
+  const output = String(executionResult.outputExcerpt || executionResult.error || '').trim();
+  let structured = null;
+  try {
+    structured = output ? JSON.parse(output) : null;
+  } catch {
+    structured = null;
+  }
+  const reason = String(
+    executionResult.reason
+    || structured?.error
+    || structured?.result
+    || (executionResult.timedOut ? 'Agent executor timed out' : ''),
+  ).trim().slice(0, 500);
+  return {
+    reason: reason || null,
+    timedOut: executionResult.timedOut === true,
+    durationMs: Math.max(0, Number(executionResult.durationMs) || 0),
+    subtype: String(structured?.subtype || '').trim().slice(0, 120) || null,
+    isError: structured?.is_error === true || structured?.isError === true,
+    outputExcerpt: output.slice(-4000),
+  };
 }

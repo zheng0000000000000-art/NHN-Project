@@ -765,7 +765,13 @@ async function runDispatch(client, positionals, options, json) {
       method: 'POST',
       body: {
         expectedVersion: task.version,
-        executionResult: { exitCode: run.code, timedOut: run.timedOut === true },
+        executionResult: {
+          exitCode: run.code,
+          timedOut: run.timedOut === true,
+          durationMs: run.durationMs,
+          error: run.error || '',
+          outputExcerpt: String(run.output || '').slice(-4000),
+        },
       },
     });
     task = verifyResult.task;

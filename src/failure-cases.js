@@ -300,6 +300,7 @@ function compactEvidence(check, verification) {
     stderrSha256: check.stderrSha256 ?? sha256(stderr),
     stdoutTail: stdout.slice(-4000),
     stderrTail: stderr.slice(-4000),
+    executorFailure: check.executorFailure || null,
     startedAt: check.startedAt,
     finishedAt: check.finishedAt,
     workspaceFingerprint: verification.workspaceFingerprint,
