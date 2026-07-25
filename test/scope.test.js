@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scopePrefix, prefixCovers, scopesOverlap } from '../src/scope.js';
+import { findActiveScopeOverlap, scopePrefix, prefixCovers, scopesOverlap } from '../src/scope.js';
 
 test('scopePrefix reduces a glob to its literal prefix', () => {
   assert.equal(scopePrefix('src/cli/**'), 'src/cli');
@@ -34,4 +34,16 @@ test('scopesOverlap returns false for disjoint scopes', () => {
 test('scopesOverlap is safe on empty or non-array input', () => {
   assert.equal(scopesOverlap([], ['server.js']), false);
   assert.equal(scopesOverlap(undefined, undefined), false);
+});
+
+test('archived recovery aggregates do not lock child task scopes', () => {
+  const task = { id: 'child', allowedPaths: ['src/**'] };
+  const archivedParent = {
+    id: 'parent',
+    status: 'IN_PROGRESS',
+    archived: true,
+    allowedPaths: ['src/**'],
+  };
+  assert.equal(findActiveScopeOverlap([archivedParent], task), undefined);
+  assert.equal(findActiveScopeOverlap([{ ...archivedParent, archived: false }], task)?.id, 'parent');
 });

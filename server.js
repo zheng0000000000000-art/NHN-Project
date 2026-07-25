@@ -16,7 +16,7 @@ import { sanitizeExecutorInput } from './src/executor.js';
 import { executionMode } from './public/task-execution.js';
 import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
-import { scopesOverlap } from './src/scope.js';
+import { findActiveScopeOverlap, scopesOverlap } from './src/scope.js';
 import { mergeTaskWorktree, taskBranchMerged, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
 import { ProjectContextStore } from './src/project-context.js';
@@ -2840,10 +2840,7 @@ async function requireCompletedDependencies(task) {
 }
 
 async function requireAvailableTaskScope(task) {
-  const overlap = (await store.listTasks()).find((other) =>
-    other.id !== task.id
-    && ['IN_PROGRESS', 'REVIEW'].includes(other.status)
-    && scopesOverlap(other.allowedPaths, task.allowedPaths));
+  const overlap = findActiveScopeOverlap(await store.listTasks(), task);
   if (overlap) {
     throw new HttpError(409, `Scope locked: task ${overlap.id} is already active on an overlapping path scope.`);
   }

@@ -44,3 +44,11 @@ export function scopesOverlap(listA, listB) {
   }
   return false;
 }
+
+export function findActiveScopeOverlap(tasks = [], task = {}) {
+  return tasks.find((other) =>
+    other.id !== task.id
+    && !other.archived
+    && ['IN_PROGRESS', 'REVIEW'].includes(other.status)
+    && scopesOverlap(other.allowedPaths, task.allowedPaths));
+}
