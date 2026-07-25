@@ -46,6 +46,7 @@ import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { IdleRunner } from './src/idle-runner.js';
+import { TurnBudgetObservationStore } from './src/turn-budget-observations.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
 import {
@@ -131,6 +132,7 @@ async function resolvePromotionReview({ artifact }) {
 
 const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry, resolveIndependentReview: resolvePromotionReview });
 const entryService = new EntryService({ dataDirectory, workspaceRoot });
+const turnBudgetObservations = new TurnBudgetObservationStore(dataDirectory);
 const constitutionCompiler = new ConstitutionCompiler({
   sourcePath: path.join(projectRoot, 'docs', 'AGENT-CONSTITUTION.md'),
   outputDirectory: path.join(dataDirectory, 'generated', 'constitution'),
@@ -802,6 +804,7 @@ async function handleApi(request, response) {
       constitutionAudit: await constitutionObservations.audit(constitutionCompiler.status().constitutionVersion, { limit: 10 }),
       learningAudit: auditLearningArtifacts({ harnesses, skills }),
       idleVerification: idleVerifier.status(),
+      turnBudget: await turnBudgetObservations.summary(),
     });
     return;
   }
@@ -1665,6 +1668,11 @@ async function handleApi(request, response) {
           failureSignature: signature,
         };
       }
+    });
+    // 턴 예산이 충분했는지는 지금 아무도 재지 않는다. 값을 고치기 전에 근거부터 쌓는다.
+    // 관측 실패가 실행 기록을 막아서는 안 되므로 실패는 감사로만 남긴다.
+    await turnBudgetObservations.record(task).catch((error) => {
+      store.recordAudit(actor.id, 'TURN_BUDGET_OBSERVATION_FAILED', { taskId, error: String(error.message || error).slice(0, 300) }).catch(() => {});
     });
     if (body.executionUsage && typeof body.executionUsage === 'object') {
       await safeRecordUsage({
