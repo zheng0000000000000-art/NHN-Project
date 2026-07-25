@@ -51,6 +51,7 @@ import {
   buildMaxTurnRecoveryPlan,
   isExhaustedMaxTurnFailure,
   isRecoverablePartialMaxTurnFailure,
+  terminalMaxTurnDecision,
 } from './src/max-turn-decomposition.js';
 import { selectAutomaticNextPlanTask } from './src/plan-progression.js';
 import { applyAgentDeliveryGate } from './src/delivery-gate.js';
@@ -2462,7 +2463,7 @@ async function decomposeMaxTurnTask(task, actor) {
   }
   if (!isExhaustedMaxTurnFailure(task)) throw new HttpError(409, 'Task is not an exhausted maximum-turn failure.');
   const definition = buildMaxTurnRecoveryPlan(task);
-  if (!definition) throw new HttpError(409, 'Task cannot be decomposed further.');
+  if (!definition) return handleTerminalMaxTurnTask(task, actor);
   const plan = await store.createPlan(actor, definition, await verifier.profileNames());
   const childTaskIds = plan.tasks.map((item) => item.id);
   const parent = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_TASK_DECOMPOSED', async (next) => {
@@ -2495,6 +2496,96 @@ async function startRecoveryTask(task, actor) {
   });
   const worker = launchBoardWorker(queued, actor, serviceSessionCookie(actor.id), { executorId: queued.executorProfileId, reviewerProfileId: queued.reviewerProfileId });
   return { task: queued, worker };
+}
+
+async function handleTerminalMaxTurnTask(task, actor) {
+  const decision = terminalMaxTurnDecision(task);
+  if (decision.action === 'ESCALATE_ONCE') {
+    const queued = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_TERMINAL_RETRY_QUEUED', async (next) => {
+      next.status = 'IN_PROGRESS';
+      next.executionState = 'RUNNING';
+      next.blocked = null;
+      next.agentActivity = normalizeAgentActivity({
+        ...(next.agentActivity || {}),
+        phase: 'terminal-recovery',
+        label: '최종 자동 복구 실행',
+        detail: `더 분해할 수 없어 턴 한도를 ${decision.maxTurns}회로 높여 마지막 자동 복구를 실행합니다.`,
+        attempt: 1,
+        maxAttempts: 1,
+        finished: false,
+      }, actor);
+    });
+    const worker = launchBoardWorker(queued, actor, serviceSessionCookie(actor.id), {
+      executorId: queued.executorProfileId,
+      reviewerProfileId: queued.reviewerProfileId,
+      maxTurns: decision.maxTurns,
+    });
+    await store.recordAudit(actor.id, 'MAX_TURNS_TERMINAL_RETRY_STARTED', {
+      taskId: task.id,
+      maxTurns: decision.maxTurns,
+      workerPid: worker.pid,
+    });
+    return { outcome: 'TERMINAL_RETRY', task: queued, worker, maxTurns: decision.maxTurns };
+  }
+
+  const failure = await failureCases.recordProcessFailure({
+    harnessId: 'workflow-integrity',
+    kind: 'LOOP_STALLED_MAX_TURN_DEPTH',
+    title: 'Autonomous loop exhausted maximum recovery depth',
+    taskIds: [task.id, task.delegation?.parentTaskId].filter(Boolean),
+    identity: {
+      stage: 'AUTOMATIC_RECOVERY',
+      cause: 'MAX_TURN_DEPTH_EXHAUSTED',
+      rootTaskId: task.delegation?.rootTaskId || task.id,
+    },
+    evidence: {
+      taskId: task.id,
+      depth: task.delegation?.depth || 0,
+      totalRuns: task.automationGuard?.totalRuns || 0,
+      changedPaths: task.verification?.changedPaths || [],
+      circuitOpen: Boolean(task.automationGuard?.circuitOpen),
+      budgetExceeded: Boolean(task.automationGuard?.budgetExceeded),
+    },
+  }, actor.id);
+  const blocked = await blockRecoveryChain(task, actor, failure.id);
+  return { outcome: 'BLOCKED_CRITICAL', task: blocked, failureCaseId: failure.id };
+}
+
+async function blockRecoveryChain(task, actor, failureCaseId) {
+  let current = task;
+  let leaf = task;
+  const visited = new Set();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    const updated = await store.mutateTask(current.id, actor, current.version, 'LOOP_STALLED_CRITICAL', async (next) => {
+      next.status = 'BLOCKED';
+      next.executionState = 'IDLE';
+      next.archived = false;
+      next.archivedAt = null;
+      next.archivedByUserId = null;
+      next.blocked = {
+        reason: `Critical autonomous-loop stall after maximum recovery depth. Failure: ${failureCaseId}`,
+        byUserId: actor.id,
+        at: nowIso(),
+        automatic: true,
+        severity: 'CRITICAL',
+        failureCaseId,
+      };
+      next.agentActivity = normalizeAgentActivity({
+        ...(next.agentActivity || {}),
+        phase: 'loop-stalled',
+        label: '자동 루프 치명적 중단',
+        detail: next.blocked.reason,
+        finished: true,
+        passed: false,
+        failureCaseIds: [failureCaseId],
+      }, actor);
+    });
+    if (current.id === task.id) leaf = updated;
+    const parentId = updated.delegation?.parentTaskId;
+    current = parentId ? await store.getTask(parentId) : null;
+  }
+  return leaf;
 }
 
 async function queuePartialMaxTurnRecovery(task, actor) {
@@ -2612,6 +2703,7 @@ function launchBoardWorker(task, actor, cookie, options = {}) {
   ];
   if (options.localOnly) args.push('--local-only');
   if (options.executorId) args.push('--executor-id', String(options.executorId));
+  if (options.maxTurns) args.push('--max-turns', String(options.maxTurns));
   const child = spawn(process.execPath, args, {
     cwd: workspaceRoot,
     env: {

@@ -4,6 +4,7 @@ import {
   buildMaxTurnRecoveryPlan,
   isExhaustedMaxTurnFailure,
   isRecoverablePartialMaxTurnFailure,
+  terminalMaxTurnDecision,
 } from '../src/max-turn-decomposition.js';
 
 const task = {
@@ -47,4 +48,16 @@ test('partial max-turn work resumes only while its guard still permits recovery'
     ...task,
     automationGuard: { circuitOpen: true, budgetExceeded: false },
   }), false);
+});
+
+test('maximum recovery depth escalates once and then blocks critically', () => {
+  const task = {
+    delegation: { depth: 2 },
+    automationGuard: { totalRuns: 1, circuitOpen: false, budgetExceeded: false },
+  };
+  assert.deepEqual(terminalMaxTurnDecision(task), { action: 'ESCALATE_ONCE', maxTurns: 24 });
+  assert.deepEqual(terminalMaxTurnDecision({
+    ...task,
+    automationGuard: { ...task.automationGuard, totalRuns: 2 },
+  }), { action: 'BLOCK_CRITICAL', maxTurns: 0 });
 });

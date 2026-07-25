@@ -53,3 +53,13 @@ export function isRecoverablePartialMaxTurnFailure(task = {}) {
     && task.automationGuard?.circuitOpen !== true
     && task.automationGuard?.budgetExceeded !== true;
 }
+
+export function terminalMaxTurnDecision(task = {}) {
+  const depth = Math.max(0, Number(task.delegation?.depth) || Number(task.recovery?.depth) || 0);
+  const totalRuns = Math.max(0, Number(task.automationGuard?.totalRuns) || 0);
+  if (depth < 2) return { action: 'DECOMPOSE', maxTurns: 12 };
+  if (task.automationGuard?.circuitOpen === true || task.automationGuard?.budgetExceeded === true || totalRuns >= 2) {
+    return { action: 'BLOCK_CRITICAL', maxTurns: 0 };
+  }
+  return { action: 'ESCALATE_ONCE', maxTurns: 24 };
+}
