@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMaxTurnRecoveryPlan, isExhaustedMaxTurnFailure } from '../src/max-turn-decomposition.js';
+import {
+  buildMaxTurnRecoveryPlan,
+  isExhaustedMaxTurnFailure,
+  isRecoverablePartialMaxTurnFailure,
+} from '../src/max-turn-decomposition.js';
 
 const task = {
   id: 'tsk_parent',
@@ -27,4 +31,20 @@ test('exhausted max-turn work becomes sequential bounded recovery tasks', () => 
 test('partial work and nested depth two do not decompose again', () => {
   assert.equal(isExhaustedMaxTurnFailure({ ...task, verification: { ...task.verification, changedPaths: ['src/a.js'] } }), false);
   assert.equal(buildMaxTurnRecoveryPlan({ ...task, recovery: { depth: 2 } }), null);
+});
+
+test('partial max-turn work resumes only while its guard still permits recovery', () => {
+  const task = {
+    verification: {
+      passed: false,
+      changedPaths: ['src/example.js'],
+      checks: [{ executorFailure: { subtype: 'error_max_turns' } }],
+    },
+    automationGuard: { circuitOpen: false, budgetExceeded: false },
+  };
+  assert.equal(isRecoverablePartialMaxTurnFailure(task), true);
+  assert.equal(isRecoverablePartialMaxTurnFailure({
+    ...task,
+    automationGuard: { circuitOpen: true, budgetExceeded: false },
+  }), false);
 });

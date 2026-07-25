@@ -43,3 +43,13 @@ export function isExhaustedMaxTurnFailure(task = {}) {
     && (task.verification?.changedPaths || []).length === 0
     && task.verification?.passed === false;
 }
+
+export function isRecoverablePartialMaxTurnFailure(task = {}) {
+  const checks = Array.isArray(task.verification?.checks) ? task.verification.checks : [];
+  const executor = [...checks].reverse().find((check) => check?.executorFailure)?.executorFailure;
+  return executor?.subtype === 'error_max_turns'
+    && (task.verification?.changedPaths || []).length > 0
+    && task.verification?.passed === false
+    && task.automationGuard?.circuitOpen !== true
+    && task.automationGuard?.budgetExceeded !== true;
+}

@@ -47,7 +47,11 @@ import { ConstitutionCompiler, ConstitutionObservationStore } from './src/consti
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
-import { buildMaxTurnRecoveryPlan, isExhaustedMaxTurnFailure } from './src/max-turn-decomposition.js';
+import {
+  buildMaxTurnRecoveryPlan,
+  isExhaustedMaxTurnFailure,
+  isRecoverablePartialMaxTurnFailure,
+} from './src/max-turn-decomposition.js';
 import { selectAutomaticNextPlanTask } from './src/plan-progression.js';
 import { applyAgentDeliveryGate } from './src/delivery-gate.js';
 import { classifyDeliveryFailure } from './src/delivery-failures.js';
@@ -2424,6 +2428,13 @@ async function decomposeMaxTurnTask(task, actor) {
   if (task.recovery?.childTaskIds?.length) {
     const tasks = await store.listTasks();
     const childTaskIds = task.recovery.childTaskIds;
+    const partial = childTaskIds
+      .map((id) => tasks.find((item) => item.id === id))
+      .find((item) => isRecoverablePartialMaxTurnFailure(item));
+    if (partial) {
+      await queuePartialMaxTurnRecovery(partial, actor);
+      return { outcome: 'RESUMED_PARTIAL', task, childTaskIds, resumedTaskId: partial.id };
+    }
     const candidate = childTaskIds
       .map((id) => tasks.find((item) => item.id === id))
       .find((item) => item?.status === 'READY'
@@ -2464,6 +2475,20 @@ async function startRecoveryTask(task, actor) {
   });
   const worker = launchBoardWorker(queued, actor, serviceSessionCookie(actor.id), { executorId: queued.executorProfileId, reviewerProfileId: queued.reviewerProfileId });
   return { task: queued, worker };
+}
+
+async function queuePartialMaxTurnRecovery(task, actor) {
+  const recovering = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_PARTIAL_RECOVERY_QUEUED', async (next) => {
+    next.executionState = 'RECOVERING';
+    next.executionRun = {
+      ...(next.executionRun || {}),
+      status: 'RECOVERING',
+      recoveryReason: 'MAX_TURNS_WITH_PARTIAL_DELIVERABLE',
+      heartbeatAt: nowIso(),
+    };
+  });
+  await recoverPersistedAgentTask(recovering.id);
+  return store.getTask(recovering.id);
 }
 
 async function progressAfterApproval(completedTask, actor) {
@@ -2775,6 +2800,10 @@ async function finishBoardWorker(taskId, actor, exitCode, errorMessage) {
   if (exitCode !== 0 && isExhaustedMaxTurnFailure(finished)) {
     await decomposeMaxTurnTask(finished, actor).catch(async (error) => {
       await store.recordAudit(actor.id, 'MAX_TURNS_DECOMPOSITION_FAILED', { taskId, error: error.message }).catch(() => {});
+    });
+  } else if (exitCode !== 0 && isRecoverablePartialMaxTurnFailure(finished)) {
+    await queuePartialMaxTurnRecovery(finished, actor).catch(async (error) => {
+      await store.recordAudit(actor.id, 'MAX_TURNS_PARTIAL_RECOVERY_FAILED', { taskId, error: error.message }).catch(() => {});
     });
   }
 }
