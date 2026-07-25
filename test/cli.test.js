@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { parseCliArgs, listOption, repeatedOption } from '../src/cli/args.js';
 import { CliClient, ApiError } from '../src/cli/client.js';
 import { clearSession, loadSession, normalizeServer, saveSession } from '../src/cli/session.js';
-import { computePreflightDecision, maxTurnRecovery, normalizeAiReviewVerdict } from '../src/cli/main.js';
+import { computePreflightDecision, computeReviewPreflight, maxTurnRecovery, normalizeAiReviewVerdict } from '../src/cli/main.js';
 
 test('CLI parser keeps repeated task scope and criteria options', () => {
   const parsed = parseCliArgs([
@@ -99,6 +99,23 @@ test('max-turn recovery preserves a partial deliverable instead of restarting it
 
 test('ordinary executor failure does not trigger max-turn recovery', () => {
   assert.equal(maxTurnRecovery({ code: 1, output: 'syntax error' }, { title: 'Task' }, []), null);
+});
+
+test('AI review preflight uses an independent budget and preserves pending approval when exhausted', () => {
+  const result = computeReviewPreflight({
+    status: 'REVIEW',
+    review: { status: 'PENDING' },
+    aiReviewBudget: {
+      tokenBudget: 10_000,
+      costBudgetUsd: 2,
+      cumulativeTokens: 10_000,
+      cumulativeCostUsd: 0.5,
+    },
+  }, { profileId: 'codex-review', contextTokens: 900, maxTurns: 8 });
+  assert.equal(result.blocked, true);
+  assert.equal(result.context.profileId, 'codex-review');
+  assert.equal(result.context.selectedTokens, 900);
+  assert.match(result.reason, /User approval remains pending/);
 });
 
 test('CLI client captures login cookie and sends it to protected requests', async (t) => {
