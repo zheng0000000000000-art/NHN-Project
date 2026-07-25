@@ -165,3 +165,20 @@ ROI가 약 +239.72%까지 폭증했다. 따라서 `무경쟁률 13%`만 맞추�
 
 이 조합은 정보가 지나치게 비싸지는 문제, 앞선 자산의 당일 복리, 무작위 봇
 불참으로 고가 LOT가 풀리는 문제를 한꺼번에 줄인다.
+
+## 사람-AI 정책 비교 (P0 항목 5, P2 항목 5 후속)
+
+`src/auction-policy-comparison.js`는 완료된 그레이박스 플레이 세션의
+`session.lots`(사람이 플레이한 것과 동일한 월드 시드로 생성된 LOT 배열)를
+그대로 재사용해 `conservative`, `value`, `speculative` 세 AI 정책을 재생한다.
+
+- 동일 월드 시드: AI 정책은 새 난수를 뽑지 않고 사람 세션이 이미 생성한
+  LOT 순서를 그대로 순회하므로, 정책 간 그리고 사람-AI 간 월드가 완전히
+  동일하다.
+- 숨겨진 진실 차단: 각 LOT의 `clearingPrice`·`trueSalePrice`는 정책이
+  입찰가(`bid`)를 계산한 **이후**에만 정산 목적으로 읽는다. 정보 구매와
+  입찰가 산출은 공개된 추정치(`blindEstimate`/구매한 `appraisalEstimate`·
+  `demandEstimate`)만 사용한다.
+- `AuctionPlaySessionStore#policyComparison(id, actor)`가 완료된
+  세션에서만 비교를 허용해, 사람이 아직 정산 전인 세션의 결과를 미리
+  들여다보는 경로를 막는다.
