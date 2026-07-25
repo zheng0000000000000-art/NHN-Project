@@ -153,3 +153,38 @@ test('an intentional agent failure produces a handoff document bound to the fail
   assert.ok(handoff.notes.length > 0, 'handoff must carry non-empty content');
   assert.deepEqual(handoff.failedAttempts, ['Intentional failure: agent stopped without delivering a patch.']);
 });
+
+test('an intentional agent failure produces an audit trail event and a resumable handoff record', async (t) => {
+  const auditStore = await auditStoreFixture(t);
+  const entryService = await entryServiceFixture(t);
+
+  await auditStore.recordAudit('usr_audit', 'TASK_AGENT_INTERRUPTED', {
+    taskId: 'tsk_intentional_3',
+    reason: 'Intentional failure: agent stopped without delivering a patch.',
+  });
+  const events = await auditStore.listAuditEvents();
+  const auditEvent = events.find((event) => event.data?.taskId === 'tsk_intentional_3');
+  assert.ok(auditEvent, 'the intentional failure must be durably audited');
+  assert.equal(auditEvent.action, 'TASK_AGENT_INTERRUPTED');
+
+  const task = {
+    id: 'tsk_intentional_3',
+    title: 'Bounded objective that hit its turn limit',
+    status: 'BLOCKED',
+    version: 3,
+    verification: { status: 'FAILED', passed: false, changedPaths: [] },
+    review: null,
+    blocked: { reason: 'Intentional failure: agent stopped without delivering a patch.' },
+  };
+  const handoff = await entryService.writeHandoff({ id: 'usr_audit' }, 'team-loop', task, [auditEvent], {
+    trigger: 'AGENT_FAILURE',
+    notes: 'Executor hit its turn limit before delivering a patch; recovery run required.',
+  });
+
+  assert.equal(handoff.status, 'BLOCKED');
+  assert.equal(handoff.evidence.verificationPassed, false);
+  assert.equal(handoff.evidence.latestAuditEventId, auditEvent.eventId);
+
+  const latest = await entryService.latestHandoff('team-loop', task.id);
+  assert.equal(latest.id, handoff.id);
+});
