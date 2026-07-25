@@ -114,7 +114,21 @@ const auctionPlaySessions = new AuctionPlaySessionStore({
 });
 const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
 const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
-const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry });
+// ADR-002 독립 관찰자 원칙을 승격에 적용한다: 태스크 리뷰와 같은 라우팅을 재사용해
+// 산출물을 만든 프로필과 다른 프로필이 검증할 수 있을 때만 자동 활성화를 허용한다.
+async function resolvePromotionReview({ artifact }) {
+  const config = await loadConfig();
+  const producerProfileId = String(artifact?.createdByProfileId || config?.executor?.id || '');
+  const selection = selectReviewer({}, config, { quality: 'high', executorProfileId: producerProfileId });
+  if (!selection.candidate) return { independent: false, reason: 'NO_REVIEWER', reviewerProfileId: null };
+  return {
+    independent: selection.candidate.id !== producerProfileId,
+    reason: selection.candidate.id === producerProfileId ? 'SAME_PROFILE_FALLBACK' : null,
+    reviewerProfileId: selection.candidate.id,
+  };
+}
+
+const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry, resolveIndependentReview: resolvePromotionReview });
 const entryService = new EntryService({ dataDirectory, workspaceRoot });
 const constitutionCompiler = new ConstitutionCompiler({
   sourcePath: path.join(projectRoot, 'docs', 'AGENT-CONSTITUTION.md'),

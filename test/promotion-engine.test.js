@@ -7,7 +7,10 @@ import { FailureCaseStore } from '../src/failure-cases.js';
 import { SkillRegistry } from '../src/skill-registry.js';
 import { PromotionEngine } from '../src/promotion-engine.js';
 
-async function fixture(t) {
+// 기본값: 독립 프로필이 검증한다. ADR-002 원칙상 주입이 없으면 승격은 fail-closed로 막힌다.
+const independentReviewer = async () => ({ independent: true, reviewerProfileId: 'codex-review' });
+
+async function fixture(t, { resolveIndependentReview = independentReviewer } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'promotion-engine-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const failureCases = new FailureCaseStore(directory);
@@ -24,6 +27,7 @@ async function fixture(t) {
     failureCases,
     harnessRegistry,
     skillRegistry,
+    resolveIndependentReview,
   });
   await engine.initialize();
   return { engine, failureCases, skillRegistry };
@@ -88,4 +92,29 @@ test('three clean audits stabilize optimistic learning', async (t) => {
   const changes = await engine.audit(actor);
   assert.equal(changes[0].status, 'STABLE');
   assert.equal((await skillRegistry.get(skill.id)).status, 'ACTIVE');
+});
+
+
+test('a derived artifact is not auto-activated without an independent reviewer', async (t) => {
+  const { engine, failureCases, skillRegistry } = await fixture(t, { resolveIndependentReview: null });
+  const actor = { id: 'owner', role: 'member' };
+  const failure = await makeFailure(failureCases);
+  const skill = await skillRegistry.createFromFailures(actor, { id: 'no-reviewer', label: 'No reviewer', rules: ['Check paths.'] }, [failure]);
+  const result = await engine.activate(actor, { type: 'SKILL', skill, sourceFailureCases: [failure] }, { rationale: 'r', planner: 'test' });
+  assert.equal(result.promotion.status, 'AWAITING_APPROVAL');
+  assert.equal(result.promotion.blockedReason, 'NO_INDEPENDENT_REVIEW');
+  assert.equal(result.promotion.review.independent, false);
+});
+
+test('a producer profile reviewing its own artifact is not independence', async (t) => {
+  const { engine, failureCases, skillRegistry } = await fixture(t, {
+    resolveIndependentReview: async () => ({ independent: false, reason: 'SAME_PROFILE_FALLBACK', reviewerProfileId: 'claude-default' }),
+  });
+  const actor = { id: 'owner', role: 'member' };
+  const failure = await makeFailure(failureCases);
+  const skill = await skillRegistry.createFromFailures(actor, { id: 'same-profile', label: 'Same profile', rules: ['Check paths.'] }, [failure]);
+  const result = await engine.activate(actor, { type: 'SKILL', skill, sourceFailureCases: [failure] }, { rationale: 'r', planner: 'test' });
+  assert.equal(result.promotion.status, 'AWAITING_APPROVAL');
+  assert.equal(result.promotion.blockedReason, 'SAME_PROFILE_FALLBACK');
+  assert.equal(result.promotion.review.reviewerProfileId, 'claude-default');
 });

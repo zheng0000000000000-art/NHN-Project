@@ -5,12 +5,14 @@ import { evidenceBasis, isRerunnableFailure } from './failure-evidence.js';
 const EMPTY_LEDGER = { schemaVersion: 1, receipts: [] };
 
 export class PromotionEngine {
-  constructor({ dataDirectory, policyPath, failureCases, harnessRegistry, skillRegistry }) {
+  constructor({ dataDirectory, policyPath, failureCases, harnessRegistry, skillRegistry, resolveIndependentReview = null }) {
     this.path = path.join(dataDirectory, 'promotion-receipts.json');
     this.policyPath = policyPath;
     this.failureCases = failureCases;
     this.harnessRegistry = harnessRegistry;
     this.skillRegistry = skillRegistry;
+    // ADR-002 독립 관찰자 원칙: 만든 주체가 자기 산출물을 켜지 못하게 한다.
+    this.resolveIndependentReview = resolveIndependentReview;
     this.policy = null;
     this.lock = Promise.resolve();
   }
@@ -59,7 +61,10 @@ export class PromotionEngine {
     const type = result.skill ? 'SKILL' : 'HARNESS';
     const assessment = scoreCandidate(result.sourceFailureCases);
     const snapshot = structuredClone(artifact);
-    const blockedReason = approvalReason(type, artifact);
+    let blockedReason = approvalReason(type, artifact);
+    // 자기가 등록한 실패에서 자기가 만든 아티팩트를 자기가 켜는 경로를 막는다.
+    const review = await this.#independentReview(actor, type, artifact);
+    if (!blockedReason && !review.independent) blockedReason = review.reason || 'NO_INDEPENDENT_REVIEW';
     let status = 'CANDIDATE';
     let activated = artifact;
     let test = null;
@@ -95,6 +100,7 @@ export class PromotionEngine {
       planner: plan.planner,
       snapshot,
       test: test?.test || null,
+      review,
       blockedReason,
       cleanAudits: 0,
       createdAt: nowIso(),
@@ -159,6 +165,23 @@ export class PromotionEngine {
     const result = this.lock.then(work, work);
     this.lock = result.catch(() => {});
     return result;
+  }
+
+  // 독립 검증자를 조회한다. 주입이 없거나 검증자가 제작 주체와 같으면 독립이 아니다.
+  async #independentReview(actor, type, artifact) {
+    if (typeof this.resolveIndependentReview !== 'function') {
+      return { independent: false, reason: 'NO_INDEPENDENT_REVIEW', reviewerProfileId: null };
+    }
+    try {
+      const resolved = await this.resolveIndependentReview({ actor, type, artifact });
+      return {
+        independent: resolved?.independent === true,
+        reason: resolved?.independent === true ? null : (resolved?.reason || 'NO_INDEPENDENT_REVIEW'),
+        reviewerProfileId: resolved?.reviewerProfileId ?? null,
+      };
+    } catch {
+      return { independent: false, reason: 'INDEPENDENT_REVIEW_UNAVAILABLE', reviewerProfileId: null };
+    }
   }
 }
 
