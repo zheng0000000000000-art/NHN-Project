@@ -902,6 +902,7 @@ async function runDispatch(client, positionals, options, json) {
           error: run.error || '',
           outputExcerpt: String(run.output || '').slice(-4000),
         },
+        keepExecutionRunning: attempt < maxAttempts,
       },
     });
     task = verifyResult.task;
@@ -1482,6 +1483,19 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     'TEAM_LOOP_REVIEW: {"verdict":"APPROVE","summary":"concise evidence-based summary","concerns":[]}',
     'TEAM_LOOP_REVIEW: {"verdict":"REJECT","summary":"concise evidence-based summary","concerns":["specific blocking item"]}',
   ].join('\n\n');
+  const reviewPreflight = computeReviewPreflight(task, {
+    profileId: profile.id,
+    contextTokens: Math.ceil(prompt.length / 4),
+    maxTurns: 8,
+  });
+  if (reviewPreflight.blocked) {
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_BUDGET_EXHAUSTED',
+      message: reviewPreflight.reason,
+      executionUsage: { usage: {}, durationMs: 0, context: reviewPreflight.context },
+    });
+    throw new Error(reviewPreflight.reason);
+  }
   const run = await runExecutor(profile.tool, prompt, {
     workspace,
     model: profile.model || '',
@@ -1497,6 +1511,7 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       message: `AI reviewer ${profile.id} failed with exit code ${run.code}.`,
       exitCode: run.code,
       outputExcerpt: run.output,
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
     throw new Error(`AI reviewer ${profile.id} failed with exit code ${run.code}.`);
   }
@@ -1506,6 +1521,7 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       kind: 'AI_REVIEW_CONTRACT_MISSING',
       message: `AI reviewer ${profile.id} did not return the review contract.`,
       outputExcerpt: run.output,
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
     throw new Error(`AI reviewer ${profile.id} did not return the review contract.`);
   }
@@ -1517,6 +1533,7 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       kind: 'AI_REVIEW_JSON_INVALID',
       message: `AI reviewer ${profile.id} returned invalid JSON.`,
       outputExcerpt: match[1],
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
     throw new Error(`AI reviewer ${profile.id} returned invalid JSON.`);
   }
@@ -1527,6 +1544,7 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       kind: 'AI_REVIEW_VERDICT_INVALID',
       message: `AI reviewer ${profile.id} returned an invalid verdict: ${invalidVerdict}.`,
       outputExcerpt: match[1],
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
     throw new Error(`AI reviewer ${profile.id} returned an invalid verdict: ${invalidVerdict}.`);
   }
@@ -1538,6 +1556,7 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       verdict,
       summary: recommendation.summary || '',
       concerns: Array.isArray(recommendation.concerns) ? recommendation.concerns : [],
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     },
   })).task;
   const automaticApproval = reviewed.approvalPolicy === 'AUTO'
@@ -1556,6 +1575,45 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
   return { task: reviewed, verdict, automaticApproval };
 }
 
+export function computeReviewPreflight(task = {}, { profileId = '', contextTokens = 0, maxTurns = 8 } = {}) {
+  const previous = task.aiReviewBudget || {};
+  const tokenBudget = Math.max(1_000, Number(previous.tokenBudget) || 100_000);
+  const costBudgetUsd = Math.max(0.01, Number(previous.costBudgetUsd) || 2);
+  const cumulativeTokens = Math.max(0, Number(previous.cumulativeTokens) || 0);
+  const cumulativeCostUsd = Math.max(0, Number(previous.cumulativeCostUsd) || 0);
+  const blocked = cumulativeTokens >= tokenBudget || cumulativeCostUsd >= costBudgetUsd;
+  return {
+    blocked,
+    reason: blocked
+      ? `AI review budget exhausted (${cumulativeTokens}/${tokenBudget} tokens, $${cumulativeCostUsd}/$${costBudgetUsd}). User approval remains pending.`
+      : 'AI review budget available.',
+    tokenBudget,
+    costBudgetUsd,
+    cumulativeTokens,
+    cumulativeCostUsd,
+    context: {
+      profileId: String(profileId || ''),
+      selectedTokens: Math.max(0, Number(contextTokens) || 0),
+      maxTurns: Math.max(1, Number(maxTurns) || 8),
+      stage: 'AI_REVIEW',
+    },
+  };
+}
+
+function reviewExecutionUsage(run, profile, preflight) {
+  return {
+    tool: profile.tool,
+    model: profile.model || selectedModelLabel(profile.tool),
+    durationMs: Math.max(0, Number(run?.durationMs) || 0),
+    usage: run?.usage || {},
+    context: preflight.context,
+    budget: {
+      tokenBudget: preflight.tokenBudget,
+      costBudgetUsd: preflight.costBudgetUsd,
+    },
+  };
+}
+
 async function recordAiReviewFailure(client, task, profile, failure) {
   try {
     await client.request(`/api/tasks/${encodeURIComponent(task.id)}/review-failure`, {
@@ -1566,6 +1624,7 @@ async function recordAiReviewFailure(client, task, profile, failure) {
         message: failure.message,
         exitCode: failure.exitCode,
         outputExcerpt: String(failure.outputExcerpt || '').slice(-2000),
+        executionUsage: failure.executionUsage || null,
       },
     });
   } catch (recordError) {

@@ -1664,7 +1664,9 @@ async function handleApi(request, response) {
         : await failureCases.recordVerification({ task: runningTask, verification, actorUserId: actor.id });
       if (verification.passed) await failureCases.resolveTaskFailuresOnPass(taskId, verification.profile, actor.id);
       verification.failureCaseIds = recordedFailures.map((item) => item.id);
-      const task = await saveVerificationResult(taskId, actor, runningTask.version, verification);
+      const task = await saveVerificationResult(taskId, actor, runningTask.version, verification, {
+        keepExecutionRunning: body.keepExecutionRunning === true,
+      });
       const promotionChanges = await promotionEngine.audit(actor);
       const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: 'VERIFICATION_COMPLETED' });
       sendJson(response, 200, { task, failureCases: recordedFailures, promotionChanges, handoff });
@@ -1713,6 +1715,7 @@ async function handleApi(request, response) {
     if (!current.reviewerProfileId || String(body.reviewerProfileId || '') !== current.reviewerProfileId) {
       throw new HttpError(409, 'AI review profile does not match the task contract.');
     }
+    const reviewUsage = normalizeReviewExecutionUsage(body.executionUsage, current);
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'AI_REVIEW_RECORDED', async (next) => {
       next.aiReview = {
         status: 'COMPLETED',
@@ -1724,7 +1727,9 @@ async function handleApi(request, response) {
           : [],
         reviewedAt: nowIso(),
       };
+      next.aiReviewBudget = accumulateReviewBudget(next.aiReviewBudget, reviewUsage);
     });
+    await recordReviewUsage(actor, task, reviewUsage, 'SUCCESS');
     sendJson(response, 200, { task });
     return;
   }
@@ -1754,6 +1759,13 @@ async function handleApi(request, response) {
         outputExcerpt: String(body.outputExcerpt || '').slice(0, 2000),
       },
     }, actor.id);
+    const reviewUsage = normalizeReviewExecutionUsage(body.executionUsage, current);
+    if (body.executionUsage) {
+      await store.mutateTask(taskId, actor, current.version, 'AI_REVIEW_USAGE_RECORDED', async (next) => {
+        next.aiReviewBudget = accumulateReviewBudget(next.aiReviewBudget, reviewUsage);
+      });
+      await recordReviewUsage(actor, current, reviewUsage, 'FAILED', kind);
+    }
     await store.recordAudit(actor.id, 'AI_REVIEW_FAILED', {
       taskId: current.id,
       kind,
@@ -1954,6 +1966,61 @@ async function handleApi(request, response) {
   }
 }
 
+function normalizeReviewExecutionUsage(value, task) {
+  const input = value && typeof value === 'object' ? value : {};
+  const usage = input.usage && typeof input.usage === 'object' ? input.usage : {};
+  const context = input.context && typeof input.context === 'object' ? input.context : {};
+  const budget = input.budget && typeof input.budget === 'object' ? input.budget : {};
+  return {
+    model: String(input.model || task.reviewerProfileId || 'unknown').slice(0, 120),
+    durationMs: Math.max(0, Number(input.durationMs) || 0),
+    usage,
+    effectiveTokens: effectiveAutomationTokens(usage),
+    costUsd: Math.max(0, Number(usage.costUsd) || 0),
+    context: {
+      profileId: String(context.profileId || task.reviewerProfileId || '').slice(0, 80),
+      selectedTokens: Math.max(0, Number(context.selectedTokens) || 0),
+      maxTurns: Math.max(1, Number(context.maxTurns) || 8),
+      stage: 'AI_REVIEW',
+    },
+    budget: {
+      tokenBudget: Math.max(1_000, Number(budget.tokenBudget) || 100_000),
+      costBudgetUsd: Math.max(0.01, Number(budget.costBudgetUsd) || 2),
+    },
+  };
+}
+
+function accumulateReviewBudget(previous = {}, execution) {
+  return {
+    tokenBudget: execution.budget.tokenBudget,
+    costBudgetUsd: execution.budget.costBudgetUsd,
+    cumulativeTokens: Math.max(0, Number(previous.cumulativeTokens) || 0) + execution.effectiveTokens,
+    cumulativeCostUsd: Math.round((Math.max(0, Number(previous.cumulativeCostUsd) || 0) + execution.costUsd) * 1_000_000) / 1_000_000,
+    lastRunAt: nowIso(),
+    profileId: execution.context.profileId,
+    contextTokens: execution.context.selectedTokens,
+    maxTurns: execution.context.maxTurns,
+  };
+}
+
+async function recordReviewUsage(actor, task, execution, status, error = null) {
+  await safeRecordUsage({
+    actorUserId: actor.id,
+    feature: 'ai-review',
+    model: execution.model,
+    source: 'cli',
+    status,
+    durationMs: execution.durationMs,
+    usage: execution.usage,
+    error,
+    context: {
+      ...execution.context,
+      taskId: task.id,
+      reviewerProfileId: task.reviewerProfileId,
+    },
+  });
+}
+
 async function runTrackedAI(request, actor, feature, work, { contextPack = null } = {}) {
   const started = Date.now();
   try {
@@ -2031,15 +2098,15 @@ async function recordDeliveryFailure(task, actor, error, phase) {
 }
 
 
-async function saveVerificationResult(taskId, actor, expectedVersion, verification) {
+async function saveVerificationResult(taskId, actor, expectedVersion, verification, { keepExecutionRunning = false } = {}) {
   try {
     return await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_FINISHED', async (next) => {
       next.verification = verification;
-      next.executionState = 'IDLE';
+      next.executionState = keepExecutionRunning ? 'RUNNING' : 'IDLE';
       next.executionRun = next.executionRun ? {
         ...next.executionRun,
-        status: verification.passed ? 'VERIFIED' : 'VERIFICATION_FAILED',
-        finishedAt: nowIso(),
+        status: keepExecutionRunning ? 'RUNNING' : verification.passed ? 'VERIFIED' : 'VERIFICATION_FAILED',
+        finishedAt: keepExecutionRunning ? null : nowIso(),
       } : null;
     });
   } catch (error) {
@@ -2051,11 +2118,11 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   try {
     return await store.mutateTask(taskId, actor, latest.version, 'VERIFICATION_FINISHED_AFTER_CONFLICT', async (next) => {
       next.verification = verification;
-      next.executionState = 'IDLE';
+      next.executionState = keepExecutionRunning ? 'RUNNING' : 'IDLE';
       next.executionRun = next.executionRun ? {
         ...next.executionRun,
-        status: verification.passed ? 'VERIFIED' : 'VERIFICATION_FAILED',
-        finishedAt: nowIso(),
+        status: keepExecutionRunning ? 'RUNNING' : verification.passed ? 'VERIFIED' : 'VERIFICATION_FAILED',
+        finishedAt: keepExecutionRunning ? null : nowIso(),
       } : null;
     });
   } catch (error) {
