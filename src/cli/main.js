@@ -1530,9 +1530,11 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     JSON.stringify(compactVerificationForPrompt(task.verification || {}), null, 2),
     'Choose exactly one verdict. Use "APPROVE" when the diff satisfies the contract, otherwise use "REJECT".',
     'Never copy the placeholder text "APPROVE|REJECT" into verdict.',
-    'Return exactly one final line using one of these concrete forms:',
-    'TEAM_LOOP_REVIEW: {"verdict":"APPROVE","summary":"concise evidence-based summary","concerns":[]}',
-    'TEAM_LOOP_REVIEW: {"verdict":"REJECT","summary":"concise evidence-based summary","concerns":["specific blocking item"]}',
+    'The summary must be your own sentence citing what you saw in the diff or the evidence.',
+    'Copying the example summary below is rejected as a non-review.',
+    'Return exactly one final line shaped like this, with your own summary:',
+    'TEAM_LOOP_REVIEW: {"verdict":"APPROVE","summary":"<your one-sentence finding>","concerns":[]}',
+    'TEAM_LOOP_REVIEW: {"verdict":"REJECT","summary":"<your one-sentence finding>","concerns":["<blocking item>"]}',
   ].join('\n\n');
   const reviewPreflight = computeReviewPreflight(task, {
     profileId: profile.id,
@@ -1598,6 +1600,16 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
     throw new Error(`AI reviewer ${profile.id} returned an invalid verdict: ${invalidVerdict}.`);
+  }
+  // 예시 줄을 그대로 돌려준 리뷰는 판정이 아니라 복사다. APPROVE라도 통과시키지 않는다.
+  if (isPlaceholderReviewSummary(recommendation.summary)) {
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_SUMMARY_PLACEHOLDER',
+      message: `AI reviewer ${profile.id} returned the prompt's example summary instead of a review.`,
+      outputExcerpt: match[1],
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
+    });
+    throw new Error(`AI reviewer ${profile.id} returned the prompt's example summary instead of a review.`);
   }
   let reviewed = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/ai-review`, {
     method: 'POST',
@@ -1683,6 +1695,30 @@ async function recordAiReviewFailure(client, task, profile, failure) {
     error.cause = recordError;
     throw error;
   }
+}
+
+// 프롬프트가 보여준 예시 문면. 리뷰어가 이걸 그대로 돌려주면 판정이 아니라 복사다.
+export const AI_REVIEW_PLACEHOLDER_SUMMARY = 'concise evidence-based summary';
+
+// 요약이 실제 근거인지, 예시를 베낀 것인지 가른다.
+//
+// 프롬프트는 verdict 자리에 "APPROVE|REJECT"를 베끼지 말라고만 막았고, 그래서 그 실패는
+// 코퍼스에 남아 있다(AI_REVIEW_VERDICT_INVALID, 2회). 같은 구멍이 summary 자리에 그대로
+// 남아 있었고, 실제로 예시 줄이 통째로 돌아와 APPROVE가 났다. 판정은 Y/N이므로 프로그램이 막는다.
+// 처음에는 알려진 문구를 열거해서 막았는데, 프롬프트의 예시를 바꾸자 리뷰어가 새 예시를
+// 그대로 베껴 와 그대로 통과했다. 문면을 세는 방식은 예시를 바꿀 때마다 뚫린다.
+// 그래서 자리표시자의 형태를 막는다: 꺾쇠로 감싼 지시문, 알려진 예시 문구, 빈 값.
+export function isPlaceholderReviewSummary(value) {
+  const summary = String(value ?? '').trim();
+  if (!summary) return true;
+  // <your one-sentence finding> 처럼 통째로 자리표시자인 경우
+  if (/^<[^>]*>$/.test(summary)) return true;
+  // 문장 안에 자리표시자 꺾쇠가 남아 있는 경우
+  if (/<[a-z][^>]*>/i.test(summary)) return true;
+  const normalized = summary.toLowerCase().replace(/\s+/g, ' ');
+  if (normalized === AI_REVIEW_PLACEHOLDER_SUMMARY) return true;
+  if (normalized === 'specific blocking item') return true;
+  return false;
 }
 
 export function normalizeAiReviewVerdict(value) {
