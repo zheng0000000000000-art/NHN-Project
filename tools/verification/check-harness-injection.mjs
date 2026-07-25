@@ -52,6 +52,58 @@ export const INJECTIONS = [
     file: 'src/context-packs.js',
     mutate: (text) => text.replace('serialized: true', 'serialized: false'),
   },
+  {
+    harness: 'tools/verification/check-loop-scenarios.mjs',
+    contract: 'loop-scenarios',
+    name: 'delivery-gate-mislabels-no-deliverable',
+    file: 'src/delivery-gate.js',
+    mutate: (text) => text.replace("failureKind: 'NO_DELIVERABLE',", "failureKind: 'DELIVERED_ANYWAY',"),
+  },
+  {
+    harness: 'tools/verification/check-runtime.mjs',
+    contract: 'runtime-boundary',
+    name: 'browser-entry-imports-a-missing-module',
+    file: 'public/app.js',
+    mutate: (text) => `import './module-that-does-not-exist.js';\n${text}`,
+  },
+  {
+    harness: 'tools/verification/check-writing.mjs',
+    args: ['document'],
+    contract: 'writing-review',
+    name: 'unresolved-placeholder-left-in-a-document',
+    file: 'docs/BALANCE-OPERATIONS.md',
+    // 이 하네스는 "변경된" 문서만 본다. 변경이 없으면 검사 대상이 없어 실패하므로,
+    // 기준선도 변경이어야 한다 — 결함만 없는 변경.
+    mutate: (text) => `${text}\n\nTODO: 이 절은 추후 작성.\n`,
+    baseline: (text) => `${text}\n\n운영 메모: 이 절은 회귀 기준선이다.\n`,
+  },
+  {
+    harness: 'tools/verification/check-balance-gate.mjs',
+    args: ['examples/balance/unknown-auction-economy.json', '--mode=evaluate'],
+    contract: 'balance-gate',
+    name: 'metric-target-made-unreachable',
+    file: 'examples/balance/unknown-auction-economy.json',
+    mutate(text) {
+      const parsed = JSON.parse(text);
+      const metric = parsed.spec.metrics[0];
+      // 도달 불가능한 창으로 좁힌다. 게이트가 목표 미달을 잡아야 한다.
+      metric.minimum = 1e9;
+      metric.maximum = 1e9 + 1;
+      return JSON.stringify(parsed, null, 2);
+    },
+  },
+  {
+    harness: 'tools/verification/check-context-pack.mjs',
+    args: ['test/fixtures/context-pack/pack.json', '.'],
+    contract: 'context-pack-integrity',
+    name: 'declared-input-hash-goes-stale',
+    file: 'test/fixtures/context-pack/pack.json',
+    mutate(text) {
+      const parsed = JSON.parse(text);
+      parsed.contract.requiredInputs[0].sha256 = '0'.repeat(64);
+      return JSON.stringify(parsed, null, 2);
+    },
+  },
 ];
 
 // 샌드박스 주입으로는 증명할 수 없지만 다른 곳에서 적대적으로 증명된 하네스. 미증명과 섞지 않는다.
@@ -59,6 +111,9 @@ export const PROVEN_ELSEWHERE = {
   'tools/verification/check-integration-tree.mjs':
     'test/integration-tree.test.js — 임시 저장소에 충돌 마커를 커밋해 검출을 확인한다. '
     + '이 하네스는 설계상 자기가 실행된 트리가 아니라 메인 worktree를 검사하므로, 샌드박스에 심은 결함에는 닿지 않는다.',
+  'tools/verification/check-harness-injection.mjs':
+    'test/harness-injection.test.js — 아무것도 검사하지 않는 가짜 하네스를 MISSED로 잡아내는지 확인한다. '
+    + '자기 자신을 샌드박스 안에서 다시 돌리면 중첩 실행이 되므로 주입 대상으로 삼지 않는다.',
 };
 
 // 주입 명세가 없어 아직 증명되지 않은 하네스. 목록을 손으로 들고 있지 않고 디렉터리에서 도출한다.
@@ -126,8 +181,8 @@ export function removeSandbox(cwd, name = SANDBOX_NAME, { force = false } = {}) 
 }
 
 // 하네스를 제한된 환경에서 실행한다. timeout과 출력 상한 위반은 통과로 세지 않는다.
-function runHarness(harness, cwd) {
-  const result = spawnSync(process.execPath, [harness], {
+function runHarness(harness, cwd, args = []) {
+  const result = spawnSync(process.execPath, [harness, ...args], {
     cwd, encoding: 'utf8', timeout: HARNESS_TIMEOUT_MS, maxBuffer: OUTPUT_CAP_BYTES,
   });
   if (result.error) return { exit: 1, violation: String(result.error.code || result.error.message) };
@@ -137,19 +192,27 @@ function runHarness(harness, cwd) {
 // 샌드박스 안에서 결함 하나를 주입하고, 잡히는지 확인한 뒤 되돌린다.
 export function runInjection(injection, sandboxRoot) {
   const target = path.join(sandboxRoot, injection.file);
+  if (!existsSync(target)) {
+    // 스냅샷은 HEAD다. 아직 커밋되지 않은 대상은 결함이 아니라 명세 문제로 보고한다.
+    return { ...injection, caught: false, detail: `target is absent from the HEAD snapshot: ${injection.file}` };
+  }
   const original = readFileSync(target, 'utf8');
   const mutated = injection.mutate(original);
   if (mutated === original) {
     return { ...injection, caught: false, detail: 'the mutation changed nothing; the injection spec is stale' };
   }
+  const args = injection.args ?? [];
+  // 변경이 존재해야만 돌아가는 하네스가 있다. 그런 하네스의 기준선은 원본이 아니라
+  // "결함 없는 변경"이다. baseline이 없으면 원본으로 되돌린다.
+  const baseline = injection.baseline ? injection.baseline(original) : original;
   let injected = { exit: null, violation: null };
   try {
     writeFileSync(target, mutated, 'utf8');
-    injected = runHarness(injection.harness, sandboxRoot);
+    injected = runHarness(injection.harness, sandboxRoot, args);
   } finally {
-    writeFileSync(target, original, 'utf8');
+    writeFileSync(target, baseline, 'utf8');
   }
-  const restored = runHarness(injection.harness, sandboxRoot);
+  const restored = runHarness(injection.harness, sandboxRoot, args);
   return {
     ...injection,
     injectedExit: injected.exit,

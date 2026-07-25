@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "goal": "Prove the context pack integrity harness detects a stale declared input.",
+  "contract": {
+    "packId": "context-pack-injection-fixture",
+    "requiredInputs": [
+      {
+        "path": "test/fixtures/context-pack/source.md",
+        "sha256": "046590204e0d4d999021b223240720f536988f5da89614ad01eaf9f5dd7c7d4a"
+      }
+    ],
+    "readOrder": [
+      "test/fixtures/context-pack/source.md"
+    ],
+    "writeScope": [],
+    "forbiddenActions": []
+  }
+}
