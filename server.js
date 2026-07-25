@@ -2832,10 +2832,43 @@ function normalizeAgentActivity(input = {}, actor) {
     passed: typeof input.passed === 'boolean' ? input.passed : null,
     failureCaseIds: Array.isArray(input.failureCaseIds) ? input.failureCaseIds.map((item) => String(item).trim()).filter(Boolean).slice(0, 20) : [],
     learnedArtifacts: Array.isArray(input.learnedArtifacts) ? input.learnedArtifacts.slice(0, 20) : [],
+    preflight: normalizeExecutionPreflight(input.preflight),
     startedAt: previousStartedAt || now,
     updatedAt: now,
     finishedAt: input.finished ? now : null,
     actorUserId: actor.id,
+  };
+}
+
+function normalizeExecutionPreflight(input) {
+  if (!input || typeof input !== 'object') return null;
+  const budget = input.budget && typeof input.budget === 'object' ? input.budget : {};
+  const selectedContext = input.selectedContext && typeof input.selectedContext === 'object' ? input.selectedContext : {};
+  const executor = input.executor && typeof input.executor === 'object' ? input.executor : {};
+  const decision = String(input.decision || '').toUpperCase();
+  return {
+    decision: ['RUN', 'SHRINK', 'ASK'].includes(decision) ? decision : 'ASK',
+    reason: clipActivity(input.reason, 500),
+    hardLimitExceeded: input.hardLimitExceeded === true,
+    selectedContext: {
+      id: clipActivity(selectedContext.id, 160) || null,
+      sourceCount: Math.max(0, Number(selectedContext.sourceCount) || 0),
+      estimatedTokens: Math.max(0, Number(selectedContext.estimatedTokens) || 0),
+    },
+    executor: {
+      tool: clipActivity(executor.tool, 40),
+      model: clipActivity(executor.model, 80) || null,
+    },
+    maxTurns: Math.max(1, Math.min(100, Number(input.maxTurns) || 1)),
+    estimatedRunTokens: Math.max(0, Number(input.estimatedRunTokens) || 0),
+    budget: {
+      tokenBudget: Math.max(0, Number(budget.tokenBudget) || 0),
+      costBudgetUsd: Math.max(0, Number(budget.costBudgetUsd) || 0),
+      cumulativeTokens: Math.max(0, Number(budget.cumulativeTokens) || 0),
+      cumulativeCostUsd: Math.max(0, Number(budget.cumulativeCostUsd) || 0),
+      remainingTokens: Math.max(0, Number(budget.remainingTokens) || 0),
+      remainingCostUsd: Math.max(0, Number(budget.remainingCostUsd) || 0),
+    },
   };
 }
 

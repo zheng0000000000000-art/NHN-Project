@@ -2132,6 +2132,7 @@ function notifyWorkChange(title, body, tag) {
 
 function renderAgentActivityItem(task, worker = null) {
   const activity = task.agentActivity || {};
+  const preflight = activity.preflight;
   const attempt = activity.attempt && activity.maxAttempts ? `${activity.attempt}/${activity.maxAttempts}` : '';
   const alive = worker?.status === 'RUNNING';
   const queued = task.executionState === 'QUEUED';
@@ -2153,6 +2154,7 @@ function renderAgentActivityItem(task, worker = null) {
       <span>시도<b>${escapeHtml(attempt || '—')}</b></span>
       <span>자동 실행 예산<b>${escapeHtml(`${task.automationGuard?.failedRuns || 0}/3 실패`)}</b></span>
     </div>
+    ${preflight ? `<div class="agent-current-action"><b>Preflight ${escapeHtml(preflight.decision)}</b> · context ${escapeHtml(formatTokens(preflight.selectedContext?.estimatedTokens))} · max ${escapeHtml(preflight.maxTurns)} turns · cumulative ${escapeHtml(formatTokens(preflight.budget?.cumulativeTokens))}/${escapeHtml(formatTokens(preflight.budget?.tokenBudget))}<br><small>${escapeHtml(preflight.reason || '')}</small></div>` : ''}
     ${task.automationGuard?.circuitOpen ? `<p class="agent-circuit-open">회로 차단됨 · 사용자가 문제를 확인하고 재개해야 합니다.</p>` : ''}
     ${activity.detail ? `<p class="agent-current-action">${escapeHtml(activity.detail)}</p>` : ''}
     <ol class="agent-trace-list">${trace.map((item) => `<li class="${escapeHtml(item.state)}"><i></i><span><b>${escapeHtml(item.label)}</b><small>${escapeHtml(item.at ? relativeTime(item.at) : '')}</small></span></li>`).join('')}</ol>
