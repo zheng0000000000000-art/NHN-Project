@@ -1062,12 +1062,19 @@ const CONTEXT_TIER_RULES = [
   { id: 'knowledge-research', pattern: /wiki|knowledge|document-review|brainstorm-review/i },
 ];
 
+function isSingleFileScope(allowedPaths) {
+  if (!Array.isArray(allowedPaths) || allowedPaths.length !== 1) return false;
+  const [only] = allowedPaths;
+  return typeof only === 'string' && only.length > 0 && !/[*{}]/.test(only);
+}
+
 export function selectContextTier(task = {}) {
   const shape = [task.verificationProfile, ...(Array.isArray(task.allowedPaths) ? task.allowedPaths : [])]
     .filter(Boolean)
     .join(' ');
   const rule = CONTEXT_TIER_RULES.find((candidate) => candidate.pattern.test(shape));
-  return rule ? rule.id : 'implementation';
+  if (rule) return rule.id;
+  return isSingleFileScope(task.allowedPaths) ? 'single-file' : 'implementation';
 }
 
 async function prepareExecutorContext(client, task, indexedTokens = 0) {

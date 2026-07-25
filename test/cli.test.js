@@ -7,7 +7,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { parseCliArgs, listOption, repeatedOption } from '../src/cli/args.js';
 import { CliClient, ApiError } from '../src/cli/client.js';
 import { clearSession, loadSession, normalizeServer, saveSession } from '../src/cli/session.js';
-import { computePreflightDecision, computeReviewPreflight, maxTurnRecovery, normalizeAiReviewVerdict } from '../src/cli/main.js';
+import { computePreflightDecision, computeReviewPreflight, maxTurnRecovery, normalizeAiReviewVerdict, selectContextTier } from '../src/cli/main.js';
+import { ContextSeedRegistry } from '../src/context-packs.js';
 
 test('CLI parser keeps repeated task scope and criteria options', () => {
   const parsed = parseCliArgs([
@@ -178,4 +179,18 @@ test('CLI session is stored per selected server', async (t) => {
   assert.deepEqual(await loadSession(), session);
   await clearSession();
   assert.deepEqual(await loadSession(), {});
+});
+
+test('context tier selection gives small single-file work materially less context than multi-file contract work', async () => {
+  assert.equal(selectContextTier({ allowedPaths: ['src/cli/main.js'] }), 'single-file');
+  assert.equal(selectContextTier({ allowedPaths: ['src/cli/main.js', 'src/context-packs.js'] }), 'implementation');
+  assert.equal(selectContextTier({ allowedPaths: ['src/**'] }), 'implementation');
+
+  const registry = new ContextSeedRegistry(path.resolve('config/context-seeds.json'));
+  await registry.initialize();
+  const seeds = new Map(registry.list().map((seed) => [seed.id, seed]));
+  const singleFile = seeds.get('single-file');
+  const implementation = seeds.get('implementation');
+  assert.ok(singleFile.maxSourceCharacters < implementation.maxSourceCharacters / 2);
+  assert.ok(singleFile.maxSourceChunks < implementation.maxSourceChunks);
 });
