@@ -98,6 +98,18 @@
         { "file": "git", "args": ["diff", "--check"], "expectedExit": 0, "timeoutMs": 60000 }
       ]
     },
+    "integration-tree-clean": {
+      "label": "Integration tree clean",
+      "description": "Fails when the tree that task worktrees merge into has an unfinished git operation or a committed conflict marker. Task verification only ever runs inside its own worktree, so nothing else looks at the integration tree.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["tools/verification/check-integration-tree.mjs"],
+          "expectedExit": 0,
+          "timeoutMs": 60000
+        }
+      ]
+    },
     "failure-dedupe-regression": {
       "label": "Failure dedupe regression",
       "description": "Ensures repeated failure events do not explode into duplicate file-level cases.",
