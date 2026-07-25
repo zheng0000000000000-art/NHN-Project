@@ -761,7 +761,13 @@ async function runDispatch(client, positionals, options, json) {
       maxAttempts,
       exitCode: run.code,
     });
-    verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, { method: 'POST', body: { expectedVersion: task.version } });
+    verifyResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/verify`, {
+      method: 'POST',
+      body: {
+        expectedVersion: task.version,
+        executionResult: { exitCode: run.code, timedOut: run.timedOut === true },
+      },
+    });
     task = verifyResult.task;
     passed = Boolean(task.verification?.passed);
     attempts.push({

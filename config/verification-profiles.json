@@ -52,6 +52,18 @@
         }
       ]
     },
+    "agent-delivery-integrity": {
+      "label": "Agent delivery integrity",
+      "description": "Prevents a failed or no-op agent execution from passing on unchanged baseline tests.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["--test", "{teamLoopRoot}/test/delivery-gate.test.js"],
+          "expectedExit": 0,
+          "timeoutMs": 60000
+        }
+      ]
+    },
     "balance-gate": {
       "label": "Balance target gate",
       "description": "Evaluates the shipping configuration against declared metric targets, then confirms the tuned candidate also passes.",

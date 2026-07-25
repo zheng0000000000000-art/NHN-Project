@@ -311,6 +311,7 @@ export class Store {
       approvalPolicy: normalizeApprovalPolicy(input.approvalPolicy),
       allowedPaths,
       acceptanceCriteria: this.#normalizeList(input.acceptanceCriteria, 10, 1000),
+      allowNoChanges: input.allowNoChanges === true,
       verificationProfile,
       schedule: normalizeTaskSchedule(input.schedule),
       skillIds,

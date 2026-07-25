@@ -48,6 +48,7 @@ import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
 import { selectAutomaticNextPlanTask } from './src/plan-progression.js';
+import { applyAgentDeliveryGate } from './src/delivery-gate.js';
 import { classifyDeliveryFailure } from './src/delivery-failures.js';
 import { loadConfig } from './src/cli/session.js';
 import { normalizeWorkerConfig, selectExecutor, selectReviewer } from './src/executor-router.js';
@@ -1645,6 +1646,7 @@ async function handleApi(request, response) {
       let verification;
       try {
         verification = await verifier.runLocked(runningTask, verifyRoot);
+        verification = applyAgentDeliveryGate(verification, runningTask, body.executionResult);
       } catch (error) {
         verification = {
           status: 'ERROR',

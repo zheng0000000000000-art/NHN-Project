@@ -236,11 +236,11 @@ function buildVerificationFailures(task, verification) {
   }
   for (const [index, check] of (verification.checks ?? []).entries()) {
     if (check.passed) continue;
-    const kind = check.timedOut ? 'TIMEOUT' : check.spawnError ? 'SPAWN_ERROR' : 'EXIT_MISMATCH';
+    const kind = check.failureKind || (check.timedOut ? 'TIMEOUT' : check.spawnError ? 'SPAWN_ERROR' : 'EXIT_MISMATCH');
     output.push(makeCase({
       harnessId,
       kind,
-      title: `${check.file} ${check.args?.join(' ') ?? ''}`.trim(),
+      title: String(check.title || `${check.file} ${check.args?.join(' ') ?? ''}`).trim(),
       taskIds,
       identity: {
         harnessId,
