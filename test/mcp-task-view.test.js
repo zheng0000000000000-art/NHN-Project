@@ -18,7 +18,8 @@ test('work task view adds only fields needed to choose and claim work', () => {
   assert.deepEqual(taskListView(task, 'work'), {
     id: 'B03', title: 'Split engine modules', status: 'READY',
     allowedPaths: ['src/engine/**', 'test/engine/**'],
-    assigneeUserId: 'usr_owner', executionState: 'QUEUED', version: 7,
+    assigneeUserId: 'usr_owner', executionState: 'QUEUED',
+    priority: 100, planId: null, planStepId: null, dependsOnTaskIds: [], version: 7,
   });
 });
 

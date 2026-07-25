@@ -238,9 +238,23 @@
       </section>
 
       <section id="board-view" class="view-section hidden">
-        <div class="dashboard-heading"><div><p class="eyebrow">HUMAN COORDINATION</p><h2>사람들의 계획과 담당</h2><p class="report-lead">앞으로 할 일, 담당자와 일정만 공유합니다. AI 실행 결과와 실패 학습은 작업 카드 없이 별도 검증 기록으로 남습니다.</p></div></div>
+        <div class="dashboard-heading"><div><p class="eyebrow">SHARED EXECUTION LEDGER</p><h2>계획과 작업 배정</h2><p class="report-lead">PM 계획을 실행 가능한 작업 계약으로 나누고, 사람과 AI가 같은 우선순위·의존성·검증 상태를 사용합니다.</p></div></div>
         <section class="toolbar">
-          <div class="toolbar-actions"><button id="new-task-button" class="primary" type="button">새 작업</button><button id="ai-assistant-button" class="ghost" type="button">AI 도우미</button><button id="milestone-toggle" class="ghost" type="button">마일스톤</button><span id="ai-status" class="badge"></span></div>
+          <div class="toolbar-actions">
+            <label class="executor-picker">실행 방식
+              <select id="worker-routing-mode">
+                <option value="auto">자동 배분</option>
+                <option value="local">로컬 전용</option>
+                <option value="high">최고 품질</option>
+              </select>
+            </label>
+            <label class="executor-picker">실행자
+              <select id="worker-executor"><option value="">자동 선택</option></select>
+            </label>
+            <button id="start-next-work" class="primary" type="button">다음 작업 시작</button>
+            <span id="ai-status" class="badge"></span>
+          </div>
+          <div id="worker-routing-preview" class="worker-routing-preview"></div>
           <div id="summary" class="summary"></div>
         </section>
         <section class="board-filters" aria-label="작업 보드 필터">
@@ -248,31 +262,32 @@
           <label>리뷰어<select id="board-reviewer-filter"><option value="">전체 리뷰어</option></select></label>
           <button id="board-clear-filter" class="ghost compact" type="button">필터 초기화</button>
         </section>
+        <section id="plan-overview" class="plan-overview"></section>
         <section id="agent-activity-panel" class="agent-activity-panel"></section>
 
-        <section id="milestone-panel" class="panel milestone-panel hidden">
+        <section id="milestone-panel" class="panel milestone-panel">
           <div class="panel-heading">
-            <div><p class="eyebrow">MILESTONE CALENDAR</p><h2>작업 일정과 완료 흐름</h2><p class="muted">작업을 언제 가져갔고, 검증·리뷰·완료가 언제 일어났는지 달력처럼 봅니다. 계획 시작/마감/메모는 사람이 직접 수정할 수 있습니다.</p></div>
+            <div><p class="eyebrow">WORK HISTORY CALENDAR</p><h2>작업 이력 달력</h2><p class="muted">작업 시작, 검증, 리뷰, 완료와 차단 기록을 날짜별로 보여주는 읽기 전용 이력입니다.</p></div>
             <div class="milestone-controls">
               <button id="milestone-prev" class="ghost compact" type="button">이전</button>
               <span id="milestone-month" class="badge"></span>
               <button id="milestone-next" class="ghost compact" type="button">다음</button>
             </div>
           </div>
-          <div class="milestone-filters">
+          <div class="milestone-filters hidden">
             <label>보기<select id="milestone-event-filter"><option value="">전체 이벤트</option><option value="planned">계획</option><option value="claimed">가져감</option><option value="verify">검증</option><option value="review">리뷰</option><option value="done">완료</option><option value="blocked">막힘/반려</option></select></label>
             <label>담당자<select id="milestone-user-filter"><option value="">전체 담당자</option></select></label>
             <label>검색<input id="milestone-search" placeholder="작업 제목"></label>
             <button id="milestone-clear-filter" class="ghost compact" type="button">필터 초기화</button>
           </div>
-          <form id="schedule-form" class="schedule-form">
+          <form id="schedule-form" class="schedule-form hidden">
             <label>작업<select name="taskId"></select></label>
             <label>계획 시작<input name="plannedStart" type="date"></label>
             <label>계획 마감<input name="plannedEnd" type="date"></label>
             <label class="wide">메모<input name="note" maxlength="1000" placeholder="예: v0.8 전에 리뷰까지 끝내기"></label>
             <button class="ghost" type="submit">일정 저장</button>
           </form>
-          <div id="milestone-ranges" class="milestone-ranges"></div>
+          <div id="milestone-ranges" class="milestone-ranges hidden"></div>
           <div id="milestone-calendar" class="milestone-calendar"></div>
           <div id="milestone-stream" class="milestone-stream"></div>
         </section>

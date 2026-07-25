@@ -70,6 +70,20 @@ test('orchestration action changes when the compiled constitution decision table
   assert.equal(decision.action.name, 'plan_experiment');
 });
 
+test('orchestration selects the highest-priority executable plan step', async () => {
+  const works = [
+    { ...work('blocked-by-dependency', 'READY'), priority: 1, dependencyBlocked: true, pendingDependencyIds: ['previous'] },
+    { ...work('lower-priority', 'READY'), priority: 30, dependencyBlocked: false },
+    { ...work('higher-priority', 'READY'), priority: 10, dependencyBlocked: false },
+  ];
+  const engine = new OrchestrationEngine({
+    constitutionCompiler: { policy: () => policy },
+    entryService: entryService({ projects: [project('team-loop', 3)], works }),
+  });
+  const decision = await engine.enter({}, works);
+  assert.equal(decision.work.id, 'higher-priority');
+});
+
 function entryService({ projects, works, handoff = null }) {
   return {
     portfolio: async () => ({ projects }),

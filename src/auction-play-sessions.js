@@ -7,6 +7,7 @@ import {
   createSeededRandom,
 } from './engine/economy-simulator.js';
 import { HttpError, nowIso, randomId } from './utils.js';
+import { analyzeInformationValue } from './auction-information-value.js';
 
 export class AuctionPlaySessionStore {
   constructor({ dataDirectory, seedPath }) {
@@ -67,6 +68,10 @@ export class AuctionPlaySessionStore {
     session.updatedAt = nowIso();
     await this.save();
     return publicSession(session);
+  }
+
+  informationValue(id, actor) {
+    return analyzeInformationValue(this.findOwned(id, actor));
   }
 
   findOwned(id, actor) {

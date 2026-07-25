@@ -12,6 +12,20 @@ const DUMMY_PASSWORD_RECORD = {
   passwordDigest: 'sha256',
 };
 
+function assertAcyclicDependencies(graph) {
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (id) => {
+    if (visiting.has(id)) throw new HttpError(400, `Plan dependency cycle detected at ${id}.`);
+    if (visited.has(id)) return;
+    visiting.add(id);
+    for (const dependency of graph.get(id) || []) visit(dependency);
+    visiting.delete(id);
+    visited.add(id);
+  };
+  for (const id of graph.keys()) visit(id);
+}
+
 export class Store {
   constructor(dataDirectory, { signupCode = '', serverStartedAt = Date.now(), bootstrapWindowMs = 10 * 60 * 1000 } = {}) {
     this.dataDirectory = dataDirectory;
@@ -123,6 +137,62 @@ export class Store {
   }
 
   async createTask(actor, input, profileNames, { defaultProfile = null, autoSkillIds = [], autoLearningRationale = null } = {}) {
+    const task = this.#buildTask(actor, input, profileNames, { defaultProfile, autoSkillIds, autoLearningRationale });
+    return this.#withLock(async () => {
+      const db = await readJson(this.tasksPath, EMPTY_TASKS);
+      db.tasks.push(task);
+      await atomicWriteJson(this.tasksPath, db);
+      await this.#audit(actor.id, 'TASK_CREATED', { taskId: task.id, title: task.title });
+      return task;
+    });
+  }
+
+  async createPlan(actor, input, profileNames) {
+    const objective = String(input.objective || '').trim().slice(0, 2000);
+    const title = String(input.title || objective).trim().slice(0, 120);
+    const steps = Array.isArray(input.steps) ? input.steps : [];
+    if (title.length < 3 || objective.length < 3) throw new HttpError(400, 'Plan needs a title and objective.');
+    if (!steps.length || steps.length > 30) throw new HttpError(400, 'Plan needs 1-30 steps.');
+    const stepIds = steps.map((step, index) => String(step.stepId || `step-${index + 1}`).trim());
+    if (new Set(stepIds).size !== stepIds.length || stepIds.some((id) => !/^[a-zA-Z0-9_-]{1,80}$/.test(id))) {
+      throw new HttpError(400, 'Plan step ids must be unique safe identifiers.');
+    }
+    const dependencies = new Map(steps.map((step, index) => [
+      stepIds[index],
+      [...new Set((Array.isArray(step.dependsOn) ? step.dependsOn : []).map(String))],
+    ]));
+    for (const [stepId, refs] of dependencies) {
+      if (refs.includes(stepId) || refs.some((ref) => !dependencies.has(ref))) {
+        throw new HttpError(400, `Plan step ${stepId} has an invalid dependency.`);
+      }
+    }
+    assertAcyclicDependencies(dependencies);
+    const planId = randomId('plan_');
+    const taskIds = new Map(stepIds.map((stepId) => [stepId, randomId('tsk_')]));
+    const tasks = steps.map((step, index) => this.#buildTask(actor, {
+      ...step,
+      id: taskIds.get(stepIds[index]),
+      priority: step.priority ?? (index + 1) * 10,
+      allowedPaths: step.allowedPaths || input.allowedPaths || ['**'],
+      verificationProfile: step.verificationProfile || input.verificationProfile,
+      assigneeUserId: step.assigneeUserId || input.assigneeUserId,
+      reviewerUserId: step.reviewerUserId || input.reviewerUserId,
+      planId,
+      planStepId: stepIds[index],
+      planTitle: title,
+      dependsOnTaskIds: dependencies.get(stepIds[index]).map((ref) => taskIds.get(ref)),
+    }, profileNames, {}));
+
+    return this.#withLock(async () => {
+      const db = await readJson(this.tasksPath, EMPTY_TASKS);
+      db.tasks.push(...tasks);
+      await atomicWriteJson(this.tasksPath, db);
+      await this.#audit(actor.id, 'PLAN_CREATED', { planId, title, objective, taskIds: tasks.map((task) => task.id) });
+      return { schemaVersion: 1, kind: 'team-loop-plan', planId, title, objective, tasks };
+    });
+  }
+
+  #buildTask(actor, input, profileNames, { defaultProfile = null, autoSkillIds = [], autoLearningRationale = null } = {}) {
     const title = String(input.title ?? '').trim();
     if (title.length < 3 || title.length > 120) throw new HttpError(400, 'Title must be 3-120 characters.');
     const requestedProfile = input.verificationProfile == null || input.verificationProfile === ''
@@ -137,58 +207,61 @@ export class Store {
     const allowedPaths = this.#normalizePaths(input.allowedPaths);
     if (allowedPaths.length === 0) throw new HttpError(400, 'At least one allowed path is required. Use ** to allow the whole workspace.');
     const skillIds = this.#normalizeSkillIds(input.skillIds ?? autoSkillIds);
-
-    return this.#withLock(async () => {
-      const db = await readJson(this.tasksPath, EMPTY_TASKS);
-      const task = {
-        id: randomId('tsk_'),
-        title,
-        description: String(input.description ?? '').trim().slice(0, 4000),
-        status: 'READY',
-        priority: Number.isFinite(Number(input.priority)) ? Math.max(1, Math.min(999, Number(input.priority))) : 100,
-        creatorUserId: actor.id,
-        assigneeUserId: input.assigneeUserId || null,
-        reviewerUserId: input.reviewerUserId || null,
-        allowedPaths,
-        acceptanceCriteria: this.#normalizeList(input.acceptanceCriteria, 10, 1000),
-        verificationProfile,
-        schedule: normalizeTaskSchedule(input.schedule),
-        skillIds,
-        learning: {
-          applications: skillIds.length || defaultProfile
-            ? [{
-              at: nowIso(),
-              appliedByUserId: actor.id,
-              harnessId: input.verificationProfile == null || input.verificationProfile === '' ? verificationProfile : null,
-              harnessVersion: null,
-              skillIds,
-              skillVersions: {},
-              sourceFailureCaseIds: [],
-              automatic: true,
-              selectionRationale: autoLearningRationale,
-            }]
-            : [],
-        },
-        verification: null,
-        review: null,
-        blocked: null,
-        executor: null,
-        executionMode: 'HUMAN',
-        executionState: 'IDLE',
-        supersedesTaskId: input.supersedesTaskId || null,
-        supersededByTaskId: null,
-        archived: false,
-        archivedAt: null,
-        archivedByUserId: null,
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-        version: 1,
-      };
-      db.tasks.push(task);
-      await atomicWriteJson(this.tasksPath, db);
-      await this.#audit(actor.id, 'TASK_CREATED', { taskId: task.id, title: task.title });
-      return task;
-    });
+    const at = nowIso();
+    return {
+      id: input.id || randomId('tsk_'),
+      title,
+      description: String(input.description ?? '').trim().slice(0, 4000),
+      status: 'READY',
+      priority: Number.isFinite(Number(input.priority)) ? Math.max(1, Math.min(999, Number(input.priority))) : 100,
+      creatorUserId: actor.id,
+      assigneeUserId: input.assigneeUserId || null,
+      reviewerUserId: input.reviewerUserId || null,
+      allowedPaths,
+      acceptanceCriteria: this.#normalizeList(input.acceptanceCriteria, 10, 1000),
+      verificationProfile,
+      schedule: normalizeTaskSchedule(input.schedule),
+      skillIds,
+      planId: input.planId || null,
+      planStepId: input.planStepId || null,
+      planTitle: input.planTitle || null,
+      dependsOnTaskIds: this.#normalizeList(input.dependsOnTaskIds, 30, 160),
+      learning: {
+        applications: skillIds.length || defaultProfile ? [{
+          at,
+          appliedByUserId: actor.id,
+          harnessId: input.verificationProfile == null || input.verificationProfile === '' ? verificationProfile : null,
+          harnessVersion: null,
+          skillIds,
+          skillVersions: {},
+          sourceFailureCaseIds: [],
+          automatic: true,
+          selectionRationale: autoLearningRationale,
+        }] : [],
+      },
+      verification: null,
+      review: null,
+      blocked: null,
+      executor: null,
+      executionMode: 'HUMAN',
+      executionState: 'IDLE',
+      automationGuard: {
+        totalRuns: 0,
+        failedRuns: 0,
+        sameFailureCount: 0,
+        lastFailureSignature: '',
+        lastResultAt: null,
+        circuitOpen: false,
+      },
+      supersedesTaskId: input.supersedesTaskId || null,
+      supersededByTaskId: null,
+      archived: false,
+      archivedAt: null,
+      archivedByUserId: null,
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+    };
   }
 
   async mutateTask(taskId, actor, expectedVersion, mutationName, mutate) {

@@ -2,6 +2,7 @@ import { parseCliArgs, option, requireOption, listOption, repeatedOption } from 
 import { CliClient } from './client.js';
 import { botHome, clearSession, loadConfig, loadSession, loadSessionFrom, normalizeServer, saveConfig, saveSession } from './session.js';
 import { mergeCliExecutor } from '../executor.js';
+import { normalizeWorkerConfig, selectExecutor } from '../executor-router.js';
 import { commitTaskWorktree, createTaskWorktree, mergePreparedWorktree, mergeTaskWorktree, removeTaskWorktree, listTaskWorktrees, worktreePath } from '../worktree.js';
 import { printFailures, printHarnesses, printTask, printTasks, printUsers, printValue } from './format.js';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -110,6 +111,7 @@ export async function runCli(argv) {
   if (command === 'reviewer') return runReviewer(client, positionals.slice(1), options, json);
   if (command === 'orchestrate') return runOrchestrate(client, positionals.slice(1), options, json);
   if (command === 'dispatch') return runDispatch(client, positionals.slice(1), options, json);
+  if (command === 'worker') return runWorker(client, positionals.slice(1), options, json);
   if (command === 'worktree') return runWorktree(client, positionals.slice(1), options, json);
 
   throw new Error(`Unknown command: ${command}. Run "team-loop help".`);
@@ -428,7 +430,7 @@ function compactVerificationForPrompt(verification) {
   };
 }
 
-function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inherit }) {
+function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inherit, timeoutMs = 30 * 60_000 }) {
   return new Promise((resolve, reject) => {
     const normalized = String(tool || 'claude-code');
     let exe;
@@ -436,6 +438,7 @@ function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inhe
     if (normalized === 'claude-code') {
       args = ['-p', '--permission-mode', permission || 'acceptEdits'];
       if (model) args.push('--model', model);
+      if (!inherit) args.push('--output-format', 'json');
       exe = process.env.TEAM_LOOP_CLAUDE_BIN || 'claude';
     } else if (normalized === 'codex') {
       args = ['exec', '-C', workspace, '--sandbox', sandbox || 'workspace-write'];
@@ -456,6 +459,7 @@ function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inhe
     // Deliver the prompt on STDIN, never as a CLI argument: long multi-line
     // work orders are fragile as command-line arguments on Windows shells.
     const command = windowsCommand(exe, args);
+    const startedAt = Date.now();
     const child = spawn(command.exe, command.args, {
       cwd: workspace,
       stdio: ['pipe', inherit ? 'inherit' : 'pipe', inherit ? 'inherit' : 'pipe'],
@@ -463,12 +467,30 @@ function runExecutor(tool, prompt, { workspace, model, permission, sandbox, inhe
       windowsHide: true,
     });
     let out = '';
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+    timeout.unref();
     if (!inherit) {
       child.stdout.on('data', (chunk) => { out += chunk; });
       child.stderr.on('data', (chunk) => { out += chunk; });
     }
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, output: out }));
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve({
+        code: timedOut ? 124 : code,
+        output: out,
+        timedOut,
+        durationMs: Date.now() - startedAt,
+        usage: extractCliUsage(normalized, out),
+      });
+    });
     child.stdin.write(prompt);
     child.stdin.end();
   });
@@ -606,7 +628,14 @@ async function runDispatch(client, positionals, options, json) {
   let workspace = bootstrap.workspace?.root || process.cwd();
 
   if (task.status === 'READY') {
-    const executor = mergeCliExecutor(await loadConfig());
+    const configuredExecutor = mergeCliExecutor(await loadConfig());
+    const executor = option(options, 'executor') || option(options, 'model')
+      ? {
+        ...(configuredExecutor || {}),
+        ...(option(options, 'executor') ? { tool: String(option(options, 'executor')) } : {}),
+        ...(option(options, 'model') ? { model: String(option(options, 'model')) } : { model: '' }),
+      }
+      : configuredExecutor;
     if (task.executionState !== 'QUEUED') {
       task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/queue-agent`, {
         method: 'POST', body: { expectedVersion: task.version },
@@ -681,9 +710,14 @@ async function runDispatch(client, positionals, options, json) {
       attempt,
       maxAttempts,
     });
-    run = await runExecutor(tool, attemptPrompt, {
-      workspace, model, permission, sandbox, inherit: !json,
-    });
+    try {
+      run = await runExecutor(tool, attemptPrompt, {
+        workspace, model, permission, sandbox, inherit: !json,
+        timeoutMs: Math.max(1, numberOption(options, 'max-minutes', 30)) * 60_000,
+      });
+    } catch (error) {
+      run = { code: 1, output: error.message, error: error.message };
+    }
     if (!json) process.stdout.write(`Executor exited with code ${run.code}. Verifying ...\n`);
     task = await reportTaskActivity(client, task, {
       phase: 'verifying',
@@ -799,7 +833,7 @@ async function runDispatch(client, positionals, options, json) {
     }
   }
 
-  const final = findTask((await client.request('/api/bootstrap')).tasks, task.id);
+  let final = findTask((await client.request('/api/bootstrap')).tasks, task.id);
   await reportTaskActivity(client, final, {
     phase: passed ? 'finished' : 'failed',
     label: passed ? '작업 루프 완료' : '작업 루프 실패',
@@ -815,6 +849,21 @@ async function runDispatch(client, positionals, options, json) {
     learnedArtifacts,
     finished: true,
   });
+  const failureIds = (verifyResult?.failureCases || []).map((failure) => failure.id).filter(Boolean).sort();
+  const guardResult = await client.request(`/api/tasks/${encodeURIComponent(task.id)}/automation-result`, {
+    method: 'POST',
+    body: {
+      passed,
+      failureSignature: passed ? '' : failureIds.join('|') || `executor:${run?.code ?? 'error'}|verification:${final.verification?.status || 'missing'}`,
+      executionUsage: {
+        tool,
+        model: model || selectedModelLabel(tool),
+        durationMs: run?.durationMs || 0,
+        usage: run?.usage || {},
+      },
+    },
+  });
+  final = guardResult.task;
   const summary = { taskId: task.id, attempts, learnedArtifacts, executorExit: run?.code, verification: final.verification?.status, passed, finalStatus: final.status, review };
   if (json) printValue({ ...summary, task: final }, { json: true });
   else {
@@ -1038,17 +1087,19 @@ async function runSolo(client, positionals, options, json) {
 
 async function runConfig(positionals, options, json) {
   const action = positionals[0] || 'show';
-  const config = (await loadConfig()) || { schemaVersion: 1, executor: {}, defaults: {} };
-  config.schemaVersion = 1;
+  const config = (await loadConfig()) || { schemaVersion: 2, executor: {}, defaults: {}, routing: {}, executors: [] };
+  config.schemaVersion = 2;
   config.executor = config.executor && typeof config.executor === 'object' ? config.executor : {};
   config.defaults = config.defaults && typeof config.defaults === 'object' ? config.defaults : {};
+  config.routing = config.routing && typeof config.routing === 'object' ? config.routing : {};
+  config.executors = Array.isArray(config.executors) ? config.executors : [];
 
   if (action === 'show') {
     printValue(config, { json: true });
     return 0;
   }
   if (action === 'clear') {
-    await saveConfig({ schemaVersion: 1, executor: {}, defaults: {} });
+    await saveConfig({ schemaVersion: 2, executor: {}, defaults: {}, routing: {}, executors: [] });
     printValue('Cleared CLI executor profile.', { json });
     return 0;
   }
@@ -1056,13 +1107,145 @@ async function runConfig(positionals, options, json) {
     if (option(options, 'tool') !== undefined) config.executor.tool = String(option(options, 'tool'));
     if (option(options, 'model') !== undefined) config.executor.model = String(option(options, 'model'));
     if (option(options, 'default-harness') !== undefined) config.defaults.harness = String(option(options, 'default-harness'));
+    if (option(options, 'allow-remote') !== undefined) config.routing.allowRemote = booleanOption(options, 'allow-remote');
+    if (option(options, 'remote-priority') !== undefined) config.routing.remoteEscalationPriority = numberOption(options, 'remote-priority', 80);
     const skills = repeatedOption(options, 'default-skill');
     if (skills.length) config.defaults.skills = skills;
     await saveConfig(config);
     printValue(config, { json: true });
     return 0;
   }
-  throw new Error(`Unknown config action: ${action}. Use show, set, or clear.`);
+  if (action === 'add-executor') {
+    const id = requireOption(options, 'id');
+    const candidate = {
+      id,
+      tool: requireOption(options, 'tool'),
+      model: String(option(options, 'model', '')),
+      tier: String(option(options, 'tier', 'local')).toLowerCase(),
+      weight: numberOption(options, 'weight', 50),
+      enabled: true,
+    };
+    if (!normalizeWorkerConfig({ executors: [candidate] }).executors.length) {
+      throw new Error('Invalid executor. tool=codex|claude-code|custom and tier=local|remote are supported.');
+    }
+    config.executors = config.executors.filter((item) => item?.id !== id);
+    config.executors.push(candidate);
+    await saveConfig(config);
+    printValue(config, { json: true });
+    return 0;
+  }
+  if (action === 'remove-executor') {
+    const id = requirePositional(positionals, 1, 'Executor ID is required.');
+    config.executors = config.executors.filter((item) => item?.id !== id);
+    await saveConfig(config);
+    printValue(config, { json: true });
+    return 0;
+  }
+  throw new Error(`Unknown config action: ${action}. Use show, set, add-executor, remove-executor, or clear.`);
+}
+
+function selectedModelLabel(tool) {
+  return tool === 'claude-code' ? 'claude-default' : tool === 'codex' ? 'codex-default' : 'custom-default';
+}
+
+function extractCliUsage(tool, output) {
+  if (tool !== 'claude-code' || !output) return {};
+  try {
+    const payload = JSON.parse(output);
+    const usage = payload.usage || {};
+    return {
+      inputTokens: Number(usage.input_tokens || 0) + Number(usage.cache_read_input_tokens || 0),
+      outputTokens: Number(usage.output_tokens || 0),
+      totalTokens: Number(usage.input_tokens || 0) + Number(usage.cache_read_input_tokens || 0) + Number(usage.output_tokens || 0),
+      costUsd: Number(payload.total_cost_usd || 0),
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function runWorker(client, positionals, options, json) {
+  const action = positionals[0] || 'once';
+  if (!['once', 'run'].includes(action)) throw new Error('Worker action must be once or run.');
+  const intervalSeconds = Math.max(2, numberOption(options, 'interval', 10));
+  let completed = 0;
+  do {
+    const result = await runWorkerOnce(client, options, json);
+    if (result.worked) completed += 1;
+    if (action === 'once') return result.code;
+    if (result.stop) {
+      if (!json) process.stdout.write(`Worker stopped: ${result.reason || 'circuit breaker opened'}.\n`);
+      return result.code;
+    }
+    if (!json) process.stdout.write(result.worked ? 'Worker is looking for the next task.\n' : `No executable work; checking again in ${intervalSeconds}s.\n`);
+    await delay(intervalSeconds * 1000);
+  } while (!numberOption(options, 'max-tasks', 0) || completed < numberOption(options, 'max-tasks', 0));
+  return 0;
+}
+
+async function runWorkerOnce(client, options, json) {
+  const config = (await loadConfig()) || {};
+  const preview = await client.request('/api/orchestration/enter', {
+    method: 'POST',
+    body: { intent: 'START_WORK', projectId: option(options, 'project') || undefined },
+  });
+  if (preview.decision?.decision !== 'YES' || !preview.decision.work) {
+    if (json) printValue({ worked: false, decision: preview.decision }, { json: true });
+    return { worked: false, code: 0 };
+  }
+  if (preview.decision.work.status === 'BLOCKED' || preview.decision.work.automationGuard?.circuitOpen) {
+    if (json) printValue({ worked: false, stop: true, reason: 'CIRCUIT_OPEN', task: preview.decision.work }, { json: true });
+    return { worked: false, stop: true, reason: 'CIRCUIT_OPEN', code: 2 };
+  }
+  const selected = selectExecutor(preview.decision.work, config, {
+    quality: String(option(options, 'quality', 'auto')),
+    allowRemote: options['local-only'] ? false : undefined,
+    executorId: String(option(options, 'executor-id', '')),
+  });
+  if (!selected.executor) {
+    throw new Error('No eligible worker executor. Add one with: team-loop config add-executor --id local --tool codex --tier local');
+  }
+  const started = await client.request('/api/orchestration/start-next', {
+    method: 'POST',
+    body: {
+      intent: 'START_WORK',
+      projectId: option(options, 'project') || undefined,
+      executionMode: 'AGENT',
+      executor: selected.executor,
+    },
+  });
+  if (!started.task || !['QUEUED', 'RESUMED'].includes(started.outcome)) {
+    if (json) printValue({ worked: false, ...started }, { json: true });
+    return { worked: false, code: 0 };
+  }
+  if (!json) process.stdout.write(`Selected ${selected.candidate.id} (${selected.reason}) for ${started.task.id}.\n`);
+  const code = await runDispatch(client, [started.task.id], {
+    ...options,
+    execute: true,
+    executor: selected.executor.tool,
+    model: selected.executor.model || '',
+    to: option(options, 'to', 'review'),
+    retry: option(options, 'retry', 2),
+    'auto-learn': !options['no-auto-learn'],
+  }, json);
+  const completedTask = findTask((await client.request('/api/bootstrap')).tasks, started.task.id);
+  return {
+    worked: true,
+    code,
+    stop: Boolean(completedTask?.automationGuard?.circuitOpen),
+    reason: completedTask?.automationGuard?.circuitOpen ? 'CIRCUIT_OPEN' : null,
+  };
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function booleanOption(options, name) {
+  const value = option(options, name);
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  throw new Error(`--${name} must be true or false.`);
 }
 
 async function runUsage(client, positionals, options, json) {

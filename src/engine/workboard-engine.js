@@ -7,9 +7,10 @@ const BOARD_STATUSES = ['READY', 'IN_PROGRESS', 'BLOCKED', 'REVIEW', 'DONE'];
 export class WorkboardEngine {
   createSnapshot({ tasks = [], users = [], title = 'Team Loop Workboard', generatedAt = new Date().toISOString(), includeArchived = false } = {}) {
     const userNames = new Map(users.map((user) => [user.id, String(user.name || '')]));
+    const taskStatuses = new Map(tasks.map((task) => [task.id, task.status]));
     const visibleTasks = tasks
       .filter((task) => includeArchived || !task.archived)
-      .map((task) => projectTask(task, userNames))
+      .map((task) => projectTask(task, userNames, taskStatuses))
       .sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
 
     return {
@@ -26,13 +27,23 @@ export class WorkboardEngine {
   }
 }
 
-export function projectTask(task, userNames = new Map()) {
+export function projectTask(task, userNames = new Map(), taskStatuses = new Map()) {
   const status = BOARD_STATUSES.includes(task.status) ? task.status : 'READY';
+  const dependsOnTaskIds = (Array.isArray(task.dependsOnTaskIds) ? task.dependsOnTaskIds : []).map(String).slice(0, 30);
   return {
     id: String(task.id || ''),
     title: cleanText(task.title, 120) || 'Untitled task',
     status,
     priority: finiteNumber(task.priority, 100),
+    plan: task.planId ? {
+      id: String(task.planId),
+      title: cleanText(task.planTitle, 120),
+      stepId: cleanText(task.planStepId, 80),
+    } : null,
+    dependencies: {
+      taskIds: dependsOnTaskIds,
+      pendingTaskIds: dependsOnTaskIds.filter((taskId) => taskStatuses.get(taskId) !== 'DONE'),
+    },
     assignee: userNames.get(task.assigneeUserId) || '',
     schedule: {
       plannedStart: dateOnly(task.schedule?.plannedStart),

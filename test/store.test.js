@@ -85,6 +85,40 @@ test('explicit task harness and skills override automatic learning defaults', as
   assert.deepEqual(task.learning.applications[0].skillIds, ['explicit-rule']);
 });
 
+test('a PM plan atomically expands into linked dependency tasks', async (t) => {
+  const { directory, store } = await fixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const alice = await store.registerUser({ name: 'Alice', password: 'password-1' });
+  const plan = await store.createPlan(alice, {
+    title: 'Information value loop',
+    objective: 'Measure and tune information value.',
+    allowedPaths: ['src/**', 'test/**'],
+    steps: [
+      { stepId: 'measure', title: 'Measure player decisions', acceptanceCriteria: ['Metrics are recorded'] },
+      { stepId: 'tune', title: 'Tune information prices', dependsOn: ['measure'], acceptanceCriteria: ['A candidate is produced'] },
+    ],
+  }, ['repository-basic']);
+  assert.equal(plan.tasks.length, 2);
+  assert.equal(plan.tasks[0].planId, plan.planId);
+  assert.deepEqual(plan.tasks[1].dependsOnTaskIds, [plan.tasks[0].id]);
+  assert.equal((await store.listTasks()).length, 2);
+});
+
+test('a PM plan rejects dependency cycles without creating partial tasks', async (t) => {
+  const { directory, store } = await fixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const alice = await store.registerUser({ name: 'Alice', password: 'password-1' });
+  await assert.rejects(() => store.createPlan(alice, {
+    title: 'Cyclic plan',
+    objective: 'This must be rejected.',
+    steps: [
+      { stepId: 'a', title: 'Step alpha', dependsOn: ['b'], allowedPaths: ['**'] },
+      { stepId: 'b', title: 'Step beta', dependsOn: ['a'], allowedPaths: ['**'] },
+    ],
+  }, ['repository-basic']), /cycle/i);
+  assert.equal((await store.listTasks()).length, 0);
+});
+
 test('first administrator bootstrap expires without SIGNUP_CODE', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'team-loop-store-bootstrap-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

@@ -32,6 +32,37 @@ test('greybox sessions expose observations but keep hidden truth on the server',
   assert.equal(resolved.recentDecisions[0].type, 'PASS');
 });
 
+test('information value analysis reflects purchases and outcomes recorded in the session', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'auction-play-infovalue-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new AuctionPlaySessionStore({ dataDirectory: directory, seedPath });
+  await store.initialize();
+
+  const started = await store.start(actor, { seed: 42 });
+  const untouched = store.informationValue(started.id, actor);
+  assert.deepEqual(untouched, {
+    informedLotCount: 0,
+    informationSpent: 0,
+    bidChanges: [],
+    avoidedLosses: 0,
+    missedOpportunities: 0,
+    netInformationValue: 0,
+    regret: 0,
+  });
+
+  await store.act(started.id, actor, { type: 'BUY_APPRAISAL' });
+  await store.act(started.id, actor, { type: 'PASS' });
+  const informed = store.informationValue(started.id, actor);
+  assert.equal(informed.informedLotCount, 1);
+  assert.equal(informed.bidChanges.length, 1);
+  assert.equal(informed.bidChanges[0].type, 'BUY_APPRAISAL');
+  assert.equal(typeof informed.bidChanges[0].bidShift, 'number');
+  assert.equal(informed.informationSpent, informed.bidChanges[0].cost);
+  assert.ok(informed.regret >= 0);
+  assert.ok(informed.avoidedLosses >= 0);
+  assert.ok(informed.missedOpportunities >= 0);
+});
+
 test('greybox sessions are deterministic for a shared seed', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'auction-play-seed-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

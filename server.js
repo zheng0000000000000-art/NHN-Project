@@ -1,6 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { clearSessionCookie, issueSession, loadOrCreateSecret, parseCookies, readSession, sessionCookie } from './src/auth.js';
 import { Store } from './src/store.js';
@@ -45,6 +46,9 @@ import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
+import { recordAutomationResult } from './src/automation-guard.js';
+import { loadConfig } from './src/cli/session.js';
+import { normalizeWorkerConfig, selectExecutor } from './src/executor-router.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
@@ -64,6 +68,7 @@ const signupCode = process.env.SIGNUP_CODE || '';
 const soloMode = process.env.SOLO_MODE === 'true';
 const serverStartedAt = Date.now();
 const authRateLimiter = new FixedWindowRateLimiter({ limit: 10, windowMs: 60_000 });
+const boardWorkers = new Map();
 
 const store = new Store(dataDirectory, { signupCode, serverStartedAt });
 const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
@@ -222,6 +227,82 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (method === 'POST' && url.pathname === '/api/orchestration/preview-next') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const decision = await orchestrationEngine.enter(body, await store.listTasks());
+    const config = await loadConfig();
+    const selection = decision.work
+      ? selectExecutor(decision.work, config, {
+        quality: String(body.quality || 'auto'),
+        allowRemote: body.localOnly ? false : undefined,
+        executorId: String(body.executorId || ''),
+      })
+      : { executor: null, candidate: null, reason: 'NO_WORK' };
+    const usage = await usageTracker.summary({ days: 7, users: [actor], actorUserIds: [actor.id] });
+    sendJson(response, 200, {
+      decision,
+      selection,
+      usage: {
+        generatedAt: usage.generatedAt,
+        period: usage.period,
+        totals: usage.bySource.find((item) => item.source === 'cli') || {
+          requests: 0, successfulRequests: 0, failedRequests: 0, totalTokens: 0, durationMs: 0,
+        },
+      },
+    });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/orchestration/start-next') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const tasks = await store.listTasks();
+    const decision = await orchestrationEngine.enter(body, tasks);
+    await constitutionObservations.record(actor, decision);
+    if (decision.decision !== 'YES' || !decision.work) {
+      sendJson(response, 200, { outcome: decision.decision, decision, task: null });
+      return;
+    }
+    const current = await store.getTask(decision.work.id);
+    if (!current) throw new HttpError(409, 'Selected work no longer exists.');
+    if (current.status !== 'READY') {
+      const worker = body.launchWorker && current.executionMode === 'AGENT'
+        ? launchBoardWorker(current, actor, workerSessionCookie(request), body)
+        : null;
+      sendJson(response, 200, { outcome: 'RESUMED', decision, task: current, worker });
+      return;
+    }
+    await requireCompletedDependencies(current);
+    await requireAvailableTaskScope(current);
+    if (current.assigneeUserId && current.assigneeUserId !== actor.id) {
+      sendJson(response, 200, { outcome: 'ASK', decision, task: current, reason: 'Selected work belongs to another user.' });
+      return;
+    }
+    const executionModeValue = String(body.executionMode || 'HUMAN').toUpperCase() === 'AGENT' ? 'AGENT' : 'HUMAN';
+    const task = await store.mutateTask(current.id, actor, current.version, 'TASK_AUTO_QUEUED', async (next) => {
+      next.assigneeUserId = actor.id;
+      if (next.reviewerUserId === actor.id) next.reviewerUserId = null;
+      next.executionMode = executionModeValue;
+      next.executionState = executionModeValue === 'AGENT' ? 'QUEUED' : 'IDLE';
+      if (executionModeValue === 'HUMAN') next.status = 'IN_PROGRESS';
+      next.blocked = null;
+      next.review = null;
+      if (body.executor) next.executor = sanitizeExecutorInput(body.executor, { actorUserId: actor.id, at: nowIso() });
+    });
+    await store.recordAudit(actor.id, 'ORCHESTRATION_WORK_STARTED', {
+      taskId: task.id,
+      planId: task.planId,
+      executionMode: task.executionMode,
+      reasonCode: decision.reasonCode,
+    });
+    const worker = body.launchWorker && executionModeValue === 'AGENT'
+      ? launchBoardWorker(task, actor, workerSessionCookie(request), body)
+      : null;
+    sendJson(response, 200, { outcome: executionModeValue === 'AGENT' ? 'QUEUED' : 'STARTED', decision, task, worker });
+    return;
+  }
+
   if (method === 'GET' && url.pathname === '/api/entry') {
     sendJson(response, 200, await entryService.portfolio(await store.listTasks()));
     return;
@@ -372,10 +453,13 @@ async function handleApi(request, response) {
       runDashboard.recent(),
       runScopes.list(),
     ]);
+    const executorRouting = normalizeWorkerConfig(await loadConfig());
     sendJson(response, 200, {
       user: actor,
       users,
       tasks,
+      workers: boardWorkerSnapshot(tasks),
+      executorRouting,
       taskTimeline: buildTaskTimeline(tasks, audits),
       profiles,
       ai: ai.status(),
@@ -1040,7 +1124,37 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|delete)$/);
+  if (method === 'GET' && url.pathname === '/api/plans') {
+    const tasks = await store.listTasks();
+    const grouped = new Map();
+    for (const task of tasks.filter((item) => item.planId)) {
+      grouped.set(task.planId, [...(grouped.get(task.planId) || []), task]);
+    }
+    const plans = [...grouped]
+      .map(([planId, planTasks]) => ({
+        planId,
+        title: planTasks[0]?.planTitle || 'Untitled plan',
+        total: planTasks.length,
+        completed: planTasks.filter((task) => task.status === 'DONE').length,
+        blocked: planTasks.filter((task) => task.status === 'BLOCKED').length,
+        tasks: planTasks,
+      }));
+    sendJson(response, 200, { plans });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/plans') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    for (const step of Array.isArray(body.steps) ? body.steps : []) {
+      await validatePeople(step.assigneeUserId || body.assigneeUserId, step.reviewerUserId || body.reviewerUserId);
+    }
+    const plan = await store.createPlan(actor, body, await verifier.profileNames());
+    sendJson(response, 201, { plan });
+    return;
+  }
+
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|automation-result|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request, action === 'artifact' ? 12 * 1024 * 1024 : undefined);
@@ -1149,7 +1263,43 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (action === 'automation-result') {
+    const passed = body.passed === true;
+    const signature = String(body.failureSignature || '').trim().slice(0, 500);
+    const task = await store.mutateTask(taskId, actor, null, 'TASK_AUTOMATION_RESULT_RECORDED', async (next) => {
+      requireAssigneeOrAdmin(next, actor);
+      const result = recordAutomationResult(next.automationGuard, { passed, failureSignature: signature, at: nowIso() });
+      next.automationGuard = result.guard;
+      if (result.guard.circuitOpen) {
+        next.status = 'BLOCKED';
+        next.executionState = 'IDLE';
+        next.blocked = {
+          reason: result.reason,
+          byUserId: actor.id,
+          at: nowIso(),
+          automatic: true,
+          failureSignature: signature,
+        };
+      }
+    });
+    if (body.executionUsage && typeof body.executionUsage === 'object') {
+      await safeRecordUsage({
+        actorUserId: actor.id,
+        feature: 'task-executor',
+        model: String(body.executionUsage.model || task.executor?.model || task.executor?.tool || 'unknown').slice(0, 120),
+        source: 'cli',
+        status: passed ? 'SUCCESS' : 'FAILED',
+        durationMs: Math.max(0, Number(body.executionUsage.durationMs) || 0),
+        usage: body.executionUsage.usage || {},
+        error: passed ? null : signature,
+      });
+    }
+    sendJson(response, 200, { task, circuitOpen: Boolean(task.automationGuard?.circuitOpen) });
+    return;
+  }
+
   if (action === 'queue-agent') {
+    await requireCompletedDependencies(await store.getTask(taskId));
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_AGENT_QUEUED', async (next) => {
       requireAssigneeOrAdmin(next, actor);
       if (next.status !== 'READY') throw new HttpError(409, 'Only READY tasks can enter the agent queue.');
@@ -1173,6 +1323,7 @@ async function handleApi(request, response) {
   }
 
   if (action === 'claim') {
+    await requireCompletedDependencies(await store.getTask(taskId));
     let executor;
     try {
       executor = sanitizeExecutorInput(body.executor, { actorUserId: actor.id, at: nowIso() });
@@ -1181,15 +1332,7 @@ async function handleApi(request, response) {
     }
     // Scope lock: refuse to start a task whose path scope overlaps an already-active task.
     const claiming = await store.getTask(taskId);
-    if (claiming) {
-      const overlap = (await store.listTasks()).find((other) =>
-        other.id !== taskId
-        && ['IN_PROGRESS', 'REVIEW'].includes(other.status)
-        && scopesOverlap(other.allowedPaths, claiming.allowedPaths));
-      if (overlap) {
-        throw new HttpError(409, `Scope locked: task ${overlap.id} is already active on an overlapping path scope.`);
-      }
-    }
+    if (claiming) await requireAvailableTaskScope(claiming);
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'TASK_STARTED', async (next) => {
       if (next.status !== 'READY') throw new HttpError(409, 'Only READY tasks can be started.');
       if (next.assigneeUserId && next.assigneeUserId !== actor.id) throw new HttpError(403, 'This task is assigned to another user.');
@@ -1320,9 +1463,13 @@ async function handleApi(request, response) {
         adminOverride: actor.role === 'admin' && (actor.id === next.assigneeUserId || (next.reviewerUserId && next.reviewerUserId !== actor.id)),
       };
       if (decision === 'APPROVE') {
+        const completedAt = nowIso();
         next.status = 'DONE';
         next.executionState = 'IDLE';
-        next.completedAt = nowIso();
+        next.completedAt = completedAt;
+        next.archived = true;
+        next.archivedAt = completedAt;
+        next.archivedByUserId = actor.id;
       } else {
         next.status = 'IN_PROGRESS';
         next.executionState = 'IDLE';
@@ -1343,7 +1490,7 @@ async function handleApi(request, response) {
       }
     }
     const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: decision === 'APPROVE' ? 'WORK_COMPLETED' : 'REVIEW_REJECTED' });
-    sendJson(response, 200, { task, merge, handoff });
+    sendJson(response, 200, { task, merge, handoff, autoArchived: decision === 'APPROVE' });
     return;
   }
 
@@ -1370,6 +1517,14 @@ async function handleApi(request, response) {
       next.blocked = null;
       next.verification = null;
       next.review = null;
+      next.automationGuard = {
+        ...(next.automationGuard || {}),
+        failedRuns: 0,
+        sameFailureCount: 0,
+        lastFailureSignature: '',
+        circuitOpen: false,
+        resetAt: nowIso(),
+      };
       next.executionMode = 'HUMAN';
       next.executionState = 'IDLE';
     });
@@ -1447,6 +1602,7 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   try {
     return await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_FINISHED', async (next) => {
       next.verification = verification;
+      next.executionState = 'IDLE';
     });
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 409) throw error;
@@ -1457,6 +1613,7 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   try {
     return await store.mutateTask(taskId, actor, latest.version, 'VERIFICATION_FINISHED_AFTER_CONFLICT', async (next) => {
       next.verification = verification;
+      next.executionState = 'IDLE';
     });
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 409) throw error;
@@ -1465,6 +1622,7 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   const finalCurrent = await store.getTask(taskId);
   if (!finalCurrent) throw new HttpError(404, 'Task not found while recording verification error.');
   return store.mutateTask(taskId, actor, finalCurrent.version, 'VERIFICATION_RESULT_RECORDING_FAILED', async (next) => {
+    next.executionState = 'IDLE';
     next.verification = {
       ...verification,
       status: 'ERROR',
@@ -1654,6 +1812,108 @@ function requireTaskParticipantOrAdmin(task, actor) {
   }
 }
 
+function launchBoardWorker(task, actor, cookie, options = {}) {
+  const existing = boardWorkers.get(task.id);
+  if (existing) return { status: 'RUNNING', taskId: task.id, pid: existing.child.pid };
+  const args = [
+    path.join(projectRoot, 'bin', 'team-loop.js'),
+    'worker', 'once',
+    '--project', 'team-loop',
+    '--quality', String(options.quality || 'auto'),
+    '--to', 'review',
+    '--json',
+  ];
+  if (options.localOnly) args.push('--local-only');
+  if (options.executorId) args.push('--executor-id', String(options.executorId));
+  const child = spawn(process.execPath, args, {
+    cwd: workspaceRoot,
+    env: {
+      ...process.env,
+      TEAM_LOOP_URL: `http://127.0.0.1:${port}`,
+      TEAM_LOOP_SESSION_COOKIE: cookie,
+    },
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  const worker = {
+    child,
+    launchedAt: nowIso(),
+    lastHeartbeatAt: nowIso(),
+    heartbeat: null,
+  };
+  worker.heartbeat = setInterval(() => { worker.lastHeartbeatAt = nowIso(); }, 5_000);
+  worker.heartbeat.unref();
+  boardWorkers.set(task.id, worker);
+  store.recordAudit(actor.id, 'BOARD_WORKER_LAUNCHED', { taskId: task.id, pid: child.pid }).catch(() => {});
+  child.once('error', (error) => finishBoardWorker(task.id, actor, 1, error.message));
+  child.once('close', (code) => finishBoardWorker(task.id, actor, Number(code ?? 1), ''));
+  return { status: 'LAUNCHED', taskId: task.id, pid: child.pid };
+}
+
+function workerSessionCookie(request) {
+  const token = parseCookies(request.headers.cookie || '').team_loop_session || '';
+  return token ? `team_loop_session=${encodeURIComponent(token)}` : '';
+}
+
+function boardWorkerSnapshot(tasks = []) {
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  return [...boardWorkers.entries()].map(([taskId, worker]) => {
+    const task = taskMap.get(taskId);
+    return {
+      taskId,
+      pid: worker.child.pid,
+      status: worker.child.exitCode == null ? 'RUNNING' : 'EXITED',
+      launchedAt: worker.launchedAt,
+      lastHeartbeatAt: worker.lastHeartbeatAt,
+      phase: task?.agentActivity?.phase || (task?.executionState === 'QUEUED' ? 'queued' : 'launching'),
+      activityUpdatedAt: task?.agentActivity?.updatedAt || null,
+    };
+  });
+}
+
+async function finishBoardWorker(taskId, actor, exitCode, errorMessage) {
+  const worker = boardWorkers.get(taskId);
+  if (!worker) return;
+  clearInterval(worker.heartbeat);
+  boardWorkers.delete(taskId);
+  const current = await store.getTask(taskId).catch(() => null);
+  if (current?.executionState === 'RUNNING') {
+    await store.mutateTask(taskId, actor, current.version, 'BOARD_WORKER_EXITED', async (next) => {
+      next.executionState = 'IDLE';
+      next.agentActivity = normalizeAgentActivity({
+        ...(next.agentActivity || {}),
+        phase: exitCode === 0 ? 'finished' : 'failed',
+        label: exitCode === 0 ? '자동 작업자 종료' : '자동 작업자 실패',
+        detail: errorMessage || `작업자 프로세스 종료 코드 ${exitCode}`,
+        exitCode,
+        finished: true,
+      }, actor);
+    }).catch(() => {});
+  }
+  await store.recordAudit(actor.id, 'BOARD_WORKER_EXITED', { taskId, exitCode, error: errorMessage || null }).catch(() => {});
+}
+
+async function requireCompletedDependencies(task) {
+  if (!task) throw new HttpError(404, 'Task not found.');
+  const dependencyIds = Array.isArray(task.dependsOnTaskIds) ? task.dependsOnTaskIds : [];
+  if (!dependencyIds.length) return;
+  const tasks = await store.listTasks();
+  const pending = dependencyIds.filter((id) => tasks.find((candidate) => candidate.id === id)?.status !== 'DONE');
+  if (pending.length) {
+    throw new HttpError(409, 'Task prerequisites are not complete.', { pendingDependencyIds: pending });
+  }
+}
+
+async function requireAvailableTaskScope(task) {
+  const overlap = (await store.listTasks()).find((other) =>
+    other.id !== task.id
+    && ['IN_PROGRESS', 'REVIEW'].includes(other.status)
+    && scopesOverlap(other.allowedPaths, task.allowedPaths));
+  if (overlap) {
+    throw new HttpError(409, `Scope locked: task ${overlap.id} is already active on an overlapping path scope.`);
+  }
+}
+
 function requireTaskCreatorOrAdmin(task, actor) {
   if (task.creatorUserId !== actor.id && actor.role !== 'admin') {
     throw new HttpError(403, 'Only the task creator or an administrator can change the assignee.');
@@ -1766,6 +2026,10 @@ function addTimelineEvent(byTask, taskId, event) {
 
 function timelineEventFromAudit(event) {
   const map = {
+    TASK_AUTO_QUEUED: ['queued', '에이전트 대기열 등록'],
+    TASK_AGENT_QUEUED: ['queued', '에이전트 대기열 등록'],
+    BOARD_WORKER_LAUNCHED: ['worker', '작업자 프로세스 시작'],
+    BOARD_WORKER_EXITED: ['worker-exit', '작업자 프로세스 종료'],
     TASK_STARTED: ['claimed', '가져감'],
     VERIFICATION_FINISHED: ['verify-finish', '검증 완료'],
     VERIFICATION_FINISHED_AFTER_CONFLICT: ['verify-finish', '검증 완료'],

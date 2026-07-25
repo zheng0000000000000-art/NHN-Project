@@ -22,6 +22,13 @@ export async function handleBalanceRoute({
     return true;
   }
 
+  const informationValueMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)\/information-value$/);
+  if (method === 'GET' && informationValueMatch) {
+    const sessionId = decodeURIComponent(informationValueMatch[1]);
+    sendJson(response, 200, { informationValue: auctionPlaySessions.informationValue(sessionId, actor) });
+    return true;
+  }
+
   const playMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)(?:\/actions)?$/);
   if (playMatch) {
     const sessionId = decodeURIComponent(playMatch[1]);

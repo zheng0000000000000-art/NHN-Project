@@ -10,6 +10,10 @@ export function taskListView(task, detail = 'brief') {
     allowedPaths: task.allowedPaths ?? [],
     assigneeUserId: task.assigneeUserId ?? null,
     executionState: task.executionState || 'IDLE',
+    priority: task.priority ?? 100,
+    planId: task.planId ?? null,
+    planStepId: task.planStepId ?? null,
+    dependsOnTaskIds: task.dependsOnTaskIds ?? [],
     version: task.version,
   };
 }

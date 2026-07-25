@@ -66,6 +66,71 @@ const TOOLS = {
       return client.request('/api/orchestration/enter', { method: 'POST', body: args });
     },
   },
+  plan_create: {
+    description: 'Turn a PM plan into ordered workboard tasks. Dependencies use stepId references; the orchestrator will only assign READY steps whose prerequisites are DONE.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        objective: { type: 'string' },
+        allowedPaths: { type: 'array', items: { type: 'string' } },
+        verificationProfile: { type: 'string', default: 'repository-basic' },
+        assigneeUserId: { type: 'string' },
+        reviewerUserId: { type: 'string' },
+        steps: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 30,
+          items: {
+            type: 'object',
+            properties: {
+              stepId: { type: 'string' },
+              title: { type: 'string' },
+              description: { type: 'string' },
+              acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+              allowedPaths: { type: 'array', items: { type: 'string' } },
+              priority: { type: 'number' },
+              dependsOn: { type: 'array', items: { type: 'string' } },
+              verificationProfile: { type: 'string' },
+              assigneeUserId: { type: 'string' },
+              reviewerUserId: { type: 'string' },
+            },
+            required: ['stepId', 'title', 'acceptanceCriteria'],
+          },
+        },
+      },
+      required: ['title', 'objective', 'steps'],
+    },
+    async run(client, args) {
+      return client.request('/api/plans', { method: 'POST', body: args });
+    },
+  },
+  plan_list: {
+    description: 'List PM plans derived from the workboard, including progress, blockers, and their executable task contracts.',
+    inputSchema: { type: 'object', properties: {} },
+    async run(client) {
+      return client.request('/api/plans');
+    },
+  },
+  work_start_next: {
+    description: 'Use the constitution-derived shared start protocol to select, assign, and start the next safe workboard task. Call after plan_create instead of asking the user to start it manually.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', default: 'team-loop' },
+        intent: { type: 'string' },
+        currentPath: { type: 'string' },
+        executionMode: { type: 'string', enum: ['HUMAN', 'AGENT'], default: 'AGENT' },
+        executor: { type: 'object' },
+      },
+    },
+    async run(client, args) {
+      return client.request('/api/orchestration/start-next', {
+        method: 'POST',
+        body: { ...args, executionMode: args.executionMode || 'AGENT' },
+      });
+    },
+  },
   portfolio_enter: {
     description: 'Lowest-cost entry point for a new agent session. Lists registered projects, active-work counts, attention counts, entry references, and a portfolio revision without loading project internals.',
     inputSchema: { type: 'object', properties: {} },

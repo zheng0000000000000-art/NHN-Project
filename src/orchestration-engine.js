@@ -18,7 +18,7 @@ export class OrchestrationEngine {
     const activeWorks = entry.activeWorks || [];
     const blocked = activeWorks.filter((item) => item.status === 'BLOCKED');
     if (blocked.length) {
-      const work = newest(blocked);
+      const work = selectWork(blocked);
       return envelope(policy, {
         ...ruleResult(policy, 'WORK_BLOCKED', { projectId: selectedProject.id, workId: work.id }),
         project: projectSummary(selectedProject),
@@ -26,12 +26,22 @@ export class OrchestrationEngine {
         readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'resume', workId: work.id, maxTokens: policy.defaultReadBudgetTokens }),
       }, startedAt);
     }
-    if (activeWorks.length) {
-      const work = newest(activeWorks);
+    const executableWorks = activeWorks.filter((item) => !item.dependencyBlocked);
+    if (executableWorks.length) {
+      const work = selectWork(executableWorks);
       const handoff = await this.entryService.latestHandoff(selectedProject.id, work.id);
       const valid = handoff && Number(handoff.revision) === Number(work.version);
       return envelope(policy, {
         ...ruleResult(policy, valid ? 'ACTIVE_WORK_WITH_VALID_HANDOFF' : 'ACTIVE_WORK_WITH_STALE_HANDOFF', { projectId: selectedProject.id, workId: work.id }),
+        project: projectSummary(selectedProject),
+        work,
+        readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'resume', workId: work.id, maxTokens: policy.defaultReadBudgetTokens }),
+      }, startedAt);
+    }
+    if (activeWorks.length) {
+      const work = selectWork(activeWorks);
+      return envelope(policy, {
+        ...ruleResult(policy, 'WORK_BLOCKED', { projectId: selectedProject.id, workId: work.id, pendingDependencyIds: work.pendingDependencyIds }),
         project: projectSummary(selectedProject),
         work,
         readPlan: await this.entryService.readPlan(selectedProject.id, { intent: 'resume', workId: work.id, maxTokens: policy.defaultReadBudgetTokens }),
@@ -88,8 +98,12 @@ function envelope(policy, result, startedAt) {
   };
 }
 
-function newest(items) {
-  return [...items].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
+function selectWork(items) {
+  const statusOrder = { IN_PROGRESS: 0, REVIEW: 1, READY: 2, BLOCKED: 3 };
+  return [...items].sort((a, b) =>
+    (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
+    || Number(a.priority || 100) - Number(b.priority || 100)
+    || String(a.updatedAt).localeCompare(String(b.updatedAt)))[0];
 }
 
 function normalizePath(value) {

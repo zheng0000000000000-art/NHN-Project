@@ -179,6 +179,32 @@ ENTER → PLAN → EXECUTE → VERIFY → LEARN → HANDOFF → CLOSE
 
 `C-WORK-006` 완료 선언 전에 활성 작업 계약에 지정된 검증을 수행한다.
 
+`C-WORK-007` AI가 둘 이상의 실행 단계를 계획하면 계획을 대화에만 남기지 않고 작업보드의 작업 계약으로 전개한다.
+
+`C-WORK-008` 계획 단계는 우선순위, 완료 조건, 허용 범위와 선행 작업 관계를 가질 수 있으며 선행 작업이 완료되지 않은 단계는 실행 또는 에이전트 대기열에 배정하지 않는다.
+
+`C-WORK-009` 작업 선택은 최근 수정 시각만으로 결정하지 않는다. 명시적 차단 복구, 진행 중 작업, 리뷰, 실행 가능한 준비 작업 순서를 따르고 같은 상태에서는 우선순위가 높은 작업을 선택한다.
+
+`C-WORK-010` 작업보드는 사람과 AI가 공유하는 실행 원장이다. 계획 진행률, 배정, 검증, 근거와 다음 행동은 동일한 작업 데이터를 사용해야 한다.
+
+## 8.1 Canonical work start manual
+
+사람, 로컬 AI와 원격 에이전트는 작업을 시작할 때 같은 순서를 사용한다.
+
+1. `loop_enter`로 프로젝트와 다음 작업을 판정한다.
+2. `BLOCKED` 또는 `ASK`면 실행하지 않고 판정에 지정된 복구나 질문을 수행한다.
+3. 선택된 작업이 이미 진행 중이면 새 작업을 만들지 않고 재개한다.
+4. `READY` 작업은 모든 선행 작업이 `DONE`이고 경로 잠금 충돌이 없을 때만 시작한다.
+5. 담당자가 없으면 현재 사용자에게 배정한다. 다른 사람에게 배정돼 있으면 임의로 변경하지 않는다.
+6. 사람과 AI 모두 동일한 작업 상태 변경, Work Ledger, 검증과 HANDOFF를 사용한다.
+7. 계획 등록 직후 안전한 첫 작업이 존재하면 별도 시작 질문 없이 시작한다.
+
+`C-START-001` 시작 판정과 상태 변경은 UI와 MCP가 공유하는 서버 작업으로 수행한다.
+
+`C-START-002` UI 버튼, 로컬 AI와 원격 에이전트는 자체적으로 다음 작업을 추측하거나 별도 정렬 규칙을 구현하지 않는다.
+
+`C-START-003` 시작 결과는 `STARTED`, `RESUMED`, `ASK` 또는 `BLOCKED`와 선택 근거를 반환한다.
+
 `C-WORK-007` 검증할 수 없는 작업은 검증된 것으로 표시하지 않고 제한 사항을 HANDOFF에 남긴다.
 
 ## 9. HANDOFF protocol
@@ -353,6 +379,12 @@ Team Loop에 연결된 에이전트는 다음을 지켜야 한다.
     "SHARED_POLICY_CHANGE",
     "OUT_OF_SCOPE_OBJECTIVE"
   ],
+  "startProtocol": {
+    "selection": ["BLOCKED", "IN_PROGRESS", "REVIEW", "READY_BY_PRIORITY"],
+    "requirements": ["DEPENDENCIES_DONE", "SCOPE_AVAILABLE", "OWNER_COMPATIBLE"],
+    "outcomes": ["STARTED", "RESUMED", "ASK", "BLOCKED"],
+    "autoStartSafeReadyWork": true
+  },
   "decisionTable": [
     { "reasonCode": "SYSTEM_INTEGRITY_FAILED", "decision": "BLOCKED", "action": "system_recover", "priority": 1000 },
     { "reasonCode": "PROJECT_NOT_FOUND", "decision": "ASK", "action": "project_register", "priority": 900 },

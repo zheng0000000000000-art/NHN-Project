@@ -9,6 +9,8 @@ const state = {
   user: null,
   users: [],
   tasks: [],
+  workers: [],
+  executorRouting: { executors: [] },
   taskTimeline: [],
   profiles: {},
   ai: { enabled: false, missing: [] },
@@ -68,6 +70,7 @@ const aiError = document.querySelector('#ai-error');
 const aiResults = document.querySelector('#ai-results');
 const milestonePanel = document.querySelector('#milestone-panel');
 const board = document.querySelector('#board');
+const planOverview = document.querySelector('#plan-overview');
 const agentActivityPanel = document.querySelector('#agent-activity-panel');
 const milestoneRanges = document.querySelector('#milestone-ranges');
 const milestoneCalendar = document.querySelector('#milestone-calendar');
@@ -155,15 +158,37 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
 });
 
 document.querySelector('#refresh-button').addEventListener('click', () => refreshCurrentView(false));
-document.querySelector('#new-task-button').addEventListener('click', () => taskFormPanel.classList.remove('hidden'));
-document.querySelector('#close-task-form').addEventListener('click', () => taskFormPanel.classList.add('hidden'));
-document.querySelector('#ai-assistant-button').addEventListener('click', () => aiPanel.classList.remove('hidden'));
-document.querySelector('#close-ai-panel').addEventListener('click', () => aiPanel.classList.add('hidden'));
-document.querySelector('#milestone-toggle').addEventListener('click', () => {
-  milestonePanel.classList.toggle('hidden');
-  document.querySelector('#milestone-toggle').classList.toggle('active', !milestonePanel.classList.contains('hidden'));
-  if (!milestonePanel.classList.contains('hidden')) renderMilestonePlanner();
+document.querySelector('#worker-routing-mode').addEventListener('change', refreshWorkerRoutingPreview);
+document.querySelector('#worker-executor').addEventListener('change', refreshWorkerRoutingPreview);
+document.querySelector('#start-next-work').addEventListener('click', async () => {
+  const button = document.querySelector('#start-next-work');
+  button.disabled = true;
+  try {
+    const routing = workerRoutingSelection();
+    const payload = await api('/api/orchestration/start-next', {
+      method: 'POST',
+      body: { projectId: 'team-loop', executionMode: 'AGENT', launchWorker: true, ...routing },
+    });
+    await bootstrap({ quiet: true });
+    showToast(payload.worker?.status === 'LAUNCHED'
+      ? `자동 작업자 시작: ${payload.task.title}`
+      : payload.worker?.status === 'RUNNING'
+        ? `이미 작업 중: ${payload.task.title}`
+        : payload.outcome === 'QUEUED'
+          ? `에이전트 대기열 등록: ${payload.task.title}`
+          : payload.outcome === 'STARTED'
+            ? `시작: ${payload.task.title}`
+      : payload.outcome === 'RESUMED'
+        ? `재개: ${payload.task.title}`
+        : `시작 판정: ${payload.outcome}`);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+  }
 });
+document.querySelector('#close-task-form').addEventListener('click', () => taskFormPanel.classList.add('hidden'));
+document.querySelector('#close-ai-panel').addEventListener('click', () => aiPanel.classList.add('hidden'));
 
 for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', async () => {
@@ -796,6 +821,8 @@ async function bootstrap({ quiet = true } = {}) {
     populateTaskForm();
     populateBoardFilters();
     renderAIStatus();
+    populateWorkerRouting();
+    await refreshWorkerRoutingPreview();
     renderProjectContext();
     render();
     renderHarnessDashboard();
@@ -1664,6 +1691,7 @@ function renderFailureGroupRow(group) {
 
 function render() {
   renderSummary();
+  renderPlanOverview();
   renderMilestonePlanner();
   renderAgentActivityPanel();
   const filteredTasks = filterTasksByPeople(state.tasks, state.boardFilter);
@@ -1915,37 +1943,126 @@ function renderSummary() {
 
 function renderAgentActivityPanel() {
   if (!agentActivityPanel) return;
+  const workerMap = new Map((state.workers || []).map((worker) => [worker.taskId, worker]));
   const active = state.tasks
-    .filter((task) => !task.archived && task.agentActivity && !task.agentActivity.finishedAt)
-    .sort((a, b) => String(b.agentActivity.updatedAt || '').localeCompare(String(a.agentActivity.updatedAt || '')));
+    .filter((task) => !task.archived && (workerMap.has(task.id) || task.executionState === 'QUEUED' || task.executionState === 'RUNNING'))
+    .sort((a, b) => String(b.agentActivity?.updatedAt || '').localeCompare(String(a.agentActivity?.updatedAt || '')));
   const recent = active.length ? active : state.tasks
     .filter((task) => !task.archived && task.agentActivity)
     .sort((a, b) => String(b.agentActivity.updatedAt || '').localeCompare(String(a.agentActivity.updatedAt || '')))
     .slice(0, 3);
   if (!recent.length) {
-    agentActivityPanel.innerHTML = '<div class="agent-activity-empty">아직 보드에 표시할 AI/CLI 작업 현황이 없습니다.</div>';
+    agentActivityPanel.innerHTML = '<div class="agent-activity-empty">아직 보드에 표시할 자동 작업 기록이 없습니다.</div>';
     return;
   }
   agentActivityPanel.innerHTML = `
     <div class="agent-activity-head">
-      <strong>AI/CLI 작업 현황</strong>
-      <span class="muted">${active.length ? `${formatNumber(active.length)}개 실행 중` : '최근 작업'}</span>
+      <div><p class="eyebrow">LIVE WORK TRACE</p><strong>자동 작업자 상태</strong></div>
+      <span class="muted">${active.length ? `${formatNumber(active.length)}개 실행 중` : '최근 작업 기록'}</span>
     </div>
-    <div class="agent-activity-list">${recent.map(renderAgentActivityItem).join('')}</div>`;
+    <div class="agent-activity-list">${recent.map((task) => renderAgentActivityItem(task, workerMap.get(task.id))).join('')}</div>`;
 }
 
-function renderAgentActivityItem(task) {
+function populateWorkerRouting() {
+  const select = document.querySelector('#worker-executor');
+  if (!select) return;
+  const current = select.value;
+  const executors = state.executorRouting?.executors || [];
+  select.innerHTML = '<option value="">자동 선택</option>' + executors.map((executor) =>
+    `<option value="${escapeHtml(executor.id)}">${escapeHtml(executor.id)} · ${escapeHtml(executor.tier === 'local' ? '로컬' : 'CLI/API')} · ${escapeHtml(executor.model || '기본 모델')}</option>`
+  ).join('');
+  if (executors.some((executor) => executor.id === current)) select.value = current;
+}
+
+function workerRoutingSelection() {
+  const mode = document.querySelector('#worker-routing-mode')?.value || 'auto';
+  return {
+    quality: mode === 'high' ? 'high' : mode === 'local' ? 'local' : 'auto',
+    localOnly: mode === 'local',
+    executorId: document.querySelector('#worker-executor')?.value || '',
+  };
+}
+
+async function refreshWorkerRoutingPreview() {
+  const target = document.querySelector('#worker-routing-preview');
+  if (!target || !state.user) return;
+  try {
+    const payload = await api('/api/orchestration/preview-next', {
+      method: 'POST',
+      body: { projectId: 'team-loop', ...workerRoutingSelection() },
+    });
+    const candidate = payload.selection?.candidate;
+    const usage = payload.usage?.totals || {};
+    const work = payload.decision?.work;
+    target.innerHTML = candidate
+      ? `<span><b>다음 작업</b>${escapeHtml(work?.title || '없음')}</span>
+         <span><b>예정 실행자</b>${escapeHtml(candidate.id)} · ${escapeHtml(candidate.model || '기본 모델')}</span>
+         <span><b>선택 이유</b>${escapeHtml(routingReasonLabel(payload.selection.reason))}</span>
+         <span><b>최근 7일 CLI 장부</b>${formatNumber(usage.requests || 0)}회 · ${formatNumber(usage.totalTokens || 0)} tokens · 평균 ${workerDurationLabel(usage.averageDurationMs || 0)}</span>
+         <small>CLI 공급자의 공식 잔여 할당량은 제공되지 않아 내부에서 관측한 실행량만 표시합니다.</small>`
+      : `<span class="error">실행 가능한 후보 없음 · ${escapeHtml(payload.selection?.reason || 'NO_WORK')}</span>`;
+  } catch (error) {
+    target.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+  }
+}
+
+function routingReasonLabel(reason) {
+  return ({
+    USER_SELECTED: '사용자 직접 선택',
+    LOCAL_FIRST: '로컬 우선 정책',
+    QUALITY_ESCALATION: '품질 우선 승격',
+    REMOTE_FALLBACK: '사용 가능한 로컬 실행자 없음',
+  })[reason] || reason || '자동 선택';
+}
+
+function workerDurationLabel(milliseconds) {
+  const minutes = Math.round((Number(milliseconds) || 0) / 60_000);
+  return minutes < 1 ? '1분 미만' : `${formatNumber(minutes)}분`;
+}
+
+function renderAgentActivityItem(task, worker = null) {
   const activity = task.agentActivity || {};
   const attempt = activity.attempt && activity.maxAttempts ? `${activity.attempt}/${activity.maxAttempts}` : '';
-  const stateClass = activity.finishedAt ? (activity.passed ? 'done' : 'failed') : 'active';
-  return `<button class="agent-activity-item ${stateClass}" type="button" data-agent-task="${escapeHtml(task.id)}">
-    <span class="agent-activity-pulse"></span>
-    <span>
-      <strong>${escapeHtml(task.title)}</strong>
-      <small>${escapeHtml(['에이전트 실행', attempt ? `시도 ${attempt}` : '', userName(task.assigneeUserId)].filter(Boolean).join(' · '))}</small>
-    </span>
-    <span class="muted">${escapeHtml(relativeTime(activity.updatedAt))}</span>
-  </button>`;
+  const alive = worker?.status === 'RUNNING';
+  const queued = task.executionState === 'QUEUED';
+  const failed = !alive && (activity.phase === 'failed' || task.verification?.passed === false);
+  const stateClass = alive ? 'active' : failed ? 'failed' : activity.finishedAt ? 'done' : '';
+  const status = alive ? '프로세스 실행 중' : queued ? '작업자 대기 중' : failed ? '조치 필요' : '최근 실행';
+  const heartbeat = worker?.lastHeartbeatAt || activity.updatedAt;
+  const trace = taskTrace(task).slice(-6);
+  return `<article class="agent-trace-card ${stateClass}" data-agent-task="${escapeHtml(task.id)}">
+    <header>
+      <span class="agent-activity-pulse"></span>
+      <div><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(status)}</small></div>
+      <span class="badge ${alive ? 'pass' : failed ? 'fail' : ''}">${escapeHtml(activity.phase || worker?.phase || task.executionState)}</span>
+    </header>
+    <div class="agent-runtime-grid">
+      <span>실행자<b>${escapeHtml([activity.tool || task.executor?.tool, activity.model || task.executor?.model].filter(Boolean).join(' / ') || '선택 중')}</b></span>
+      <span>프로세스<b>${alive ? `PID ${worker.pid}` : '없음'}</b></span>
+      <span>마지막 신호<b>${escapeHtml(heartbeat ? relativeTime(heartbeat) : '기록 없음')}</b></span>
+      <span>시도<b>${escapeHtml(attempt || '—')}</b></span>
+      <span>자동 실행 예산<b>${escapeHtml(`${task.automationGuard?.failedRuns || 0}/3 실패`)}</b></span>
+    </div>
+    ${task.automationGuard?.circuitOpen ? `<p class="agent-circuit-open">회로 차단됨 · 사용자가 문제를 확인하고 재개해야 합니다.</p>` : ''}
+    ${activity.detail ? `<p class="agent-current-action">${escapeHtml(activity.detail)}</p>` : ''}
+    <ol class="agent-trace-list">${trace.map((item) => `<li class="${escapeHtml(item.state)}"><i></i><span><b>${escapeHtml(item.label)}</b><small>${escapeHtml(item.at ? relativeTime(item.at) : '')}</small></span></li>`).join('')}</ol>
+  </article>`;
+}
+
+function taskTrace(task) {
+  const timeline = (state.taskTimeline || []).find((item) => item.taskId === task.id)?.events || [];
+  const trace = timeline.map((event) => ({ label: event.label, at: event.at, state: 'done' }));
+  if (task.agentActivity?.label) trace.push({
+    label: task.agentActivity.label,
+    at: task.agentActivity.updatedAt,
+    state: task.agentActivity.finishedAt && !task.agentActivity.passed ? 'failed' : 'active',
+  });
+  if (task.verification) trace.push({
+    label: task.verification.passed ? '검증 통과' : task.verification.status === 'RUNNING' ? '검증 실행 중' : '검증 실패',
+    at: task.verification.finishedAt || task.verification.startedAt,
+    state: task.verification.passed ? 'done' : task.verification.status === 'RUNNING' ? 'active' : 'failed',
+  });
+  return trace.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
 }
 
 function renderTask(task) {
@@ -1966,6 +2083,15 @@ function renderTask(task) {
   const executionBadge = executionLabel ? `<span class="badge ${task.executionState === 'RUNNING' ? 'pass' : ''}">${escapeHtml(executionLabel)}</span>` : '';
   const agentActivity = renderTaskAgentActivity(task);
   const artifacts = renderTaskArtifacts(task);
+  const taskActions = renderActions(task);
+  const pendingDependencies = (task.dependsOnTaskIds || []).filter((taskId) =>
+    state.tasks.find((candidate) => candidate.id === taskId)?.status !== 'DONE');
+  const planBadges = task.planId
+    ? `<span class="badge">계획 ${escapeHtml(task.planTitle || task.planId)}</span><span class="badge mono">${escapeHtml(task.planStepId || '')}</span>`
+    : '';
+  const dependencyNotice = pendingDependencies.length
+    ? `<p class="task-dependency">선행 작업 ${pendingDependencies.length}개 완료 후 실행 가능</p>`
+    : '';
   const canAssign = (task.creatorUserId === state.user.id || state.user.role === 'admin')
     && ['READY', 'BLOCKED'].includes(task.status);
   const assigneeControl = canAssign
@@ -1990,6 +2116,8 @@ function renderTask(task) {
         ${(task.skillIds || []).map((id) => `<span class="badge">skill:${escapeHtml(id)}</span>`).join('')}
         ${verificationBadge}
         ${executionBadge}
+        ${planBadges}
+        ${(task.dependsOnTaskIds || []).length ? `<span class="badge">선행 ${(task.dependsOnTaskIds || []).length}개</span>` : ''}
         ${task.supersedesTaskId ? `<span class="badge">대체 작업 · ${escapeHtml(task.supersedesTaskId)}</span>` : ''}
         ${task.supersededByTaskId ? `<span class="badge">대체됨 · ${escapeHtml(task.supersededByTaskId)}</span>` : ''}
       </div>
@@ -1997,8 +2125,8 @@ function renderTask(task) {
       ${agentActivity}
       ${artifacts}
       ${result}
-      ${blocked}${review}
-      <div class="task-actions">${renderActions(task)}</div>
+      ${dependencyNotice}${blocked}${review}
+      ${taskActions ? `<div class="task-actions">${taskActions}</div>` : ''}
       ${aiDetails}${details}
     </article>`;
 }
@@ -2019,6 +2147,28 @@ function renderTaskResult(task) {
       <div><small>검증</small>${checks.length ? `<ul>${checks.map((check) => `<li class="${check.passed ? 'pass-text' : 'fail-text'}">${check.passed ? '통과' : '실패'} · <code>${escapeHtml([check.file, ...(check.args || [])].filter(Boolean).join(' '))}</code></li>`).join('')}</ul>` : '<p class="muted">실행 기록 없음</p>'}</div>
     </div>
   </section>`;
+}
+
+function renderPlanOverview() {
+  if (!planOverview) return;
+  const groups = new Map();
+  for (const task of state.tasks.filter((item) => item.planId)) {
+    groups.set(task.planId, [...(groups.get(task.planId) || []), task]);
+  }
+  if (!groups.size) {
+    planOverview.innerHTML = '<div class="plan-empty">아직 작업보드에 전개된 PM 계획이 없습니다. AI는 MCP의 plan_create로 계획을 실행 작업으로 등록할 수 있습니다.</div>';
+    return;
+  }
+  planOverview.innerHTML = [...groups].map(([planId, tasks]) => {
+    const completed = tasks.filter((task) => task.status === 'DONE').length;
+    const pending = tasks.filter((task) => (task.dependsOnTaskIds || []).some((id) =>
+      state.tasks.find((candidate) => candidate.id === id)?.status !== 'DONE')).length;
+    const progress = completed / Math.max(1, tasks.length) * 100;
+    return `<article class="plan-card">
+      <div><p class="eyebrow">PM PLAN · ${escapeHtml(planId)}</p><h3>${escapeHtml(tasks[0]?.planTitle || planId)}</h3><span>${completed}/${tasks.length} 완료 · 선행 대기 ${pending}</span></div>
+      <div class="plan-progress"><i style="width:${progress}%"></i></div>
+    </article>`;
+  }).join('');
 }
 
 function renderEntryConsole() {
@@ -2709,9 +2859,8 @@ async function renderContextPackComparison() {
 
 function renderTaskArtifacts(task) {
   const artifacts = task.artifacts || [];
-  const canUpload = task.assigneeUserId === state.user.id || state.user.role === 'admin';
   return `<section class="task-artifacts">
-    <div class="task-artifacts-heading"><strong>업로드 결과물</strong>${canUpload ? `<label class="ghost artifact-upload">파일 업로드<input type="file" data-artifact-task="${escapeHtml(task.id)}"></label>` : ''}</div>
+    <div class="task-artifacts-heading"><strong>결과물</strong></div>
     ${artifacts.length ? `<ul>${artifacts.map((artifact) => `<li><a href="/api/tasks/${encodeURIComponent(task.id)}/artifacts/${encodeURIComponent(artifact.id)}" download>${escapeHtml(artifact.name)}</a><span class="muted">${escapeHtml(formatFileSize(artifact.size))} · ${escapeHtml(userName(artifact.uploadedByUserId) || '업로더 미상')}</span></li>`).join('')}</ul>` : '<p class="muted">아직 업로드된 결과물이 없습니다.</p>'}
   </section>`;
 }
@@ -2759,26 +2908,14 @@ function renderActions(task) {
   const admin = state.user.role === 'admin';
   const participant = [task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(state.user.id) || admin;
   const actions = [];
-  if (!task.verification) actions.push(actionButton(task, 'download-spec', '명세서 다운로드'));
-  if (task.status === 'READY' && (!task.assigneeUserId || mine) && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'claim', '직접 시작'));
-  if (task.status === 'READY' && (mine || admin) && task.assigneeUserId && task.executionState !== 'QUEUED') actions.push(actionButton(task, 'queue-agent', '에이전트 대기'));
-  if (task.status === 'READY' && (mine || admin) && task.executionState === 'QUEUED') actions.push(actionButton(task, 'cancel-agent', '대기 취소'));
-  if (task.status === 'IN_PROGRESS' && (mine || admin)) {
-    actions.push(actionButton(task, 'verify', task.verification?.status === 'RUNNING' ? '검증 중…' : '검증 실행', 'primary'));
-    if (task.verification?.passed) actions.push(actionButton(task, 'request-review', '리뷰 요청'));
-  }
   if (canReviewTask(task, state.user)) {
     actions.push(actionButton(task, 'approve', '승인', 'primary'));
     actions.push(actionButton(task, 'reject', '반려', 'danger'));
   }
-  if (task.status !== 'DONE' && task.status !== 'BLOCKED' && participant) actions.push(actionButton(task, 'block', '막힘', 'warning'));
-  if (task.status === 'BLOCKED' && participant) actions.push(actionButton(task, 'unblock', '다시 준비'));
-  if (state.ai.enabled && participant && task.status !== 'DONE') actions.push(actionButton(task, 'ai-brief', 'AI 브리프'));
-  if (state.ai.enabled && participant && task.verification) actions.push(actionButton(task, 'ai-verification-summary', 'AI 검증 요약'));
-  if (!task.archived && task.status !== 'DONE' && participant) actions.push(actionButton(task, 'dispatch-command', 'CLI 명령'));
-  if (task.status === 'DONE' && participant && !task.archived) actions.push(actionButton(task, 'archive', '아카이브'));
-  if (task.archived && participant) actions.push(actionButton(task, 'unarchive', '복원', 'primary'));
-  if (task.creatorUserId === state.user.id || admin) actions.push(actionButton(task, 'delete', '삭제', 'danger'));
+  if (task.status === 'BLOCKED' && participant) actions.push(actionButton(task, 'unblock', '문제 해결 후 재개', 'primary'));
+  if (task.status === 'IN_PROGRESS' && (mine || admin) && task.verification && !task.verification.passed && task.verification.status !== 'RUNNING') {
+    actions.push(actionButton(task, 'verify', '검증 재시도'));
+  }
   return actions.join('');
 }
 

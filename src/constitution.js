@@ -30,6 +30,7 @@ export class ConstitutionCompiler {
       defaultExecution: summary.defaultExecution,
       automaticConditions: summary.automaticConditions,
       approvalConditions: summary.approvalConditions,
+      startProtocol: summary.startProtocol,
       workLifecycle: summary.workLifecycle,
       defaultReadBudgetTokens: summary.defaultReadBudgetTokens,
       writeFactsOnlyHandoffImmediately: summary.writeFactsOnlyHandoffImmediately,
@@ -173,6 +174,9 @@ export function validateSummary(value) {
   if (!Array.isArray(value.entryOrder) || value.entryOrder.length < 4) throw new TypeError('Constitution entry order is incomplete.');
   if (!Array.isArray(value.automaticConditions) || !value.automaticConditions.length) throw new TypeError('Automatic execution conditions are required.');
   if (!Array.isArray(value.approvalConditions) || !value.approvalConditions.length) throw new TypeError('Approval conditions are required.');
+  if (!value.startProtocol || !Array.isArray(value.startProtocol.selection) || !Array.isArray(value.startProtocol.requirements)) {
+    throw new TypeError('Canonical work start protocol is required.');
+  }
   if (!Array.isArray(value.decisionTable) || !value.decisionTable.length) throw new TypeError('Constitution decision table is required.');
   const reasonCodes = new Set();
   for (const rule of value.decisionTable) {
@@ -198,6 +202,8 @@ function buildInstructions(policy) {
     'Use only the current project context by default. Search archived documentation only through context_archive_search.',
     `Automatically act only when all applicable conditions are safe: ${policy.automaticConditions.join(', ')}.`,
     `Ask before: ${policy.approvalConditions.join(', ')}.`,
+    `Start or resume work through the shared start protocol: ${policy.startProtocol.selection.join(' -> ')}; require ${policy.startProtocol.requirements.join(', ')}.`,
+    'After creating a multi-step plan, call work_start_next when the first READY task is safe. Do not ask the user to press a start button.',
     `Complete meaningful work through: ${policy.workLifecycle.join(' -> ')}.`,
     'Program facts and verification evidence outrank AI summaries. Write or preserve a HANDOFF before ending resumable work.',
   ].join('\n');

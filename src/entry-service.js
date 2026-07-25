@@ -76,7 +76,8 @@ export class EntryService {
     const active = localTasks.filter((task) => ACTIVE_STATUSES.has(task.status) && !task.archived);
     const latest = [...localTasks].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 8);
     const handoffs = await this.#handoffsForProject(project.id);
-    const attention = buildAttention(active);
+    const activeWorks = active.map((task) => workSummary(task, localTasks));
+    const attention = buildAttention(activeWorks);
     return {
       schemaVersion: 1,
       kind: 'PROJECT_ENTRY',
@@ -89,9 +90,9 @@ export class EntryService {
         auditEventCount: project.id === 'team-loop' ? audits.length : 0,
       },
       attention,
-      activeWorks: active.map(workSummary),
-      recentWorks: latest.map(workSummary),
-      recommendedAction: attention[0]?.action || (active[0] ? { name: 'work_resume', workId: active[0].id } : { name: 'work_create' }),
+      activeWorks,
+      recentWorks: latest.map((task) => workSummary(task, localTasks)),
+      recommendedAction: attention[0]?.action || (activeWorks[0] ? { name: 'work_resume', workId: activeWorks[0].id } : { name: 'work_create' }),
       readPlanRef: `project://${project.id}/read-plan`,
     };
   }
@@ -239,7 +240,9 @@ function summarizeTasks(tasks) {
   };
 }
 
-function workSummary(task) {
+function workSummary(task, allTasks = []) {
+  const pendingDependencies = (task.dependsOnTaskIds || []).filter((taskId) =>
+    allTasks.find((candidate) => candidate.id === taskId)?.status !== 'DONE');
   return {
     id: task.id,
     title: task.title,
@@ -248,6 +251,12 @@ function workSummary(task) {
     executionState: task.executionState,
     updatedAt: task.updatedAt,
     version: task.version,
+    priority: task.priority,
+    planId: task.planId || null,
+    planStepId: task.planStepId || null,
+    dependsOnTaskIds: task.dependsOnTaskIds || [],
+    pendingDependencyIds: pendingDependencies,
+    dependencyBlocked: pendingDependencies.length > 0,
     verification: task.verification ? { status: task.verification.status, passed: Boolean(task.verification.passed), finishedAt: task.verification.finishedAt } : null,
     nextAction: nextAction(task),
     ledgerRef: `work://${task.id}/ledger`,
@@ -256,6 +265,7 @@ function workSummary(task) {
 
 function buildAttention(tasks) {
   return tasks.flatMap((task) => {
+    if (task.dependencyBlocked) return [{ level: 'MEDIUM', workId: task.id, reason: `Waiting for ${task.pendingDependencyIds.length} prerequisite task(s).`, action: { name: 'work_inspect', workId: task.id } }];
     if (task.status === 'BLOCKED') return [{ level: 'HIGH', workId: task.id, reason: task.blocked?.reason || 'Work is blocked.', action: { name: 'work_inspect', workId: task.id } }];
     if (task.verification && !task.verification.passed) return [{ level: 'HIGH', workId: task.id, reason: 'Verification needs attention.', action: { name: 'work_inspect', workId: task.id } }];
     if (task.status === 'REVIEW') return [{ level: 'MEDIUM', workId: task.id, reason: 'Review is pending.', action: { name: 'work_inspect', workId: task.id } }];
