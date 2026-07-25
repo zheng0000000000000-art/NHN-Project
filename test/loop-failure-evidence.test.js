@@ -6,6 +6,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { applyAgentDeliveryGate } from '../src/delivery-gate.js';
 import { classifyDeliveryFailure } from '../src/delivery-failures.js';
 import { FailureCaseStore } from '../src/failure-cases.js';
+import { Store } from '../src/store.js';
+import { EntryService } from '../src/entry-service.js';
 
 async function storeFixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-loop-failure-'));
@@ -13,6 +15,22 @@ async function storeFixture(t) {
   const store = new FailureCaseStore(root);
   await store.initialize();
   return store;
+}
+
+async function auditStoreFixture(t) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-loop-failure-audit-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new Store(root);
+  await store.initialize();
+  return store;
+}
+
+async function entryServiceFixture(t) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-loop-failure-handoff-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const entryService = new EntryService({ dataDirectory: root, workspaceRoot: root });
+  await entryService.initialize();
+  return entryService;
 }
 
 test('an intentional agent failure is asserted by the delivery gate with bounded executor evidence', () => {
@@ -96,4 +114,42 @@ test('handoff delivery failures classify as evidence and resolve once delivery s
   const final = await store.get(recorded.id);
   assert.equal(final.status, 'RESOLVED');
   assert.equal(final.statusNote, 'Handoff delivered successfully after retry.');
+});
+
+test('an intentional agent failure creates a retrievable audit record for the failing task', async (t) => {
+  const store = await auditStoreFixture(t);
+  const taskId = 'tsk_audit_failure_1';
+
+  await store.recordAudit('usr_audit_writer', 'TASK_VERIFICATION_FAILED', {
+    taskId,
+    kind: 'EXECUTOR_FAILED',
+    result: 'Intentional failure: agent stopped without delivering a patch.',
+  });
+
+  const events = await store.listAuditEvents({ limit: 100 });
+  const match = events.find((event) => event.data?.taskId === taskId);
+  assert.ok(match, 'audit event store must retain a record for the failing task');
+  assert.equal(match.action, 'TASK_VERIFICATION_FAILED');
+  assert.equal(match.actorUserId, 'usr_audit_writer');
+});
+
+test('an intentional agent failure produces a handoff document bound to the failing task', async (t) => {
+  const entryService = await entryServiceFixture(t);
+  const task = {
+    id: 'tsk_handoff_failure_1',
+    status: 'BLOCKED',
+    version: 1,
+    verification: { status: 'FAILED', passed: false, changedPaths: [] },
+  };
+  const actor = { id: 'usr_handoff_writer' };
+
+  const handoff = await entryService.writeHandoff(actor, 'team-loop', task, [], {
+    notes: 'Agent stopped without delivering a patch; verification failed.',
+    failedAttempts: ['Intentional failure: agent stopped without delivering a patch.'],
+  });
+
+  assert.equal(handoff.workId, task.id);
+  assert.equal(handoff.kind, 'HANDOFF');
+  assert.ok(handoff.notes.length > 0, 'handoff must carry non-empty content');
+  assert.deepEqual(handoff.failedAttempts, ['Intentional failure: agent stopped without delivering a patch.']);
 });
