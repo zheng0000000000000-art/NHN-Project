@@ -8,6 +8,7 @@ import {
 } from './engine/economy-simulator.js';
 import { HttpError, nowIso, randomId } from './utils.js';
 import { analyzeInformationValue } from './auction-information-value.js';
+import { compareAiPoliciesToHuman } from './auction-policy-comparison.js';
 
 export class AuctionPlaySessionStore {
   constructor({ dataDirectory, seedPath }) {
@@ -72,6 +73,10 @@ export class AuctionPlaySessionStore {
 
   informationValue(id, actor) {
     return analyzeInformationValue(this.findOwned(id, actor));
+  }
+
+  policyComparison(id, actor) {
+    return compareAiPoliciesToHuman(this.findOwned(id, actor), this.config);
   }
 
   findOwned(id, actor) {
