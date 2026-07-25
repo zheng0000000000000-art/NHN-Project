@@ -2426,8 +2426,10 @@ function workEventTask(task) {
 async function decomposeMaxTurnTask(task, actor) {
   if (!task) throw new HttpError(404, 'Task not found.');
   if (task.recovery?.childTaskIds?.length) {
-    if (!task.archived) {
+    if (!task.archived || task.status === 'BLOCKED') {
       task = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_RECOVERY_PARENT_COLLAPSED', async (next) => {
+        next.status = 'IN_PROGRESS';
+        next.blocked = null;
         next.archived = true;
         next.archivedAt = nowIso();
         next.archivedByUserId = actor.id;
@@ -2456,9 +2458,9 @@ async function decomposeMaxTurnTask(task, actor) {
   const plan = await store.createPlan(actor, definition, await verifier.profileNames());
   const childTaskIds = plan.tasks.map((item) => item.id);
   const parent = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_TASK_DECOMPOSED', async (next) => {
-    next.status = 'BLOCKED';
+    next.status = 'IN_PROGRESS';
     next.executionState = 'IDLE';
-    next.blocked = { reason: `Automatically decomposed into ${childTaskIds.length} bounded recovery tasks.`, byUserId: actor.id, at: nowIso(), automatic: true };
+    next.blocked = null;
     next.recovery = { reason: 'MAX_TURNS_RECOVERY_EXHAUSTED', planId: plan.planId, childTaskIds, depth: Number(task.recovery?.depth || 0), createdAt: nowIso() };
     next.archived = true;
     next.archivedAt = nowIso();
