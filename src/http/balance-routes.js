@@ -36,6 +36,19 @@ export async function handleBalanceRoute({
     return true;
   }
 
+  const informationValueReportMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)\/information-value-report$/);
+  if (method === 'GET' && informationValueReportMatch) {
+    const sessionId = decodeURIComponent(informationValueReportMatch[1]);
+    const experimentId = url.searchParams.get('priceExperimentId');
+    const priceExperiment = experimentId
+      ? (await balanceExperiments.get(experimentId, { actorUserId: actor.id, actorRole: actor.role })).result
+      : null;
+    sendJson(response, 200, {
+      informationValueReport: auctionPlaySessions.informationValueReport(sessionId, actor, { priceExperiment }),
+    });
+    return true;
+  }
+
   const playMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)(?:\/actions)?$/);
   if (playMatch) {
     const sessionId = decodeURIComponent(playMatch[1]);

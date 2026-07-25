@@ -182,3 +182,32 @@ ROI가 약 +239.72%까지 폭증했다. 따라서 `무경쟁률 13%`만 맞추�
 - `AuctionPlaySessionStore#policyComparison(id, actor)`가 완료된
   세션에서만 비교를 허용해, 사람이 아직 정산 전인 세션의 결과를 미리
   들여다보는 경로를 막는다.
+
+## 정보 가치 종합 리포트 (사람-AI 비교 후속)
+
+`src/auction-information-value-report.js`의 `buildInformationValueReport`는
+`analyzeInformationValue`(회한/regret)와 `compareHumanAndAiPolicies`(수익)의
+결과를 사람과 `conservative`/`value`/`speculative` 세 AI 정책을 한 줄씩 나란히
+비교하는 하나의 리포트로 합친다. `AuctionPlaySessionStore#informationValueReport(id, actor)`와
+`GET /api/balance/play/sessions/:id/information-value-report`로 노출되며,
+완료된 세션에서만 조회할 수 있다는 제약은 `policyComparison`과 동일하다.
+
+- **수익(returns)**: 사람과 각 정책의 `roiPercent`·`realizedProfit`을 나열한다.
+- **회한(regret)**: 사람은 `analyzeInformationValue`의 값을, 각 AI 정책은
+  `auction-policy-comparison.js`의 `runPolicy`에 추가한 동일한 공식
+  (완전 정보 낙찰자의 최적 이익 - 정책이 실제로 거둔 이익, LOT별 합산)을 그대로 쓴다.
+- **회수(payback)**: 리포트가 새로 정의하는 지표로, 정보비 지출을 실제로
+  회수하기 시작한 첫 LOT 번호(`paybackLotIndex`)다. 누적 실현이익이 누적
+  정보비 지출을 처음 따라잡는 LOT을 찾으며, 정보를 전혀 사지 않은 정책은
+  회수할 것이 없으므로 `null`로 둔다(0번째 LOT에서 자동으로 "회수됨"으로
+  처리하지 않는다).
+- **가격 비교(prices)**: `priceExperimentId` 쿼리 파라미터로 지정한 튜닝
+  실험(`information-price-tuning-v1` 같은 tune 모드 밸런스 실험)의
+  `spec.parameters`(기준가)와 `candidate.parameters`(후보가)를 나란히
+  비교한다. 실험을 지정하지 않으면 `prices`는 `null`이다.
+- **다음 실험 추천(recommendedNextExperiment)**: 결정적 규칙 하나만 적용한다.
+  AI 정책 중 정보비를 지출했지만 세션 안에서 회수하지 못한 정책이 있으면
+  그 정책의 가격을 좁혀 다시 튜닝하라고 추천하고, 가격 비교가 주어졌고
+  후보가가 기준가에서 바뀌었다면 그 후보가를 같은 시드로 재생해 확인하라고
+  추천하며, 그 외에는 회한이 가장 큰 정책을 중심으로 시드 범위를 넓혀
+  검증하라고 추천한다.

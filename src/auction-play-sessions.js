@@ -9,6 +9,7 @@ import {
 import { HttpError, nowIso, randomId } from './utils.js';
 import { analyzeInformationValue } from './auction-information-value.js';
 import { compareHumanAndAiPolicies } from './auction-policy-comparison.js';
+import { buildInformationValueReport } from './auction-information-value-report.js';
 
 export class AuctionPlaySessionStore {
   constructor({ dataDirectory, seedPath }) {
@@ -81,6 +82,14 @@ export class AuctionPlaySessionStore {
       throw new HttpError(409, 'Auction play session must be completed before comparing policies.');
     }
     return compareHumanAndAiPolicies(session, this.config);
+  }
+
+  informationValueReport(id, actor, { priceExperiment = null } = {}) {
+    const session = this.findOwned(id, actor);
+    if (session.status !== 'COMPLETED') {
+      throw new HttpError(409, 'Auction play session must be completed before reporting information value.');
+    }
+    return buildInformationValueReport(session, this.config, { priceExperiment });
   }
 
   findOwned(id, actor) {
