@@ -1984,6 +1984,18 @@ async function handleApi(request, response) {
       });
       await recordReviewUsage(actor, current, reviewUsage, 'FAILED', kind);
     }
+    // 리뷰가 실패하면 이전 판정을 남겨두지 않는다. 남기면 무효가 된 승인이 이력에 계속 서 있고,
+    // 다음 사람이 그것을 통과한 리뷰로 읽는다.
+    await store.mutateTask(taskId, actor, null, 'AI_REVIEW_INVALIDATED', async (next) => {
+      next.aiReview = {
+        status: 'FAILED',
+        verdict: null,
+        reviewerProfileId: String(body.reviewerProfileId || next.reviewerProfileId || ''),
+        kind,
+        message,
+        failedAt: nowIso(),
+      };
+    });
     await store.recordAudit(actor.id, 'AI_REVIEW_FAILED', {
       taskId: current.id,
       kind,

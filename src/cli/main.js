@@ -1528,13 +1528,16 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
     `Allowed paths: ${JSON.stringify(task.allowedPaths || [])}`,
     'Inspect the current git diff and the verification evidence below.',
     JSON.stringify(compactVerificationForPrompt(task.verification || {}), null, 2),
-    'Choose exactly one verdict. Use "APPROVE" when the diff satisfies the contract, otherwise use "REJECT".',
+    `Changed files: ${JSON.stringify(task.verification?.changedPaths || [])}`,
+    'First run this and read the output before deciding:',
+    '  git --no-pager diff HEAD~1 --unified=3',
+    'Then decide. Use APPROVE when the diff satisfies the acceptance criteria, otherwise REJECT.',
+    'Your summary must name at least one changed file above and state what that file now does.',
+    'A summary that names no file is refused as a non-review, and so is any text left in angle brackets.',
     'Never copy the placeholder text "APPROVE|REJECT" into verdict.',
-    'The summary must be your own sentence citing what you saw in the diff or the evidence.',
-    'Copying the example summary below is rejected as a non-review.',
-    'Return exactly one final line shaped like this, with your own summary:',
-    'TEAM_LOOP_REVIEW: {"verdict":"APPROVE","summary":"<your one-sentence finding>","concerns":[]}',
-    'TEAM_LOOP_REVIEW: {"verdict":"REJECT","summary":"<your one-sentence finding>","concerns":["<blocking item>"]}',
+    'End with exactly one line: the marker TEAM_LOOP_REVIEW: followed by a JSON object',
+    'with keys verdict (APPROVE or REJECT), summary (one sentence, naming a changed file),',
+    'and concerns (an array, empty when approving).',
   ].join('\n\n');
   const reviewPreflight = computeReviewPreflight(task, {
     profileId: profile.id,
@@ -1610,6 +1613,16 @@ async function runAiProfileReview(client, task, profile, { workspace, json }) {
       executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
     });
     throw new Error(`AI reviewer ${profile.id} returned the prompt's example summary instead of a review.`);
+  }
+  // 무엇을 봤는지 대지 못하는 요약은 증거가 아니다. 이것도 Y/N이므로 프로그램이 판정한다.
+  if (!citesChangedFile(recommendation.summary, task.verification?.changedPaths)) {
+    await recordAiReviewFailure(client, task, profile, {
+      kind: 'AI_REVIEW_SUMMARY_CITES_NOTHING',
+      message: `AI reviewer ${profile.id} returned a summary that names none of the changed files.`,
+      outputExcerpt: match[1],
+      executionUsage: reviewExecutionUsage(run, profile, reviewPreflight),
+    });
+    throw new Error(`AI reviewer ${profile.id} returned a summary that names none of the changed files.`);
   }
   let reviewed = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/ai-review`, {
     method: 'POST',
@@ -1719,6 +1732,21 @@ export function isPlaceholderReviewSummary(value) {
   if (normalized === AI_REVIEW_PLACEHOLDER_SUMMARY) return true;
   if (normalized === 'specific blocking item') return true;
   return false;
+}
+
+// 요약이 실제로 본 것을 지목하는지 본다.
+//
+// 리뷰어는 diff를 열지 않고도 형식만 맞춘 문장을 낼 수 있다. 그래서 계약을 "무엇을 봤는지
+// 대라"로 바꾸고, 그 이행 여부를 프로그램이 판정한다. 파일명만 대도 되게 해서 경로 표기
+// 차이(슬래시 방향, 디렉터리 생략)로 정직한 리뷰가 반려되지 않게 한다.
+export function citesChangedFile(summary, changedPaths) {
+  const text = String(summary ?? '').toLowerCase().split('\\').join('/');
+  const paths = (Array.isArray(changedPaths) ? changedPaths : [])
+    .map((item) => String(item).split('\\').join('/').toLowerCase())
+    .filter(Boolean);
+  // 바뀐 파일이 없는 작업이면 지목할 것도 없으므로 이 관문은 적용하지 않는다.
+  if (!paths.length) return true;
+  return paths.some((candidate) => text.includes(candidate) || text.includes(candidate.split('/').pop()));
 }
 
 export function normalizeAiReviewVerdict(value) {

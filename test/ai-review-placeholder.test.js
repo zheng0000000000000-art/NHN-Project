@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { AI_REVIEW_PLACEHOLDER_SUMMARY, isPlaceholderReviewSummary } from '../src/cli/main.js';
+import { AI_REVIEW_PLACEHOLDER_SUMMARY, citesChangedFile, isPlaceholderReviewSummary } from '../src/cli/main.js';
 
 // 실측: 코덱스 리뷰가 프롬프트의 예시 줄을 그대로 돌려주어 APPROVE가 났다.
 // summary는 자리표시자와 바이트 단위로 같았고 concerns는 비어 있었다.
@@ -61,4 +61,31 @@ test('a placeholder left inside an otherwise real sentence is still refused', ()
 test('ordinary prose containing comparisons is not mistaken for a placeholder', () => {
   assert.equal(isPlaceholderReviewSummary('exit 0 < expected, so the gate blocked the change'), false);
   assert.equal(isPlaceholderReviewSummary('The retained excerpt is <= 4000 characters as required.'), false);
+});
+
+// 리뷰어가 diff를 열지 않고도 형식만 맞출 수 있었다. 계약을 "무엇을 봤는지 대라"로 바꾸고
+// 그 이행을 프로그램이 판정한다.
+test('a summary that names a changed file counts as citing evidence', () => {
+  const changed = ['server.js', 'src/turn-budget-observations.js'];
+  assert.equal(citesChangedFile('server.js now retains the executor report under a bound.', changed), true);
+  assert.equal(citesChangedFile('turn-budget-observations.js reads both report sources.', changed), true,
+    'naming the file without its directory is still naming it');
+  assert.equal(citesChangedFile('SERVER.JS was changed', changed), true, 'casing must not reject an honest review');
+});
+
+test('a summary naming nothing that changed is not evidence', () => {
+  assert.equal(citesChangedFile('The change looks correct and the tests pass.', ['server.js']), false);
+  assert.equal(citesChangedFile('', ['server.js']), false);
+});
+
+test('a change set with no files cannot demand a citation', () => {
+  assert.equal(citesChangedFile('nothing to inspect', []), true);
+  assert.equal(citesChangedFile('nothing to inspect', undefined), true);
+});
+
+test('the prompt tells the reviewer the command to run and what the summary must name', async () => {
+  const source = await readFile('src/cli/main.js', 'utf8');
+  assert.match(source, /git --no-pager diff HEAD~1/, 'the reviewer must be told how to look');
+  assert.match(source, /must name at least one changed file/);
+  assert.match(source, /AI_REVIEW_SUMMARY_CITES_NOTHING/);
 });
