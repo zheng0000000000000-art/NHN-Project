@@ -2426,6 +2426,13 @@ function workEventTask(task) {
 async function decomposeMaxTurnTask(task, actor) {
   if (!task) throw new HttpError(404, 'Task not found.');
   if (task.recovery?.childTaskIds?.length) {
+    if (!task.archived) {
+      task = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_RECOVERY_PARENT_COLLAPSED', async (next) => {
+        next.archived = true;
+        next.archivedAt = nowIso();
+        next.archivedByUserId = actor.id;
+      });
+    }
     const tasks = await store.listTasks();
     const childTaskIds = task.recovery.childTaskIds;
     const partial = childTaskIds
@@ -2453,6 +2460,9 @@ async function decomposeMaxTurnTask(task, actor) {
     next.executionState = 'IDLE';
     next.blocked = { reason: `Automatically decomposed into ${childTaskIds.length} bounded recovery tasks.`, byUserId: actor.id, at: nowIso(), automatic: true };
     next.recovery = { reason: 'MAX_TURNS_RECOVERY_EXHAUSTED', planId: plan.planId, childTaskIds, depth: Number(task.recovery?.depth || 0), createdAt: nowIso() };
+    next.archived = true;
+    next.archivedAt = nowIso();
+    next.archivedByUserId = actor.id;
   });
   await store.recordAudit(actor.id, 'MAX_TURNS_RECOVERY_PLAN_CREATED', { taskId: task.id, planId: plan.planId, childTaskIds });
   const first = await startRecoveryTask(plan.tasks[0], actor);
