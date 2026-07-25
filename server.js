@@ -59,6 +59,7 @@ import {
 } from './src/max-turn-decomposition.js';
 import { selectAutomaticNextPlanTask } from './src/plan-progression.js';
 import { applyAgentDeliveryGate } from './src/delivery-gate.js';
+import { describeReviewBlock } from './src/review-block.js';
 import { classifyDeliveryFailure } from './src/delivery-failures.js';
 import { loadConfig } from './src/cli/session.js';
 import { normalizeWorkerConfig, selectExecutor, selectReviewer } from './src/executor-router.js';
@@ -2118,6 +2119,11 @@ async function handleApi(request, response) {
       } else {
         next.status = 'IN_PROGRESS';
         next.executionState = 'IDLE';
+        // 무효로 만든 검증이 있을 때만 막다른 길이 생긴다. 애초에 통과한 검증이 없었다면
+        // 거절이 막은 것이 아니므로, 없는 원인을 기록해 두지 않는다.
+        next.reviewBlock = next.verification
+          ? describeReviewBlock(next, { at: nowIso(), byUserId: actor.id })
+          : null;
         next.verification = next.verification
           ? { ...next.verification, status: 'STALE', passed: false, staleAt: nowIso() }
           : null;
@@ -2384,6 +2390,8 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   try {
     return await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_FINISHED', async (next) => {
       next.verification = verification;
+      // 통과한 검증이 막힘을 실제로 풀었다. 남겨두면 이미 열린 문 앞에 막다름 표지가 계속 서 있다.
+      if (verification.passed) next.reviewBlock = null;
       next.executionState = keepExecutionRunning ? 'RUNNING' : 'IDLE';
       next.executionRun = next.executionRun ? {
         ...next.executionRun,
@@ -2400,6 +2408,7 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   try {
     return await store.mutateTask(taskId, actor, latest.version, 'VERIFICATION_FINISHED_AFTER_CONFLICT', async (next) => {
       next.verification = verification;
+      if (verification.passed) next.reviewBlock = null;
       next.executionState = keepExecutionRunning ? 'RUNNING' : 'IDLE';
       next.executionRun = next.executionRun ? {
         ...next.executionRun,
