@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { atomicWriteJson, HttpError, nowIso, randomId, readJson } from './utils.js';
-import { evidenceBasis, isRerunnableFailure } from './failure-evidence.js';
+import { evidenceBasis } from './failure-evidence.js';
 
 const EMPTY_LEDGER = { schemaVersion: 1, receipts: [] };
 
@@ -185,17 +185,27 @@ export class PromotionEngine {
   }
 }
 
+// 결정가능성: 기계가 PASS/FAIL로 가를 수 있는가. 0은 "사람 해석이 필요하다"는 뜻이고,
+// 그 값이 표현되지 않으면 무엇을 프로그램에 맡길지 정할 근거 자체가 사라진다.
+// 0 = 보고된 결과뿐 · 1 = 관측된 상태는 있으나 재실행 불가 · 2 = 다시 실행해 exit code로 가른다.
+export const DECIDABILITY_BY_BASIS = { REPLAYABLE_COMMAND: 2, OBSERVED_STATE: 1, REPORTED_OUTCOME: 0 };
+
+// Y/N으로 답할 수 있으면 프로그램이, 절차면 스킬이, 나머지는 위키가 맡는다.
+export const ARTIFACT_BY_DECIDABILITY = { 2: 'HARNESS', 1: 'SKILL', 0: 'WIKI' };
+
 function scoreCandidate(cases) {
   const occurrences = cases.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
   // 파일명이 비어있지 않다는 사실은 근거가 아니다. delivery gate가 남긴 라벨도 그 조건을 통과한다.
-  // 다시 실행 가능한 명령 근거가 있을 때만 하네스로 점수화한다.
-  const executable = cases.some((item) => isRerunnableFailure(item));
+  const basis = evidenceBasis(cases);
+  const decidability = DECIDABILITY_BY_BASIS[basis] ?? 0;
   const readOnly = cases.every((item) => !item.lastEvidence?.changedPaths?.length);
   const observable = cases.some((item) => item.lastEvidence?.actualExit != null || item.lastEvidence?.error || item.lastEvidence?.paths?.length);
   const dimensions = {
     repeatability: occurrences >= 3 ? 2 : occurrences >= 2 ? 1 : 0,
-    decidability: executable ? 2 : 1,
-    failureInjection: executable ? 2 : 1,
+    decidability,
+    // 재현 난이도는 지금 같은 근거에서 파생한다. 다시 실행할 수 있으면 인위적 재현이 자명하고,
+    // 보고된 결과뿐이면 심을 결함 자체가 없다. 더 나은 신호가 생기면 갈라야 한다.
+    failureInjection: decidability,
     isolation: readOnly ? 2 : 1,
     observability: observable ? 2 : 1,
     maintenanceValue: occurrences >= 2 ? 2 : 1,
@@ -205,8 +215,8 @@ function scoreCandidate(cases) {
     failureCaseIds: cases.map((item) => item.id),
     title: cases.map((item) => item.title).join(' · '),
     occurrences,
-    suggestedType: executable ? 'HARNESS' : 'SKILL',
-    evidenceBasis: evidenceBasis(cases),
+    suggestedType: ARTIFACT_BY_DECIDABILITY[decidability],
+    evidenceBasis: basis,
     score: { total, dimensions, verdict: total >= 11 ? 'CREATE_NOW' : total >= 8 ? 'OPTIMISTIC_TRIAL' : total >= 5 ? 'HOLD' : 'NOTE' },
   };
 }
