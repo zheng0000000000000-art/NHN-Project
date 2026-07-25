@@ -9,5 +9,7 @@ data/balance-portfolio/
 .team-loop-worktrees/
 .runtime/
 workspaces/*/
+!workspaces/team-loop-tool-lane/
+!workspaces/team-loop-tool-lane/**
 node_modules/
 .DS_Store

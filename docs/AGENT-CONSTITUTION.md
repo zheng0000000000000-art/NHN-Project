@@ -205,7 +205,7 @@ ENTER → PLAN → EXECUTE → VERIFY → LEARN → HANDOFF → CLOSE
 
 `C-START-003` 시작 결과는 `STARTED`, `RESUMED`, `ASK` 또는 `BLOCKED`와 선택 근거를 반환한다.
 
-`C-WORK-007` 검증할 수 없는 작업은 검증된 것으로 표시하지 않고 제한 사항을 HANDOFF에 남긴다.
+`C-WORK-011` 검증할 수 없는 작업은 검증된 것으로 표시하지 않고 제한 사항을 HANDOFF에 남긴다.
 
 ## 9. HANDOFF protocol
 

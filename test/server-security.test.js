@@ -16,6 +16,7 @@ async function startServer(t) {
       PORT: '0',
       DATA_DIR: dataDirectory,
       WORKSPACE_ROOT: path.resolve('.'),
+      TEAM_LOOP_CLI_HOME: path.resolve('test/fixtures/cli-home'),
       SIGNUP_CODE: 'test-signup-code',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -140,6 +141,63 @@ test('agent work must be queued by its human owner before it can be claimed', as
   assert.equal(claimed.executionState, 'RUNNING');
   assert.equal(claimed.executor.tool, 'codex');
   assert.equal(claimed.executor.model, 'test-model');
+});
+
+test('delegation broker creates bounded work, reuses duplicates, and rejects recursive overflow', async (t) => {
+  const base = await startServer(t);
+  const registration = await post(base, '/api/auth/register', {
+    name: 'DelegationOwner', password: 'correct-password', signupCode: 'test-signup-code',
+  });
+  const cookie = registration.headers.get('set-cookie').split(';', 1)[0];
+  const headers = { Cookie: cookie };
+  const request = {
+    title: 'Inspect delegated contract',
+    reason: 'A second model should inspect the orchestration boundary.',
+    role: 'REVIEW',
+    allowedPaths: ['src/orchestration-engine.js'],
+    acceptanceCriteria: ['Return a scoped review.'],
+    tokenBudget: 12_000,
+    costBudgetUsd: 1,
+    launchWorker: false,
+  };
+  const createdResponse = await post(base, '/api/orchestration/delegate', request, headers);
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json();
+  assert.equal(created.outcome, 'QUEUED');
+  assert.equal(created.task.executionState, 'QUEUED');
+  assert.equal(created.task.delegation.depth, 1);
+  assert.equal(created.task.delegation.role, 'REVIEW');
+  assert.equal(created.task.delegation.budget.tokenBudget, 12_000);
+
+  const duplicateResponse = await post(base, '/api/orchestration/delegate', request, headers);
+  assert.equal(duplicateResponse.status, 200);
+  assert.equal((await duplicateResponse.json()).outcome, 'REUSED');
+
+  const childResponse = await post(base, '/api/orchestration/delegate', {
+    ...request,
+    parentTaskId: created.task.id,
+    title: 'Inspect delegated review',
+    reason: 'The delegated reviewer needs one bounded implementation check.',
+    role: 'EXECUTE',
+  }, headers);
+  assert.equal(childResponse.status, 201);
+  const child = (await childResponse.json()).task;
+  assert.equal(child.delegation.depth, 2);
+  assert.equal(child.delegation.rootTaskId, created.task.id);
+
+  const overflow = await post(base, '/api/orchestration/delegate', {
+    ...request,
+    parentTaskId: child.id,
+    title: 'Forbidden third delegation',
+    reason: 'This must not recurse again.',
+  }, headers);
+  assert.equal(overflow.status, 409);
+
+  const status = await fetch(`${base}/api/orchestration/delegations/${created.task.id}`, { headers });
+  assert.equal(status.status, 200);
+  const statusPayload = await status.json();
+  assert.equal(statusPayload.children.length, 1);
+  assert.equal(statusPayload.children[0].id, child.id);
 });
 
 test('task creator can reassign a ready task and queued agent state is cancelled', async (t) => {

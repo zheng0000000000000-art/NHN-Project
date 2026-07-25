@@ -16,7 +16,7 @@ test('portfolio entry stays compact and project read plans load work context laz
   assert.equal(portfolio.projects[0].activeWorkCount, 1);
   assert.equal('activeWorks' in portfolio.projects[0], false);
   const plan = await service.readPlan('team-loop', { intent: 'resume', workId: 'tsk_one', maxTokens: 4000 });
-  assert.deepEqual(plan.required, ['project://team-loop/entry', 'work://tsk_one/contract', 'work://tsk_one/handoff/latest']);
+  assert.deepEqual(plan.required, ['project://team-loop/entry', 'project://team-loop-tool-lane/handoff/current', 'work://tsk_one/contract', 'work://tsk_one/handoff/latest']);
   assert.equal(plan.budget.maxTokens, 4000);
   assert.ok(plan.excluded.includes('logs://raw/*'));
 });

@@ -251,7 +251,18 @@
             <label class="executor-picker">실행자
               <select id="worker-executor"><option value="">자동 선택</option></select>
             </label>
+            <label class="executor-picker">검토 AI
+              <select id="worker-reviewer"><option value="">자동 선택</option></select>
+            </label>
+            <label class="executor-picker">승인
+              <select id="worker-approval-policy">
+                <option value="USER_CONFIRM">사용자 확인</option>
+                <option value="AUTO_LOW_RISK">저위험 자동</option>
+                <option value="AUTO">자동 승인</option>
+              </select>
+            </label>
             <button id="start-next-work" class="primary" type="button">다음 작업 시작</button>
+            <button id="enable-work-notifications" class="ghost compact" type="button">알림 켜기</button>
             <span id="ai-status" class="badge"></span>
           </div>
           <div id="worker-routing-preview" class="worker-routing-preview"></div>
@@ -325,8 +336,9 @@
             <label class="wide">제목<input name="title" minlength="3" maxlength="120" required></label>
             <label class="wide">설명<textarea name="description" rows="4"></textarea></label>
             <label class="wide">완료 조건 <span class="muted">(한 줄에 하나)</span><textarea name="acceptanceCriteria" rows="4"></textarea></label>
-            <label>담당자<select name="assigneeUserId"><option value="">미지정</option></select></label>
-            <label>리뷰어<select name="reviewerUserId"><option value="">누구나(담당자 제외)</option></select></label>
+            <label>실행 AI<select name="executorProfileId"><option value="">자동 선택</option></select></label>
+            <label>검토 AI<select name="reviewerProfileId"><option value="">자동 선택</option></select></label>
+            <label>승인 정책<select name="approvalPolicy"><option value="USER_CONFIRM">사용자 확인</option><option value="AUTO_LOW_RISK">저위험 자동</option><option value="AUTO">자동 승인</option></select></label>
             <label>우선순위<input name="priority" type="number" min="1" max="999" value="100"></label>
             <label>검증 프로필<select name="verificationProfile"></select></label>
             <label class="wide">대체할 기존 작업<select name="supersedesTaskId"><option value="">없음 · 새 작업</option></select></label>

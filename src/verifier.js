@@ -202,7 +202,7 @@ async function gitLines(cwd, args) {
 }
 
 async function gitCapture(cwd, args, timeoutMs = 30_000, throwOnFailure = true) {
-  const result = await runProcess({ file: 'git', args, cwd, expectedExit: 0, timeoutMs });
+  const result = await runProcess({ file: process.env.TEAM_LOOP_GIT_BIN || 'git', args, cwd, expectedExit: 0, timeoutMs });
   if (throwOnFailure && !result.passed) throw new HttpError(409, `Git command failed: git ${args.join(' ')}`, result);
   return result;
 }

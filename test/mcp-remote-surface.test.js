@@ -37,6 +37,7 @@ test('MCP exposes remote file exchange and no client-side worktree tools', async
   assert.ok(names.includes('portfolio_enter'));
   assert.ok(names.includes('project_enter'));
   assert.ok(names.includes('project_read_plan'));
+  assert.ok(names.includes('project_handoff_read'));
   assert.ok(names.includes('work_inspect'));
   assert.ok(names.includes('handoff_read'));
   assert.ok(names.includes('handoff_write'));
@@ -45,6 +46,8 @@ test('MCP exposes remote file exchange and no client-side worktree tools', async
   assert.ok(names.includes('plan_create'));
   assert.ok(names.includes('plan_list'));
   assert.ok(names.includes('work_start_next'));
+  assert.ok(names.includes('delegate_work'));
+  assert.ok(names.includes('delegation_status'));
   assert.ok(names.includes('balance_result_read'));
   assert.ok(names.includes('wiki_search'));
   assert.ok(names.includes('wiki_propose'));

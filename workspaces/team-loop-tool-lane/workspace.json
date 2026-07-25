@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "team-loop-tool-lane",
+  "title": "Team Loop 도구 레인",
+  "gameRepository": "",
+  "projectPack": "project/project-pack.json",
+  "context": {
+    "stable": "context/stable",
+    "current": "context/current"
+  },
+  "handoff": "handoffs/CURRENT.md"
+}

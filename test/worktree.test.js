@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createTaskWorktree, removeTaskWorktree, listTaskWorktrees, worktreeBranch, worktreeHasChanges } from '../src/worktree.js';
+import { createTaskWorktree, removeTaskWorktree, listTaskWorktrees, taskBranchMerged, worktreeBranch, worktreeHasChanges } from '../src/worktree.js';
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-repo-'));
@@ -68,6 +68,23 @@ test('detects unlanded worktree changes before archive', async () => {
     assert.equal(await worktreeHasChanges(repo, 'tsk_DIRTY'), true);
     await removeTaskWorktree(repo, 'tsk_DIRTY');
     assert.equal(await worktreeHasChanges(repo, 'tsk_DIRTY'), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('detects a task branch that was manually integrated before approval', async () => {
+  const repo = gitRepo();
+  try {
+    const { dir } = await createTaskWorktree(repo, 'tsk_MANUAL');
+    fs.writeFileSync(path.join(dir, 'result.txt'), 'integrated result');
+    spawnSync('git', ['add', '-A'], { cwd: dir });
+    spawnSync('git', ['commit', '-q', '-m', 'task result'], { cwd: dir });
+    assert.equal(await taskBranchMerged(repo, 'tsk_MANUAL'), false);
+    spawnSync('git', ['merge', '--no-ff', worktreeBranch('tsk_MANUAL'), '-m', 'manual integration'], { cwd: repo });
+    assert.equal(await taskBranchMerged(repo, 'tsk_MANUAL'), true);
+    await removeTaskWorktree(repo, 'tsk_MANUAL');
+    assert.equal(await taskBranchMerged(repo, 'tsk_MANUAL'), true);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

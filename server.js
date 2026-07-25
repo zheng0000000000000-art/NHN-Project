@@ -17,7 +17,7 @@ import { executionMode } from './public/task-execution.js';
 import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
 import { scopesOverlap } from './src/scope.js';
-import { mergeTaskWorktree, worktreeHasChanges, worktreePath } from './src/worktree.js';
+import { mergeTaskWorktree, taskBranchMerged, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
@@ -47,8 +47,10 @@ import { ConstitutionCompiler, ConstitutionObservationStore } from './src/consti
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { recordAutomationResult } from './src/automation-guard.js';
+import { classifyDeliveryFailure } from './src/delivery-failures.js';
 import { loadConfig } from './src/cli/session.js';
-import { normalizeWorkerConfig, selectExecutor } from './src/executor-router.js';
+import { normalizeWorkerConfig, selectExecutor, selectReviewer } from './src/executor-router.js';
+import { readWorkspaceHandoff } from './src/workspace-manager.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(projectRoot, 'public');
@@ -116,6 +118,21 @@ const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
 await Promise.all([store.initialize(), harnessRegistry.initialize(), failureCases.initialize(), skillRegistry.initialize(), projectContext.initialize(), discussions.initialize(), usageTracker.initialize(), contextIndex.initialize(), wiki.initialize(), balanceExperiments.initialize(), balancePortfolio.initialize(), balanceJobs.initialize(), balanceSeeds.initialize(), auctionPlaySessions.initialize(), contextSeeds.initialize(), contextPacks.initialize(), promotionEngine.initialize(), entryService.initialize(), constitutionObservations.initialize()]);
+const initialWorkerConfig = await loadConfig();
+const initialExecutionProfile = selectExecutor({ priority: 100 }, initialWorkerConfig).candidate;
+const initialReviewProfile = selectReviewer({ priority: 100 }, initialWorkerConfig, {
+  executorProfileId: initialExecutionProfile?.id || '',
+}).candidate;
+await store.initializeAiProfiles({
+  executorProfileId: initialExecutionProfile?.id,
+  reviewerProfileId: initialReviewProfile?.id,
+  approvalPolicy: 'USER_CONFIRM',
+});
+const recoveryId = randomId('recovery_');
+const recoveredAgentTaskIds = await store.recoverInterruptedAgentTasks({ recoveryId });
+if (recoveredAgentTaskIds.length) {
+  console.warn(`Recovered ${recoveredAgentTaskIds.length} interrupted agent task(s): ${recoveredAgentTaskIds.join(', ')}`);
+}
 const capturedPortfolioIds = new Set((await balancePortfolio.list({ limit: 1_000 })).map((item) => item.experimentId));
 for (const experiment of await balanceExperiments.list({ limit: 100 })) {
   if (!capturedPortfolioIds.has(experiment.id)) await balancePortfolio.capture(experiment);
@@ -139,13 +156,18 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, host, () => {
+server.listen(port, host, async () => {
   const address = server.address();
   const listeningPort = typeof address === 'object' && address ? address.port : port;
   console.log(`Team Loop Lite listening on http://${host}:${listeningPort}`);
   console.log(`Workspace: ${workspaceRoot}`);
   if (!signupCode) {
     console.warn('WARNING: SIGNUP_CODE is not configured. The first administrator may register only during the first 10 minutes after startup.');
+  }
+  for (const taskId of recoveredAgentTaskIds) {
+    await recoverPersistedAgentTask(taskId).catch((error) => {
+      console.error(`Agent recovery failed for ${taskId}: ${error.message}`);
+    });
   }
 });
 
@@ -187,6 +209,18 @@ async function handleApi(request, response) {
   }
 
   const actor = await requireUser(request);
+
+  if (method === 'GET' && url.pathname === '/api/events/work') {
+    await streamWorkEvents(request, response, actor);
+    return;
+  }
+
+  const userStatusMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/(disable|enable)$/);
+  if (method === 'POST' && userStatusMatch) {
+    const user = await store.setUserDisabled(actor, decodeURIComponent(userStatusMatch[1]), userStatusMatch[2] === 'disable');
+    sendJson(response, 200, { user });
+    return;
+  }
 
   if (method === 'GET' && url.pathname === '/api/constitution') {
     sendJson(response, 200, { constitution: constitutionCompiler.status() });
@@ -239,10 +273,19 @@ async function handleApi(request, response) {
         executorId: String(body.executorId || ''),
       })
       : { executor: null, candidate: null, reason: 'NO_WORK' };
+    const reviewerSelection = decision.work
+      ? selectReviewer(decision.work, config, {
+        quality: 'high',
+        allowRemote: body.localOnly ? false : undefined,
+        reviewerProfileId: String(body.reviewerProfileId || ''),
+        executorProfileId: selection.candidate?.id || String(body.executorId || ''),
+      })
+      : { reviewer: null, candidate: null, reason: 'NO_WORK' };
     const usage = await usageTracker.summary({ days: 7, users: [actor], actorUserIds: [actor.id] });
     sendJson(response, 200, {
       decision,
       selection,
+      reviewerSelection,
       usage: {
         generatedAt: usage.generatedAt,
         period: usage.period,
@@ -266,6 +309,20 @@ async function handleApi(request, response) {
     }
     const current = await store.getTask(decision.work.id);
     if (!current) throw new HttpError(409, 'Selected work no longer exists.');
+    if (current.executionState === 'RECOVERING') {
+      sendJson(response, 200, { outcome: 'RECOVERING', decision, task: current, worker: null });
+      return;
+    }
+    if (current.status === 'IN_PROGRESS' && current.verification?.passed) {
+      sendJson(response, 200, {
+        outcome: 'REVIEW_REQUIRED',
+        decision,
+        task: current,
+        worker: null,
+        nextAction: { name: 'request_review', taskId: current.id },
+      });
+      return;
+    }
     if (current.status !== 'READY') {
       const worker = body.launchWorker && current.executionMode === 'AGENT'
         ? launchBoardWorker(current, actor, workerSessionCookie(request), body)
@@ -280,15 +337,32 @@ async function handleApi(request, response) {
       return;
     }
     const executionModeValue = String(body.executionMode || 'HUMAN').toUpperCase() === 'AGENT' ? 'AGENT' : 'HUMAN';
+    const config = await loadConfig();
+    const executionSelection = selectExecutor(current, config, {
+      quality: String(body.quality || 'auto'),
+      allowRemote: body.localOnly ? false : undefined,
+      executorId: String(body.executorId || current.executorProfileId || ''),
+    });
+    const reviewSelection = selectReviewer(current, config, {
+      quality: 'high',
+      allowRemote: body.localOnly ? false : undefined,
+      reviewerProfileId: String(body.reviewerProfileId || current.reviewerProfileId || ''),
+      executorProfileId: executionSelection.candidate?.id || '',
+    });
+    if (executionModeValue === 'AGENT' && !executionSelection.candidate) throw new HttpError(409, 'No execution AI profile is available.');
+    if (executionModeValue === 'AGENT' && !reviewSelection.candidate) throw new HttpError(409, 'No review AI profile is available.');
     const task = await store.mutateTask(current.id, actor, current.version, 'TASK_AUTO_QUEUED', async (next) => {
       next.assigneeUserId = actor.id;
-      if (next.reviewerUserId === actor.id) next.reviewerUserId = null;
+      next.reviewerUserId = null;
+      next.executorProfileId = executionSelection.candidate?.id || null;
+      next.reviewerProfileId = reviewSelection.candidate?.id || null;
+      next.approvalPolicy = normalizeApprovalPolicy(body.approvalPolicy || next.approvalPolicy);
       next.executionMode = executionModeValue;
       next.executionState = executionModeValue === 'AGENT' ? 'QUEUED' : 'IDLE';
       if (executionModeValue === 'HUMAN') next.status = 'IN_PROGRESS';
       next.blocked = null;
       next.review = null;
-      if (body.executor) next.executor = sanitizeExecutorInput(body.executor, { actorUserId: actor.id, at: nowIso() });
+      if (executionSelection.executor) next.executor = sanitizeExecutorInput(executionSelection.executor, { actorUserId: actor.id, at: nowIso() });
     });
     await store.recordAudit(actor.id, 'ORCHESTRATION_WORK_STARTED', {
       taskId: task.id,
@@ -331,6 +405,147 @@ async function handleApi(request, response) {
       workId: url.searchParams.get('workId') || null,
       maxTokens: url.searchParams.get('maxTokens'),
     }));
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/orchestration/delegate') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const parentTaskId = String(body.parentTaskId || '').trim();
+    const parent = parentTaskId ? await store.getTask(parentTaskId) : null;
+    if (parentTaskId && !parent) throw new HttpError(404, 'Parent task not found.');
+    if (parent) requireTaskParticipantOrAdmin(parent, actor);
+    const depth = Number(parent?.delegation?.depth || 0) + 1;
+    const maxDepth = Math.max(1, Math.min(2, Number(body.maxDepth) || 2));
+    if (depth > maxDepth || depth > 2) throw new HttpError(409, 'Delegation depth limit reached.');
+    const role = String(body.role || 'EXECUTE').toUpperCase() === 'REVIEW' ? 'REVIEW' : 'EXECUTE';
+    const reason = String(body.reason || '').trim().slice(0, 1000);
+    if (!reason) throw new HttpError(400, 'Delegation reason is required.');
+    const allowedPaths = Array.isArray(body.allowedPaths) && body.allowedPaths.length
+      ? body.allowedPaths
+      : parent?.allowedPaths || ['**'];
+    const fingerprint = sha256(JSON.stringify({
+      parentTaskId: parentTaskId || null,
+      role,
+      reason: reason.toLowerCase(),
+      allowedPaths: [...allowedPaths].map(String).sort(),
+    }));
+    const duplicate = (await store.listTasks()).find((item) =>
+      !item.archived && item.status !== 'DONE' && item.delegation?.fingerprint === fingerprint);
+    if (duplicate) {
+      sendJson(response, 200, { outcome: 'REUSED', task: duplicate, launched: false });
+      return;
+    }
+
+    const config = await loadConfig();
+    const targetProfileId = String(body.targetProfileId || '').trim();
+    const executionSelection = role === 'REVIEW'
+      ? selectReviewer(parent || body, config, {
+        reviewerProfileId: targetProfileId,
+        executorProfileId: String(body.requestedByProfileId || parent?.executorProfileId || ''),
+      })
+      : selectExecutor(parent || body, config, { executorId: targetProfileId });
+    const target = executionSelection.candidate;
+    if (!target) throw new HttpError(409, `No ${role.toLowerCase()} AI profile is available for delegation.`);
+    const independentReview = selectReviewer(parent || body, config, {
+      executorProfileId: target.id,
+    });
+    if (!independentReview.candidate) throw new HttpError(409, 'No independent review profile is available for delegated work.');
+    const tokenBudget = Math.max(1_000, Math.min(
+      Number(parent?.delegation?.budget?.tokenBudget || 500_000),
+      Number(body.tokenBudget) || 500_000,
+    ));
+    const costBudgetUsd = Math.max(0.01, Math.min(
+      Number(parent?.delegation?.budget?.costBudgetUsd || 10),
+      Number(body.costBudgetUsd) || 10,
+    ));
+    const taskInput = {
+      title: String(body.title || `Delegated ${role.toLowerCase()} work`).slice(0, 120),
+      description: String(body.description || reason).slice(0, 4000),
+      priority: Number(body.priority || parent?.priority || 100),
+      allowedPaths,
+      acceptanceCriteria: Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [],
+      verificationProfile: String(body.verificationProfile || parent?.verificationProfile || 'repository-basic'),
+      assigneeUserId: actor.id,
+      reviewerUserId: null,
+      executorProfileId: target.id,
+      reviewerProfileId: independentReview.candidate.id,
+      approvalPolicy: normalizeApprovalPolicy(body.approvalPolicy || 'USER_CONFIRM'),
+      noAutoLearning: false,
+      delegation: {
+        parentTaskId: parentTaskId || null,
+        rootTaskId: parent?.delegation?.rootTaskId || parentTaskId || null,
+        depth,
+        role,
+        reason,
+        fingerprint,
+        requestedByProfileId: String(body.requestedByProfileId || parent?.executorProfileId || ''),
+        targetProfileId: target.id,
+        budget: {
+          tokenBudget,
+          costBudgetUsd,
+          maxCalls: Math.max(1, Math.min(5, Number(body.maxCalls) || 2)),
+        },
+      },
+    };
+    const task = await store.createTask(actor, taskInput, await verifier.profileNames());
+    const queued = await store.mutateTask(task.id, actor, task.version, 'TASK_DELEGATED', async (next) => {
+      next.executionMode = 'AGENT';
+      next.executionState = 'QUEUED';
+      next.executor = sanitizeExecutorInput(
+        { tool: target.tool, model: target.model || '' },
+        { actorUserId: actor.id, at: nowIso() },
+      );
+    });
+    await store.recordAudit(actor.id, 'WORK_DELEGATED', {
+      taskId: queued.id,
+      parentTaskId: parentTaskId || null,
+      role,
+      depth,
+      targetProfileId: target.id,
+      fingerprint,
+    });
+    const worker = body.launchWorker === true
+      ? launchBoardWorker(queued, actor, workerSessionCookie(request), {
+        executorId: target.id,
+        reviewerProfileId: independentReview.candidate.id,
+      })
+      : null;
+    sendJson(response, 201, { outcome: worker ? 'LAUNCHED' : 'QUEUED', task: queued, worker, launched: Boolean(worker) });
+    return;
+  }
+
+  const delegationStatusMatch = url.pathname.match(/^\/api\/orchestration\/delegations\/([^/]+)$/);
+  if (method === 'GET' && delegationStatusMatch) {
+    const taskId = decodeURIComponent(delegationStatusMatch[1]);
+    const task = await store.getTask(taskId);
+    if (!task) throw new HttpError(404, 'Delegated task not found.');
+    requireTaskParticipantOrAdmin(task, actor);
+    const children = (await store.listTasks())
+      .filter((item) => item.delegation?.parentTaskId === task.id)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        status: item.status,
+        executionState: item.executionState,
+        targetProfileId: item.delegation?.targetProfileId,
+        depth: item.delegation?.depth,
+        verification: item.verification ? { status: item.verification.status, passed: Boolean(item.verification.passed) } : null,
+      }));
+    sendJson(response, 200, {
+      task,
+      children,
+      result: task.status === 'DONE' ? task.review || task.verification || null : null,
+    });
+    return;
+  }
+
+  const projectHandoffMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/handoff$/);
+  if (method === 'GET' && projectHandoffMatch) {
+    const projectId = decodeURIComponent(projectHandoffMatch[1]);
+    sendJson(response, 200, {
+      handoff: await readWorkspaceHandoff(projectRoot, projectId),
+    });
     return;
   }
 
@@ -1096,7 +1311,9 @@ async function handleApi(request, response) {
   if (method === 'POST' && url.pathname === '/api/tasks') {
     const body = await readBody(request);
     assertPlainObject(body);
-    await validatePeople(body.assigneeUserId, body.reviewerUserId);
+    body.assigneeUserId = actor.id;
+    body.reviewerUserId = null;
+    await validateAiProfiles(body);
     if (body.supersedesTaskId) {
       const original = await store.getTask(String(body.supersedesTaskId));
       if (!original) throw new HttpError(400, 'Superseded task not found.');
@@ -1147,14 +1364,27 @@ async function handleApi(request, response) {
     const body = await readBody(request);
     assertPlainObject(body);
     for (const step of Array.isArray(body.steps) ? body.steps : []) {
-      await validatePeople(step.assigneeUserId || body.assigneeUserId, step.reviewerUserId || body.reviewerUserId);
+      step.assigneeUserId = actor.id;
+      step.reviewerUserId = null;
+      const profiles = await validateAiProfiles({
+        ...body,
+        ...step,
+        executorProfileId: step.executorProfileId || body.executorProfileId,
+        reviewerProfileId: step.reviewerProfileId || body.reviewerProfileId,
+        approvalPolicy: step.approvalPolicy || body.approvalPolicy,
+      });
+      Object.assign(step, {
+        executorProfileId: profiles.executorProfileId,
+        reviewerProfileId: profiles.reviewerProfileId,
+        approvalPolicy: profiles.approvalPolicy,
+      });
     }
     const plan = await store.createPlan(actor, body, await verifier.profileNames());
     sendJson(response, 201, { plan });
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|review|block|unblock|archive|unarchive|schedule|activity|automation-result|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|ai-review|review|block|unblock|archive|unarchive|schedule|activity|heartbeat|automation-result|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request, action === 'artifact' ? 12 * 1024 * 1024 : undefined);
@@ -1263,12 +1493,40 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (action === 'heartbeat') {
+    const task = await store.mutateTask(taskId, actor, null, 'TASK_AGENT_HEARTBEAT', async (next) => {
+      requireAssigneeOrAdmin(next, actor);
+      if (next.executionState !== 'RUNNING') throw new HttpError(409, 'Task is not running.');
+      const at = nowIso();
+      next.executionRun = {
+        ...(next.executionRun || {}),
+        status: 'RUNNING',
+        heartbeatAt: at,
+      };
+      if (next.agentActivity) next.agentActivity.updatedAt = at;
+    });
+    sendJson(response, 200, { task, heartbeatAt: task.executionRun?.heartbeatAt });
+    return;
+  }
+
   if (action === 'automation-result') {
     const passed = body.passed === true;
     const signature = String(body.failureSignature || '').trim().slice(0, 500);
+    const executionUsage = body.executionUsage && typeof body.executionUsage === 'object' ? body.executionUsage : {};
+    const usage = executionUsage.usage && typeof executionUsage.usage === 'object' ? executionUsage.usage : {};
+    const currentForBudget = await store.getTask(taskId);
     const task = await store.mutateTask(taskId, actor, null, 'TASK_AUTOMATION_RESULT_RECORDED', async (next) => {
       requireAssigneeOrAdmin(next, actor);
-      const result = recordAutomationResult(next.automationGuard, { passed, failureSignature: signature, at: nowIso() });
+      const result = recordAutomationResult(next.automationGuard, {
+        passed,
+        failureSignature: signature,
+        at: nowIso(),
+        usage,
+        budget: {
+          tokenBudget: currentForBudget?.delegation?.budget?.tokenBudget || process.env.AUTOMATION_TASK_TOKEN_BUDGET || 500_000,
+          costBudgetUsd: currentForBudget?.delegation?.budget?.costBudgetUsd || process.env.AUTOMATION_TASK_COST_BUDGET_USD || 10,
+        },
+      });
       next.automationGuard = result.guard;
       if (result.guard.circuitOpen) {
         next.status = 'BLOCKED';
@@ -1345,6 +1603,13 @@ async function handleApi(request, response) {
       next.review = null;
       next.executionMode = mode;
       next.executionState = mode === 'AGENT' ? 'RUNNING' : 'IDLE';
+      next.executionRun = mode === 'AGENT' ? {
+        id: randomId('run_'),
+        status: 'RUNNING',
+        startedAt: nowIso(),
+        heartbeatAt: nowIso(),
+        isolated: Boolean(body.isolated),
+      } : null;
       if (executor) next.executor = executor;
     });
     sendJson(response, 200, { task });
@@ -1406,17 +1671,48 @@ async function handleApi(request, response) {
       });
       throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
     }
-    if (current.reviewerUserId === current.assigneeUserId && !soloMode) throw new HttpError(409, 'Reviewer must differ from assignee.');
+    if (!current.reviewerProfileId) throw new HttpError(409, 'Select a review AI profile before requesting review.');
     const task = await store.mutateTask(taskId, actor, expectedVersion, 'REVIEW_REQUESTED', async (next) => {
       if (!next.verification?.passed || !await verifier.fingerprintMatches(next.verification)) {
         throw new HttpError(409, 'Workspace changed after verification. Run verification again.');
       }
       next.status = 'REVIEW';
       next.executionState = 'IDLE';
-      next.review = { status: 'PENDING', requestedAt: nowIso(), requestedByUserId: actor.id };
+      next.review = {
+        status: 'PENDING',
+        requestedAt: nowIso(),
+        requestedByUserId: actor.id,
+        reviewerProfileId: next.reviewerProfileId,
+      };
     });
     const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: 'REVIEW_REQUESTED' });
     sendJson(response, 200, { task, handoff });
+    return;
+  }
+
+  if (action === 'ai-review') {
+    const current = await store.getTask(taskId);
+    if (!current) throw new HttpError(404, 'Task not found.');
+    requireAssigneeOrAdmin(current, actor);
+    if (current.status !== 'REVIEW') throw new HttpError(409, 'Task is not waiting for AI review.');
+    const verdict = String(body.verdict || '').toUpperCase();
+    if (!['APPROVE', 'REJECT'].includes(verdict)) throw new HttpError(400, 'AI review verdict must be APPROVE or REJECT.');
+    if (!current.reviewerProfileId || String(body.reviewerProfileId || '') !== current.reviewerProfileId) {
+      throw new HttpError(409, 'AI review profile does not match the task contract.');
+    }
+    const task = await store.mutateTask(taskId, actor, expectedVersion, 'AI_REVIEW_RECORDED', async (next) => {
+      next.aiReview = {
+        status: 'COMPLETED',
+        verdict,
+        reviewerProfileId: next.reviewerProfileId,
+        summary: String(body.summary || '').trim().slice(0, 4000),
+        concerns: Array.isArray(body.concerns)
+          ? body.concerns.map((item) => String(item).trim().slice(0, 1000)).filter(Boolean).slice(0, 20)
+          : [],
+        reviewedAt: nowIso(),
+      };
+    });
+    sendJson(response, 200, { task });
     return;
   }
 
@@ -1430,12 +1726,35 @@ async function handleApi(request, response) {
     }
     const decision = String(body.decision || '').toUpperCase();
     if (!['APPROVE', 'REJECT'].includes(decision)) throw new HttpError(400, 'Decision must be APPROVE or REJECT.');
-    if (decision === 'APPROVE' && !await verifier.fingerprintMatches(current.verification)) {
-      throw new HttpError(409, 'Workspace changed after verification. Approval is blocked.');
+    const alreadyMerged = decision === 'APPROVE' && await taskBranchMerged(workspaceRoot, taskId);
+    let fingerprintMatches = true;
+    if (decision === 'APPROVE' && !alreadyMerged) {
+      try {
+        fingerprintMatches = await verifier.fingerprintMatches(current.verification);
+      } catch (error) {
+        const delivery = await recordDeliveryFailure(current, actor, error, 'fingerprint');
+        throw new HttpError(409, `Review remains pending because delivery failed: ${error.message}`, delivery);
+      }
+    }
+    if (decision === 'APPROVE' && !alreadyMerged && !fingerprintMatches) {
+      await store.mutateTask(taskId, actor, current.version, 'VERIFICATION_STALE', async (next) => {
+        next.status = 'IN_PROGRESS';
+        next.executionState = 'IDLE';
+        next.review = null;
+        next.verification = next.verification
+          ? { ...next.verification, status: 'STALE', passed: false, staleAt: nowIso() }
+          : null;
+      });
+      throw new HttpError(409, '검증 후 워크스페이스가 변경되었습니다. 작업 단계로 되돌렸으니 재검증 후 승인하세요.');
     }
     let merge = null;
     if (decision === 'APPROVE') {
       const wt = worktreePath(workspaceRoot, taskId);
+      if (!existsSync(wt) && !alreadyMerged) {
+        const error = new Error(`Task delivery worktree is missing: ${wt}`);
+        const delivery = await recordDeliveryFailure(current, actor, error, 'merge');
+        throw new HttpError(409, `Review remains pending because delivery failed: ${error.message}`, delivery);
+      }
       if (existsSync(wt)) {
         try {
           const executorLabel = current.executor?.tool ? (current.executor.model ? `${current.executor.tool}/${current.executor.model}` : current.executor.tool) : null;
@@ -1445,18 +1764,23 @@ async function handleApi(request, response) {
           });
           await store.recordAudit(actor.id, 'TASK_MERGED', { taskId, commit: merge.commit, branch: merge.branch });
         } catch (error) {
-          await store.recordAudit(actor.id, 'TASK_MERGE_FAILED', { taskId, error: error.message });
-          throw new HttpError(409, `Review remains pending because delivery failed: ${error.message}`);
+          const delivery = await recordDeliveryFailure(current, actor, error, 'merge');
+          throw new HttpError(409, `Review remains pending because delivery failed: ${error.message}`, delivery);
         }
+      } else if (alreadyMerged) {
+        merge = {
+          merged: true,
+          branch: `task/${taskId}`,
+          commit: null,
+          manuallyIntegrated: true,
+        };
       }
     }
     const task = await store.mutateTask(taskId, actor, expectedVersion, decision === 'APPROVE' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED', async (next) => {
-      if (decision === 'APPROVE' && !await verifier.fingerprintMatches(next.verification)) {
-        throw new HttpError(409, 'Workspace changed after verification. Approval is blocked.');
-      }
       next.review = {
         status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
         reviewerUserId: actor.id,
+        reviewerProfileId: next.reviewerProfileId || null,
         comment: String(body.comment ?? '').trim().slice(0, 2000),
         reviewedAt: nowIso(),
         solo: soloMode && actor.id === next.assigneeUserId,
@@ -1480,6 +1804,12 @@ async function handleApi(request, response) {
     });
     if (decision === 'APPROVE' && task.status === 'DONE') {
       await store.finalizeSupersession(task, actor);
+      await failureCases.resolveTaskProcessFailures(
+        taskId,
+        'delivery-integrity',
+        actor.id,
+        `Resolved by successful task delivery and approval for ${taskId}.`,
+      );
     }
     if (decision === 'APPROVE' && merge?.merged) {
       try {
@@ -1597,12 +1927,52 @@ function contextUsage(contextPack) {
   };
 }
 
+async function recordDeliveryFailure(task, actor, error, phase) {
+  const classified = classifyDeliveryFailure(error, { phase });
+  const failure = await failureCases.recordProcessFailure({
+    ...classified,
+    taskIds: [task.id],
+    evidence: {
+      ...classified.evidence,
+      taskStatus: task.status,
+      taskVersion: task.version,
+      verificationStatus: task.verification?.status || null,
+      verificationFingerprint: task.verification?.workspaceFingerprint || null,
+    },
+  }, actor.id);
+  await store.recordAudit(actor.id, 'TASK_MERGE_FAILED', {
+    taskId: task.id,
+    phase,
+    kind: failure.kind,
+    failureCaseId: failure.id,
+    occurrences: failure.occurrences,
+    error: String(error?.message || error),
+  });
+  const handoff = await entryService.writeHandoff(
+    actor,
+    'team-loop',
+    task,
+    await store.listAuditEvents(),
+    {
+      trigger: 'DELIVERY_FAILED',
+      failedAttempts: [`${failure.kind}: ${failure.title}`],
+      notes: `Failure case ${failure.id} recorded. Approval remains pending until delivery succeeds.`,
+    },
+  );
+  return { failureCase: failure, handoff };
+}
+
 
 async function saveVerificationResult(taskId, actor, expectedVersion, verification) {
   try {
     return await store.mutateTask(taskId, actor, expectedVersion, 'VERIFICATION_FINISHED', async (next) => {
       next.verification = verification;
       next.executionState = 'IDLE';
+      next.executionRun = next.executionRun ? {
+        ...next.executionRun,
+        status: verification.passed ? 'VERIFIED' : 'VERIFICATION_FAILED',
+        finishedAt: nowIso(),
+      } : null;
     });
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 409) throw error;
@@ -1614,6 +1984,11 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
     return await store.mutateTask(taskId, actor, latest.version, 'VERIFICATION_FINISHED_AFTER_CONFLICT', async (next) => {
       next.verification = verification;
       next.executionState = 'IDLE';
+      next.executionRun = next.executionRun ? {
+        ...next.executionRun,
+        status: verification.passed ? 'VERIFIED' : 'VERIFICATION_FAILED',
+        finishedAt: nowIso(),
+      } : null;
     });
   } catch (error) {
     if (!(error instanceof HttpError) || error.status !== 409) throw error;
@@ -1623,6 +1998,11 @@ async function saveVerificationResult(taskId, actor, expectedVersion, verificati
   if (!finalCurrent) throw new HttpError(404, 'Task not found while recording verification error.');
   return store.mutateTask(taskId, actor, finalCurrent.version, 'VERIFICATION_RESULT_RECORDING_FAILED', async (next) => {
     next.executionState = 'IDLE';
+    next.executionRun = next.executionRun ? {
+      ...next.executionRun,
+      status: 'RESULT_RECORDING_FAILED',
+      finishedAt: nowIso(),
+    } : null;
     next.verification = {
       ...verification,
       status: 'ERROR',
@@ -1667,7 +2047,7 @@ function authRateKey(request, action, name) {
 
 async function validatePeople(assigneeUserId, reviewerUserId) {
   const users = await store.listUsers();
-  const userIds = new Set(users.map((user) => user.id));
+  const userIds = new Set(users.filter((user) => user.active).map((user) => user.id));
   if (assigneeUserId && !userIds.has(assigneeUserId)) throw new HttpError(400, 'Assignee not found.');
   if (reviewerUserId && !userIds.has(reviewerUserId)) throw new HttpError(400, 'Reviewer not found.');
   if (assigneeUserId && reviewerUserId && assigneeUserId === reviewerUserId) {
@@ -1812,6 +2192,88 @@ function requireTaskParticipantOrAdmin(task, actor) {
   }
 }
 
+async function validateAiProfiles(body) {
+  const config = await loadConfig();
+  const execution = selectExecutor(body, config, { executorId: String(body.executorProfileId || '') });
+  if (!execution.candidate) throw new HttpError(400, 'Select an available execution AI profile.');
+  const review = selectReviewer(body, config, {
+    reviewerProfileId: String(body.reviewerProfileId || ''),
+    executorProfileId: execution.candidate.id,
+  });
+  if (!review.candidate) throw new HttpError(400, 'Select an available review AI profile.');
+  body.executorProfileId = execution.candidate.id;
+  body.reviewerProfileId = review.candidate.id;
+  body.approvalPolicy = normalizeApprovalPolicy(body.approvalPolicy);
+  return body;
+}
+
+async function streamWorkEvents(request, response, actor) {
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  response.write('retry: 2000\n\n');
+  let previous = '';
+  let closed = false;
+  let reading = false;
+  const publish = async (initial = false) => {
+    if (closed || reading) return;
+    reading = true;
+    try {
+      const tasks = await store.listTasks();
+      const payload = {
+        initial,
+        at: nowIso(),
+        userId: actor.id,
+        tasks: tasks.map(workEventTask),
+        workers: boardWorkerSnapshot(tasks),
+      };
+      const signature = JSON.stringify({ tasks: payload.tasks, workers: payload.workers });
+      if (initial || signature !== previous) {
+        previous = signature;
+        response.write(`event: work\ndata: ${JSON.stringify(payload)}\n\n`);
+      } else {
+        response.write(`: heartbeat ${Date.now()}\n\n`);
+      }
+    } catch (error) {
+      response.write(`event: warning\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+    } finally {
+      reading = false;
+    }
+  };
+  await publish(true);
+  const interval = setInterval(() => publish(false), 1_000);
+  request.on('close', () => {
+    closed = true;
+    clearInterval(interval);
+  });
+}
+
+function workEventTask(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    archived: Boolean(task.archived),
+    executionState: task.executionState,
+    updatedAt: task.updatedAt,
+    verification: task.verification ? {
+      status: task.verification.status,
+      passed: Boolean(task.verification.passed),
+      finishedAt: task.verification.finishedAt || null,
+    } : null,
+    activity: task.agentActivity ? {
+      phase: task.agentActivity.phase,
+      label: task.agentActivity.label,
+      updatedAt: task.agentActivity.updatedAt,
+      finishedAt: task.agentActivity.finishedAt,
+    } : null,
+    blockedReason: task.blocked?.reason || '',
+  };
+}
+
 function launchBoardWorker(task, actor, cookie, options = {}) {
   const existing = boardWorkers.get(task.id);
   if (existing) return { status: 'RUNNING', taskId: task.id, pid: existing.child.pid };
@@ -1821,6 +2283,7 @@ function launchBoardWorker(task, actor, cookie, options = {}) {
     '--project', 'team-loop',
     '--quality', String(options.quality || 'auto'),
     '--to', 'review',
+    '--isolate',
     '--json',
   ];
   if (options.localOnly) args.push('--local-only');
@@ -1848,6 +2311,137 @@ function launchBoardWorker(task, actor, cookie, options = {}) {
   child.once('error', (error) => finishBoardWorker(task.id, actor, 1, error.message));
   child.once('close', (code) => finishBoardWorker(task.id, actor, Number(code ?? 1), ''));
   return { status: 'LAUNCHED', taskId: task.id, pid: child.pid };
+}
+
+async function recoverPersistedAgentTask(taskId) {
+  let task = await store.getTask(taskId);
+  if (!task || task.executionState !== 'RECOVERING') return;
+  const actor = await store.getUser(task.assigneeUserId || task.creatorUserId);
+  if (!actor?.active) throw new Error('Task owner is unavailable for recovery.');
+  const isolatedRoot = worktreePath(workspaceRoot, task.id);
+  if (!task.executionRun?.isolated) {
+    await store.mutateTask(task.id, actor, task.version, 'TASK_RECOVERY_BLOCKED', async (next) => {
+      next.status = 'BLOCKED';
+      next.executionState = 'IDLE';
+      next.executionRun = {
+        ...(next.executionRun || {}),
+        status: 'BLOCKED',
+        finishedAt: nowIso(),
+        recoveryReason: 'NO_ISOLATED_WORKTREE',
+      };
+      next.blocked = {
+        reason: '이전 실행이 격리 worktree 없이 중단되어 변경물의 소유권을 안전하게 판별할 수 없습니다.',
+        byUserId: actor.id,
+        at: nowIso(),
+        automatic: true,
+      };
+      next.agentActivity = normalizeAgentActivity({
+        ...(next.agentActivity || {}),
+        phase: 'recovery-blocked',
+        label: '자동 복구 차단',
+        detail: next.blocked.reason,
+        finished: true,
+        passed: false,
+      }, actor);
+    });
+    return;
+  }
+
+  const hasChanges = existsSync(isolatedRoot) && await worktreeHasChanges(workspaceRoot, task.id);
+  if (hasChanges) {
+    let verification;
+    await verifier.withWorkspaceLock(isolatedRoot, async () => {
+      try {
+        verification = await verifier.runLocked(task, isolatedRoot);
+      } catch (error) {
+        verification = {
+          status: 'ERROR',
+          profile: task.verificationProfile,
+          startedAt: nowIso(),
+          finishedAt: nowIso(),
+          passed: false,
+          error: error.message,
+        };
+      }
+    });
+    task = await saveVerificationResult(task.id, actor, task.version, verification);
+    if (verification.passed) {
+      task = await store.mutateTask(task.id, actor, task.version, 'TASK_RECOVERY_VERIFIED', async (next) => {
+        next.status = 'REVIEW';
+        next.executionState = 'IDLE';
+        next.executionRun = { ...(next.executionRun || {}), status: 'RECOVERED', finishedAt: nowIso() };
+        next.review = {
+          status: 'PENDING',
+          requestedAt: nowIso(),
+          requestedByUserId: actor.id,
+          reviewerProfileId: next.reviewerProfileId,
+          recovered: true,
+        };
+        next.agentActivity = normalizeAgentActivity({
+          ...(next.agentActivity || {}),
+          phase: 'recovery-verified',
+          label: '복구 검증 통과',
+          detail: '격리 작업물 검증을 통과해 AI 검토 단계로 이동했습니다.',
+          finished: true,
+          passed: true,
+        }, actor);
+      });
+      launchProfileReviewer(task, actor, serviceSessionCookie(actor.id));
+      return;
+    }
+  }
+
+  task = await store.mutateTask(task.id, actor, task.version, 'TASK_RECOVERY_REQUEUED', async (next) => {
+    next.status = 'IN_PROGRESS';
+    next.executionState = 'RUNNING';
+    next.executionRun = {
+      ...(next.executionRun || {}),
+      status: 'RUNNING',
+      isolated: true,
+      recoveredAt: nowIso(),
+      startedAt: next.executionRun?.startedAt || nowIso(),
+      heartbeatAt: nowIso(),
+    };
+    next.agentActivity = normalizeAgentActivity({
+      ...(next.agentActivity || {}),
+      phase: hasChanges ? 'recovery-repair' : 'recovery-requeued',
+      label: hasChanges ? '복구 후 수리 재실행' : '복구 후 작업 재실행',
+      detail: hasChanges
+        ? '격리 작업물 검증이 통과하지 않아 실패 증거를 유지한 채 수리 작업을 다시 실행합니다.'
+        : '격리 작업물에 변경이 없어 작업을 다시 실행합니다.',
+      passed: false,
+    }, actor);
+  });
+  launchBoardWorker(task, actor, serviceSessionCookie(actor.id), {
+    executorId: task.executorProfileId,
+    reviewerProfileId: task.reviewerProfileId,
+  });
+}
+
+function launchProfileReviewer(task, actor, cookie) {
+  const args = [
+    path.join(projectRoot, 'bin', 'team-loop.js'),
+    'profile-review', task.id,
+    '--json',
+  ];
+  const child = spawn(process.execPath, args, {
+    cwd: workspaceRoot,
+    env: {
+      ...process.env,
+      TEAM_LOOP_URL: `http://127.0.0.1:${port}`,
+      TEAM_LOOP_SESSION_COOKIE: cookie,
+    },
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  store.recordAudit(actor.id, 'PROFILE_REVIEWER_LAUNCHED', { taskId: task.id, pid: child.pid }).catch(() => {});
+  child.once('close', (code) => {
+    store.recordAudit(actor.id, 'PROFILE_REVIEWER_EXITED', { taskId: task.id, exitCode: Number(code ?? 1) }).catch(() => {});
+  });
+}
+
+function serviceSessionCookie(userId) {
+  return sessionCookie(issueSession(sessionSecret, userId), secureCookies).split(';', 1)[0];
 }
 
 function workerSessionCookie(request) {
@@ -1880,6 +2474,12 @@ async function finishBoardWorker(taskId, actor, exitCode, errorMessage) {
   if (current?.executionState === 'RUNNING') {
     await store.mutateTask(taskId, actor, current.version, 'BOARD_WORKER_EXITED', async (next) => {
       next.executionState = 'IDLE';
+      next.executionRun = next.executionRun ? {
+        ...next.executionRun,
+        status: exitCode === 0 ? 'EXITED' : 'FAILED',
+        finishedAt: nowIso(),
+        exitCode,
+      } : null;
       next.agentActivity = normalizeAgentActivity({
         ...(next.agentActivity || {}),
         phase: exitCode === 0 ? 'finished' : 'failed',
@@ -1890,6 +2490,7 @@ async function finishBoardWorker(taskId, actor, exitCode, errorMessage) {
       }, actor);
     }).catch(() => {});
   }
+
   await store.recordAudit(actor.id, 'BOARD_WORKER_EXITED', { taskId, exitCode, error: errorMessage || null }).catch(() => {});
 }
 
@@ -2139,7 +2740,7 @@ async function requireUser(request) {
   const session = readSession(sessionSecret, token);
   if (!session) throw new HttpError(401, 'Authentication required.');
   const user = await store.getUser(session.userId);
-  if (!user) throw new HttpError(401, 'Session user no longer exists.');
+  if (!user || !user.active) throw new HttpError(401, 'Session user no longer exists or is disabled.');
   return user;
 }
 
@@ -2157,6 +2758,14 @@ async function readBody(request, maxBytes = 1024 * 1024) {
   } catch {
     throw new HttpError(400, 'Request body must be valid JSON.');
   }
+}
+
+function normalizeApprovalPolicy(value) {
+  const policy = String(value || 'USER_CONFIRM').trim().toUpperCase();
+  if (!['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'].includes(policy)) {
+    throw new HttpError(400, 'Unknown approval policy.');
+  }
+  return policy;
 }
 
 function safeArtifactName(value) {

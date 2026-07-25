@@ -101,6 +101,7 @@ export class EntryService {
     const project = await this.#project(projectId);
     const required = [`project://${project.id}/entry`];
     const optional = [];
+    if (project.id === 'team-loop') required.push('project://team-loop-tool-lane/handoff/current');
     if (workId) {
       required.push(`work://${workId}/contract`, `work://${workId}/handoff/latest`);
       optional.push(`work://${workId}/timeline`, `work://${workId}/evidence`);

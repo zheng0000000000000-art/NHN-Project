@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeWorkerConfig, selectExecutor } from '../src/executor-router.js';
+import { normalizeWorkerConfig, selectExecutor, selectReviewer } from '../src/executor-router.js';
 
 const config = {
   routing: { allowRemote: true, remoteEscalationPriority: 80 },
@@ -36,4 +36,29 @@ test('a user-selected executor overrides automatic weighting', () => {
   const result = selectExecutor({ priority: 100 }, config, { executorId: 'ollama' });
   assert.equal(result.candidate.id, 'ollama');
   assert.equal(result.reason, 'USER_SELECTED');
+});
+
+test('review routing prefers an independent review profile', () => {
+  const config = {
+    executors: [
+      { id: 'worker', tool: 'claude-code', tier: 'remote', roles: ['execute', 'review'], quality: 80 },
+      { id: 'reviewer', tool: 'codex', tier: 'remote', roles: ['review'], quality: 90 },
+    ],
+  };
+  const result = selectReviewer({ priority: 100 }, config, { executorProfileId: 'worker' });
+  assert.equal(result.candidate.id, 'reviewer');
+  assert.equal(result.independent, true);
+  assert.equal(result.reason, 'INDEPENDENT_REVIEW');
+});
+
+test('review routing reports same-profile fallback when only one profile can review', () => {
+  const config = {
+    executors: [
+      { id: 'shared', tool: 'codex', tier: 'remote', roles: ['execute', 'review'] },
+    ],
+  };
+  const result = selectReviewer({}, config, { executorProfileId: 'shared' });
+  assert.equal(result.candidate.id, 'shared');
+  assert.equal(result.independent, false);
+  assert.equal(result.reason, 'SAME_PROFILE_FALLBACK');
 });

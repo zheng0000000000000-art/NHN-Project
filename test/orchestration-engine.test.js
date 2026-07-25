@@ -30,7 +30,7 @@ test('zero-manual entry resumes the only active work with a bounded read plan', 
   assert.equal(decision.decision, 'YES');
   assert.equal(decision.reasonCode, 'ACTIVE_WORK_WITH_VALID_HANDOFF');
   assert.equal(decision.action.name, 'work_inspect');
-  assert.deepEqual(decision.readPlan.required, ['project://team-loop/entry', 'work://tsk_1/contract', 'work://tsk_1/handoff/latest']);
+  assert.deepEqual(decision.readPlan.required, ['project://team-loop/entry', 'project://team-loop-tool-lane/handoff/current', 'work://tsk_1/contract', 'work://tsk_1/handoff/latest']);
   assert.equal(decision.constitutionVersion, '0.1.0');
   assert.equal(decision.latencyMs >= 0, true);
 });
@@ -93,8 +93,8 @@ function entryService({ projects, works, handoff = null }) {
       projectId,
       budget: { maxTokens: input.maxTokens },
       required: input.workId
-        ? [`project://${projectId}/entry`, `work://${input.workId}/contract`, `work://${input.workId}/handoff/latest`]
-        : [`project://${projectId}/entry`],
+        ? [`project://${projectId}/entry`, 'project://team-loop-tool-lane/handoff/current', `work://${input.workId}/contract`, `work://${input.workId}/handoff/latest`]
+        : [`project://${projectId}/entry`, 'project://team-loop-tool-lane/handoff/current'],
     }),
   };
 }

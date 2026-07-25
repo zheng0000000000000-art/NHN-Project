@@ -21,6 +21,52 @@ test('first user is admin and later users are members', async (t) => {
   assert.equal(second.role, 'member');
 });
 
+test('disabled users keep their identity but cannot authenticate', async (t) => {
+  const { directory, store } = await fixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const owner = await store.registerUser({ name: 'Alice', password: 'password-1' });
+  const oldMember = await store.registerUser({ name: 'Bob', password: 'password-2' });
+
+  const disabled = await store.setUserDisabled(owner, oldMember.id, true);
+  assert.equal(disabled.active, false);
+  assert.ok(disabled.disabledAt);
+  assert.equal((await store.listUsers()).find((user) => user.id === oldMember.id)?.name, 'Bob');
+  await assert.rejects(
+    () => store.authenticate('Bob', 'password-2'),
+    (error) => error.status === 403,
+  );
+  await assert.rejects(
+    () => store.setUserDisabled(owner, owner.id, true),
+    (error) => error.status === 409,
+  );
+});
+
+test('server startup recovers persisted RUNNING tasks as interrupted, not completed', async (t) => {
+  const { directory, store } = await fixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const owner = await store.registerUser({ name: 'Alice', password: 'password-1' });
+  const created = await store.createTask(owner, {
+    title: 'Interrupted agent work',
+    allowedPaths: ['src/**'],
+    verificationProfile: 'repository-basic',
+  }, ['repository-basic']);
+  const running = await store.mutateTask(created.id, owner, created.version, 'TEST_RUNNING', (next) => {
+    next.status = 'IN_PROGRESS';
+    next.executionMode = 'AGENT';
+    next.executionState = 'RUNNING';
+    next.agentActivity = { phase: 'executor-running', label: 'running' };
+  });
+
+  assert.deepEqual(await store.recoverInterruptedAgentTasks({ recoveryId: 'boot-1' }), [created.id]);
+  const recovered = await store.getTask(created.id);
+  assert.equal(recovered.status, 'IN_PROGRESS');
+  assert.equal(recovered.executionState, 'RECOVERING');
+  assert.equal(recovered.agentActivity.phase, 'recovering');
+  assert.equal(recovered.agentActivity.passed, false);
+  assert.equal(recovered.version, running.version + 1);
+  assert.deepEqual(await store.recoverInterruptedAgentTasks({ recoveryId: 'boot-1' }), []);
+});
+
 test('task mutations reject stale versions', async (t) => {
   const { directory, store } = await fixture();
   t.after(() => rm(directory, { recursive: true, force: true }));

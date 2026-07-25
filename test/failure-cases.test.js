@@ -135,3 +135,22 @@ test('a later passing task verification resolves its open failures', async (t) =
   assert.deepEqual(resolved, [failure.id]);
   assert.equal((await store.get(failure.id)).status, 'RESOLVED');
 });
+
+test('successful delivery resolves open process failures for the task', async (t) => {
+  const store = await storeFixture(t);
+  const failure = await store.recordProcessFailure({
+    harnessId: 'delivery-integrity',
+    kind: 'DELIVERY_CONFLICT',
+    title: 'Task delivery conflicted',
+    taskIds: ['tsk_delivery'],
+    identity: { operation: 'task-delivery', kind: 'DELIVERY_CONFLICT', paths: ['src/a.js'] },
+  }, 'usr_1');
+  const resolved = await store.resolveTaskProcessFailures(
+    'tsk_delivery',
+    'delivery-integrity',
+    'usr_1',
+    'Delivery succeeded.',
+  );
+  assert.deepEqual(resolved, [failure.id]);
+  assert.equal((await store.get(failure.id)).status, 'RESOLVED');
+});

@@ -52,6 +52,24 @@
         }
       ]
     },
+    "balance-gate": {
+      "label": "Balance target gate",
+      "description": "Evaluates the shipping configuration against declared metric targets, then confirms the tuned candidate also passes.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["{teamLoopRoot}/tools/verification/check-balance-gate.mjs", "{teamLoopRoot}/examples/balance/unknown-auction-economy.json", "--mode=evaluate"],
+          "expectedExit": 0,
+          "timeoutMs": 180000
+        },
+        {
+          "file": "node",
+          "args": ["{teamLoopRoot}/tools/verification/check-balance-gate.mjs", "{teamLoopRoot}/examples/balance/unknown-auction-economy.json", "--mode=tune"],
+          "expectedExit": 0,
+          "timeoutMs": 180000
+        }
+      ]
+    },
     "document-review": {
       "label": "Document review",
       "description": "Checks changed writing for structure, placeholders, merge markers, and relative links.",

@@ -1,0 +1,750 @@
+{
+  "schemaVersion": "1.0.0",
+  "artifactId": "unknown-auction-economy-params",
+  "title": "미지의 경매장 — 경제 상수 단일 출처 (초안)",
+  "status": "draft-for-tool-lane",
+  "generatedAt": "2026-07-25",
+  "generatedBy": "claude/game-lane · extract-economy-params.js",
+  "contractVersion": "v1.0-candidate (2026-07-24 팀 편집판 동기화)",
+  "sourceOfTruth": {
+    "file": "greybox-spike/b_data.js",
+    "symbol": "B, CONTRACT_DEFS, D_MARGIN, GROWTH_BRANCHES, SERIES",
+    "documents": [
+      "미지의경매장_V3.1_통합기획서 §16",
+      "V3.1 §5.3",
+      "V3.1 §6.4",
+      "docs/brainstorms/nemesis-cast.sim.py"
+    ],
+    "regenerate": "node extract-economy-params.js"
+  },
+  "conventions": {
+    "pathStyle": "슬래시 경로. 밸런스 스펙 parameterSpace의 path와 같은 표기다 (예: bots/budget/shareOfWallet).",
+    "valuesAreBare": "params 트리에는 값만 둔다. 스윕과 사람이 같은 경로로 읽고 쓰기 위해서다.",
+    "provenanceIsSidecar": "provenance는 경로를 키로 하는 별도 맵이다. 기본값은 provenanceDefault이고, 다른 출처만 덮어쓴다.",
+    "provenanceRule": "스윕이 값을 쓰면 반드시 같은 경로에 provenance 항목을 남긴다 (method:\"sweep\", run, seed, at). 남기지 않은 변경은 리뷰에서 거부한다.",
+    "schemaVersionRule": "소비자는 부팅 시 schemaVersion을 검사하고 불일치면 실행을 거부한다. 기본값으로 조용히 떨어지지 말 것.",
+    "separationRule": "합격선(지표 min/max/weight)은 이 파일에 넣지 않는다. balance-targets.json이 따로 가진다. 한 화면에 있으면 골대를 옮기는 게 파라미터를 고치는 것보다 쉬워진다.",
+    "tunableRule": "tunable 목록 밖의 경로를 스윕이 건드리면 게임 규칙이 바뀐 것이다. structural 경로 변경은 결재 대상이다."
+  },
+  "params": {
+    "run": {
+      "startCash": 20000,
+      "days": 12,
+      "dayScale": 1.4,
+      "targetMult": 56.7
+    },
+    "auction": {
+      "lotsPerDay": 8,
+      "lotSeconds": 30,
+      "startPriceRate": 0.5,
+      "raiseRate": 0.1,
+      "raiseUnit": 100,
+      "jumpMult": 2,
+      "jumpCounterAdd": 0.5,
+      "jumpUnlockBids": 3,
+      "jumpPriceRate": 0.05
+    },
+    "grades": {
+      "일반": {
+        "base": 1500,
+        "demandMinimum": 0.95,
+        "demandMaximum": 1.1,
+        "countMinimum": 2,
+        "countMaximum": 3,
+        "appraisePriceRate": 0.05
+      },
+      "레어": {
+        "base": 4000,
+        "demandMinimum": 0.8,
+        "demandMaximum": 1.35,
+        "countMinimum": 3,
+        "countMaximum": 4,
+        "appraisePriceRate": 0.05
+      },
+      "에픽": {
+        "base": 12000,
+        "demandMinimum": 0.6,
+        "demandMaximum": 1.75,
+        "countMinimum": 1,
+        "countMaximum": 2,
+        "appraisePriceRate": 0.05
+      },
+      "전설": {
+        "base": 25000,
+        "demandMinimum": 0.4,
+        "demandMaximum": 2.4,
+        "countMinimum": 0,
+        "countMaximum": 1,
+        "appraisePriceRate": 0.05
+      }
+    },
+    "composition": {
+      "standard": {
+        "일반": 2,
+        "레어": 4,
+        "에픽": 1,
+        "전설": 1
+      },
+      "expectedDemandMultiplier": 1.05
+    },
+    "trade": {
+      "saleFeeRate": 0.05,
+      "instantRate": 0.85,
+      "setPremium": 2.5,
+      "setSize": 3,
+      "setDays": 3,
+      "setPenaltyRate": 0.35
+    },
+    "bond": {
+      "collateralRate": 0.7,
+      "days": 3,
+      "interest": 0.1
+    },
+    "information": {
+      "priceRateOfDailyBase": {
+        "출품 순서": 0.005,
+        "경쟁자 예산": 0.007,
+        "출품 명세": 0.008,
+        "수요 동향": 0.01
+      }
+    },
+    "appraisal": {
+      "bandByStage": {
+        "1": 0.35,
+        "2": 0.2,
+        "3": 0.1,
+        "4": 0.1
+      },
+      "targetsByStage": {
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 2
+      }
+    },
+    "shop": {
+      "promote": [
+        null,
+        {
+          "fromStage": 1,
+          "cost": 18000,
+          "wins": 5,
+          "contracts": 1,
+          "fame": 0,
+          "unlock": "술집·조합 개방, 의뢰 2건"
+        },
+        {
+          "fromStage": 2,
+          "cost": 48000,
+          "wins": 12,
+          "contracts": 3,
+          "fame": 60,
+          "unlock": "유물 전시관, 점핑 비드, 감정 ±10%, 최종 경매 자격"
+        },
+        {
+          "fromStage": 3,
+          "cost": 133000,
+          "wins": 22,
+          "contracts": 6,
+          "fame": 150,
+          "unlock": "의뢰 3건, 감정 2점 지목"
+        }
+      ],
+      "contractSlotsByStage": {
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 3
+      },
+      "branchPointsByStage": {
+        "1": 1,
+        "2": 1,
+        "3": 2,
+        "4": 2
+      },
+      "growthBranches": [
+        {
+          "id": "storage",
+          "name": "보관소 확장",
+          "effect": "세트 예약 기한 +1일"
+        },
+        {
+          "id": "expertise",
+          "name": "경매 전문성",
+          "effect": "최소 인상폭 -1%p"
+        },
+        {
+          "id": "network",
+          "name": "정보 네트워크",
+          "effect": "정보 가격 -15%"
+        },
+        {
+          "id": "trust",
+          "name": "고객 신뢰도",
+          "effect": "즉각 처분가 +5%p"
+        }
+      ]
+    },
+    "contracts": {
+      "지정": {
+        "cost": 300,
+        "reward": 2500,
+        "fame": 10,
+        "description": "특정 계열 1점 낙찰"
+      },
+      "다중": {
+        "cost": 500,
+        "reward": 4500,
+        "fame": 20,
+        "description": "서로 다른 계열 2점 낙찰"
+      },
+      "차익": {
+        "cost": 400,
+        "reward": 3500,
+        "fame": 15,
+        "description": "낙찰가 ≤ 기저가 85% 인 낙찰 1점"
+      },
+      "절제": {
+        "cost": 400,
+        "reward": 4000,
+        "fame": 15,
+        "description": "잔액 40% 이상 유지 + 1점 이상 확보"
+      },
+      "견제": {
+        "cost": 600,
+        "reward": 2000,
+        "fame": 25,
+        "description": "지정 봇이 목표액 이상 지출 (내가 낙찰하면 실패)"
+      }
+    },
+    "bots": {
+      "seats": 3,
+      "walletMultiplier": {
+        "nemesis": 1.2,
+        "drifter": 0.6,
+        "drifterWeak": 0.35
+      },
+      "nemesisSchedule": {
+        "stageBoundaries": [
+          4,
+          8
+        ],
+        "estimateErrorRate": {
+          "1": 0.3,
+          "2": 0.22,
+          "3": 0.15
+        },
+        "offscreenIncomeRate": {
+          "1": 0.15,
+          "2": 0.25,
+          "3": 0.4
+        },
+        "willMultiplier": {
+          "1": 0.85,
+          "2": 1,
+          "3": 1
+        },
+        "lateStageWillBonus": 1.08
+      },
+      "marketAxis": {
+        "uplift": 1.15,
+        "capOfEstimate": 1.5,
+        "floorRate": 0.5,
+        "marginByBranch": {
+          "D1": 0.2,
+          "D2": 0.1,
+          "D3": 0.02
+        }
+      },
+      "budget": {
+        "shareOfWallet": 0.5,
+        "dayRamp": 0.75,
+        "slackAggression": 0.25
+      },
+      "series": [
+        "도자기",
+        "해양",
+        "서적",
+        "보석",
+        "무구",
+        "회화"
+      ]
+    }
+  },
+  "tunable": [
+    "run/dayScale",
+    "run/targetMult",
+    "auction/startPriceRate",
+    "auction/raiseRate",
+    "auction/jumpPriceRate",
+    "grades/*/base",
+    "grades/*/demandMinimum",
+    "grades/*/demandMaximum",
+    "grades/*/appraisePriceRate",
+    "composition/standard/*",
+    "composition/expectedDemandMultiplier",
+    "trade/saleFeeRate",
+    "trade/instantRate",
+    "trade/setPremium",
+    "trade/setPenaltyRate",
+    "bond/collateralRate",
+    "bond/interest",
+    "information/priceRateOfDailyBase/*",
+    "appraisal/bandByStage/*",
+    "shop/promote/*/cost",
+    "shop/promote/*/wins",
+    "shop/promote/*/contracts",
+    "shop/promote/*/fame",
+    "contracts/*/cost",
+    "contracts/*/reward",
+    "contracts/*/fame",
+    "bots/walletMultiplier/*",
+    "bots/nemesisSchedule/estimateErrorRate/*",
+    "bots/nemesisSchedule/offscreenIncomeRate/*",
+    "bots/nemesisSchedule/willMultiplier/*",
+    "bots/nemesisSchedule/lateStageWillBonus",
+    "bots/marketAxis/uplift",
+    "bots/marketAxis/capOfEstimate",
+    "bots/marketAxis/floorRate",
+    "bots/marketAxis/marginByBranch/*",
+    "bots/budget/shareOfWallet",
+    "bots/budget/dayRamp",
+    "bots/budget/slackAggression"
+  ],
+  "structural": [
+    "run/startCash",
+    "run/days",
+    "auction/lotsPerDay",
+    "auction/lotSeconds",
+    "auction/raiseUnit",
+    "auction/jumpMult",
+    "auction/jumpUnlockBids",
+    "auction/jumpCounterAdd",
+    "grades/*/countMinimum",
+    "grades/*/countMaximum",
+    "trade/setSize",
+    "trade/setDays",
+    "bond/days",
+    "appraisal/targetsByStage/*",
+    "shop/contractSlotsByStage/*",
+    "shop/branchPointsByStage/*",
+    "shop/promote/*/unlock",
+    "shop/promote/*/fromStage",
+    "shop/growthBranches/*",
+    "bots/seats",
+    "bots/series",
+    "bots/nemesisSchedule/stageBoundaries/*"
+  ],
+  "derived": [
+    {
+      "id": "dailyTotalBaseValue",
+      "formula": "Σ grades[g].base × composition.standard[g]",
+      "value": 56000,
+      "consumedBy": [
+        "information price",
+        "nemesis offscreen income"
+      ],
+      "hazard": "c_engine.js의 dayTotalBase가 이 값을 상수 56000으로 박아 두고 있다. 등급 기저가나 표준 구성이 바뀌면 조용히 어긋난다. 소비자는 상수 대신 이 공식을 쓸 것."
+    },
+    {
+      "id": "dayScaleAt",
+      "formula": "run.dayScale ^ (day - 1)",
+      "value": null,
+      "consumedBy": [
+        "intent asset curve",
+        "bot wallet",
+        "anchor price AS(day)"
+      ],
+      "hazard": null
+    },
+    {
+      "id": "intentAssetCurve",
+      "formula": "run.startCash × dayScaleAt(day)",
+      "value": 809913,
+      "consumedBy": [
+        "run result grading"
+      ],
+      "hazard": "12일차 값이 809913으로 run.targetMult 56.7× (= 1134000)와 일치하지 않는다. openQuestions 참조."
+    },
+    {
+      "id": "anchorPrice",
+      "formula": "grades[\"레어\"].base × dayScaleAt(day)",
+      "value": null,
+      "consumedBy": [
+        "bot private axis",
+        "bot market axis tier anchor"
+      ],
+      "hazard": null
+    },
+    {
+      "id": "tierMultiplier",
+      "formula": "grades[g].base / grades[\"레어\"].base",
+      "value": {
+        "일반": 0.375,
+        "레어": 1,
+        "에픽": 3,
+        "전설": 6.25
+      },
+      "consumedBy": [
+        "bot market axis (C1, A3)"
+      ],
+      "hazard": "c_engine.js의 TIER_MULT가 별도 상수로 존재한다. 기저가와 이중 관리 중."
+    }
+  ],
+  "provenanceDefault": {
+    "origin": "미지의경매장_V3.1_통합기획서 §16",
+    "method": "extracted",
+    "from": "greybox-spike/b_data.js",
+    "run": null,
+    "seed": null,
+    "at": "2026-07-25",
+    "by": "claude/game-lane",
+    "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+  },
+  "provenance": {
+    "composition/expectedDemandMultiplier": {
+      "origin": "V3.1 §5.3 (런 간 무차별)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "run/targetMult": {
+      "origin": "V3.1 §16 목표 배수",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "openQuestions/curve-exponent 미해결"
+    },
+    "bots/walletMultiplier/nemesis": {
+      "origin": "nemesis-cast.sim.py",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/walletMultiplier/drifter": {
+      "origin": "nemesis-cast.sim.py",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/walletMultiplier/drifterWeak": {
+      "origin": "nemesis-cast.sim.py",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/nemesisSchedule/estimateErrorRate": {
+      "origin": "nemesis-cast.sim.py (성장 스케줄)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/nemesisSchedule/offscreenIncomeRate": {
+      "origin": "nemesis-cast.sim.py (성장 스케줄)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/nemesisSchedule/willMultiplier": {
+      "origin": "nemesis-cast.sim.py (성장 스케줄)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/nemesisSchedule/lateStageWillBonus": {
+      "origin": "greybox 스파이크 판단",
+      "method": "hand",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "유저 좌석이 상시라 Tier2 지속의지를 근사하려고 스파이크에서 넣었다. 원본 문서 근거 없음 — 결재 대상."
+    },
+    "bots/marketAxis/uplift": {
+      "origin": "nemesis-cast.sim.py (2축 가치모형)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/marketAxis/capOfEstimate": {
+      "origin": "nemesis-cast.sim.py (2축 가치모형)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/marketAxis/floorRate": {
+      "origin": "nemesis-cast.sim.py (2축 가치모형)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/marketAxis/marginByBranch": {
+      "origin": "nemesis-cast.sim.py (D 계열 전매상 마진)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/budget/shareOfWallet": {
+      "origin": "nemesis-cast.sim.py (rho)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/budget/dayRamp": {
+      "origin": "nemesis-cast.sim.py (lambda)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/budget/slackAggression": {
+      "origin": "nemesis-cast.sim.py (k)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    },
+    "bots/seats": {
+      "origin": "V3.1 §6.4 (숙적 1 + 뜨내기 2)",
+      "method": "extracted",
+      "from": "greybox-spike/b_data.js",
+      "run": null,
+      "seed": null,
+      "at": "2026-07-25",
+      "by": "claude/game-lane",
+      "reason": "그레이박스 스파이크에서 기계 추출한 최초 이관"
+    }
+  },
+  "crosswalk": {
+    "target": "team-loop-lite-ai-learning/examples/balance/unknown-auction-economy.json → baseline",
+    "targetProvider": "auction-economy-v1",
+    "checkedAt": "2026-07-25",
+    "legend": {
+      "exact": "두 레인의 값이 같다. 그대로 단일 출처로 묶을 수 있다.",
+      "divergent": "같은 개념인데 값 또는 모델이 다르다. 사람이 어느 쪽이 맞는지 정해야 한다.",
+      "unmapped": "한쪽에만 있다. 대응을 만들지, 없는 채로 둘지 정해야 한다."
+    },
+    "entries": [
+      {
+        "status": "exact",
+        "game": "run/startCash",
+        "tool": "economy/startingAssets",
+        "value": 20000
+      },
+      {
+        "status": "exact",
+        "game": "run/days",
+        "tool": "economy/days",
+        "value": 12
+      },
+      {
+        "status": "exact",
+        "game": "trade/saleFeeRate",
+        "tool": "economy/saleFeeRate",
+        "value": 0.05
+      },
+      {
+        "status": "exact",
+        "game": "composition/expectedDemandMultiplier",
+        "tool": "economy/expectedDemandMultiplier",
+        "value": 1.05
+      },
+      {
+        "status": "exact",
+        "game": "auction/lotsPerDay",
+        "tool": "auction/lotsPerDay",
+        "value": 8
+      },
+      {
+        "status": "exact",
+        "game": "auction/startPriceRate",
+        "tool": "auction/startBidRatio",
+        "value": 0.5
+      },
+      {
+        "status": "exact",
+        "game": "auction/raiseRate",
+        "tool": "auction/minimumIncrementRate",
+        "value": 0.1
+      },
+      {
+        "status": "exact",
+        "game": "grades/*/base",
+        "tool": "grades[].baseValue",
+        "value": "1500 / 4000 / 12000 / 25000"
+      },
+      {
+        "status": "exact",
+        "game": "grades/*/demandMinimum·demandMaximum",
+        "tool": "grades[].demandMinimum·demandMaximum",
+        "value": "0.95–1.10 / 0.80–1.35 / 0.60–1.75 / 0.40–2.40"
+      },
+      {
+        "status": "exact",
+        "game": "grades/*/appraisePriceRate",
+        "tool": "information/appraisalPriceRate",
+        "value": 0.05
+      },
+      {
+        "status": "exact",
+        "game": "information/priceRateOfDailyBase/수요 동향",
+        "tool": "information/demandPriceAssetRate",
+        "value": 0.01
+      },
+      {
+        "status": "exact",
+        "game": "bots/seats",
+        "tool": "bots/count",
+        "value": 3
+      },
+      {
+        "status": "divergent",
+        "game": "composition/standard",
+        "tool": "grades[].weight",
+        "gameValue": "일반 2 / 레어 4 / 에픽 1 / 전설 1 (= .250/.500/.125/.125)",
+        "toolValue": ".300/.430/.195/.075",
+        "note": "8로트 기준 도출 개수가 다르다. 전설 빈도는 게임 쪽이 1.67배. E[M] 검증과 누출 잔차 양쪽에 직결된다."
+      },
+      {
+        "status": "divergent",
+        "game": "appraisal/bandByStage",
+        "tool": "information/blindValueErrorRate·appraisalErrorRate",
+        "gameValue": "{1:0.35, 2:0.20, 3:0.10, 4:0.10}",
+        "toolValue": "blind 0.35 / appraisal 0.20 (단일 상수)",
+        "note": "1·2단계는 값이 맞지만 도구 쪽에는 상회 3·4단계 밴드(0.10)가 없다. 승급 후 감정 정확도 개선이 시뮬에 반영되지 않는다."
+      },
+      {
+        "status": "divergent",
+        "game": "bots/nemesisSchedule/estimateErrorRate",
+        "tool": "bots/estimateErrorRate",
+        "gameValue": "{1:0.30, 2:0.22, 3:0.15} — 일자 구간별",
+        "toolValue": "0.30 고정",
+        "note": "도구 쪽에 숙적 성장 모델이 없다. 후반 난도가 시뮬에서 과소평가된다."
+      },
+      {
+        "status": "divergent",
+        "game": "bots/budget/shareOfWallet",
+        "tool": "bots/reserveCashRate",
+        "gameValue": "rho 0.5 (지출 상한 = 지갑의 50%)",
+        "toolValue": "0.35 (유보 35% → 지출 65%)",
+        "note": "같은 개념을 반대 방향으로 표현한 데다 값도 다르다. 표현을 하나로 통일할 것."
+      },
+      {
+        "status": "divergent",
+        "game": "bots/series",
+        "tool": "categories",
+        "gameValue": "6종 (도자기·해양·서적·보석·무구·회화)",
+        "toolValue": "4종 (art·relic·machinery·curio)",
+        "note": "계열 수가 다르면 세트 예약·사정축 적중률이 달라진다. 이름도 번역되지 않았다."
+      },
+      {
+        "status": "unmapped",
+        "tool": "economy/ruinThresholdRatio = 0.1",
+        "note": "게임 쪽 파산 판정은 순자산 < 0. 도구는 시작자산의 10%. 어느 선이 파산인지 정할 것."
+      },
+      {
+        "status": "unmapped",
+        "tool": "player/targetMarginRate = 0.08",
+        "note": "게임 쪽에는 플레이어 목표 마진 개념이 없다(봇 D계열 마진만 존재). 시뮬 전용 정책 파라미터로 남길지 결정할 것."
+      },
+      {
+        "status": "unmapped",
+        "tool": "bots/minimumBudget = 30000, budgetMinimumRatio 0.6, budgetMaximumRatio 1.2, marketBidRatio 0.92, interestThreshold 0.65, gradeInterestBonus 0.15, minimumExpectedMargin 0.08, circumstance*",
+        "note": "도구 쪽 봇 모델 고유 파라미터. 게임 쪽 2축 모형(uplift/capMarket/k/rho/lam)과 대응이 없다. 두 봇 모델을 합칠지, 시뮬을 근사로 인정하고 분리 유지할지가 가장 큰 결정."
+      },
+      {
+        "status": "unmapped",
+        "game": "bond, contracts, shop/promote, trade/set*, auction/jump*",
+        "note": "담보 채권·의뢰·승급·세트 예약·점핑 비드가 도구 시뮬에 전혀 없다. 현금흐름 구조가 달라 ROI 지표 해석에 주의."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "id": "curve-exponent",
+      "question": "의도 자산곡선의 지수가 day-1인가 day인가.",
+      "detail": "dayScale 1.4 기준 12일차는 ^11이면 809913 (40.5×), ^12면 1133878 (56.7×). §16의 목표 배수 56.7×는 후자와 일치한다. 코드는 전자를 쓴다.",
+      "impact": "런 결과 등급과 밸런스 합격선이 40% 어긋난다.",
+      "owner": "human"
+    },
+    {
+      "id": "leakage-threshold",
+      "question": "봇 가치 누출 잔차의 합격선은 0.30인가 0.35인가.",
+      "detail": "게임 레인 오라클은 0.30, 도구 레인 스펙(balance-targets 후보)은 0.35를 쓴다. 둘 다 자기 기준으로 통과 중이라 아무도 터지지 않는다.",
+      "impact": "단일 출처로 묶는 순간 하나를 골라야 한다.",
+      "owner": "human"
+    },
+    {
+      "id": "bot-model-unification",
+      "question": "두 봇 모델을 합칠 것인가, 시뮬을 근사로 인정하고 분리 유지할 것인가.",
+      "detail": "crosswalk의 unmapped 마지막 항목 참조. 합치면 진실이 하나가 되지만 도구 쪽 파라미터 스윕 공간을 다시 짜야 한다.",
+      "impact": "이 결정 전에는 economy-params와 밸런스 baseline을 기계적으로 동기화할 수 없다.",
+      "owner": "human"
+    },
+    {
+      "id": "promotion-deadlock",
+      "question": "상회 1→2 승급의 의뢰 요구를 어떻게 풀 것인가.",
+      "detail": "shop/promote[1].contracts = 1인데 의뢰는 조합에서만 받고 조합은 stage>=2 게이트다. SPIKE-REPORT §3① 참조.",
+      "impact": "현재 파라미터로는 1단계에서 2단계로 갈 수 없다. 스윕이 이 구간을 영원히 탐색하지 못한다.",
+      "owner": "human"
+    }
+  ]
+}

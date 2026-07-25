@@ -2,7 +2,7 @@ import { parseCliArgs, option, requireOption, listOption, repeatedOption } from 
 import { CliClient } from './client.js';
 import { botHome, clearSession, loadConfig, loadSession, loadSessionFrom, normalizeServer, saveConfig, saveSession } from './session.js';
 import { mergeCliExecutor } from '../executor.js';
-import { normalizeWorkerConfig, selectExecutor } from '../executor-router.js';
+import { normalizeWorkerConfig, selectExecutor, selectReviewer } from '../executor-router.js';
 import { commitTaskWorktree, createTaskWorktree, mergePreparedWorktree, mergeTaskWorktree, removeTaskWorktree, listTaskWorktrees, worktreePath } from '../worktree.js';
 import { printFailures, printHarnesses, printTask, printTasks, printUsers, printValue } from './format.js';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -112,6 +112,7 @@ export async function runCli(argv) {
   if (command === 'orchestrate') return runOrchestrate(client, positionals.slice(1), options, json);
   if (command === 'dispatch') return runDispatch(client, positionals.slice(1), options, json);
   if (command === 'worker') return runWorker(client, positionals.slice(1), options, json);
+  if (command === 'profile-review') return runProfileReview(client, positionals.slice(1), options, json);
   if (command === 'worktree') return runWorktree(client, positionals.slice(1), options, json);
 
   throw new Error(`Unknown command: ${command}. Run "team-loop help".`);
@@ -642,14 +643,26 @@ async function runDispatch(client, positionals, options, json) {
       })).task;
     }
     task = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/claim`, {
-      method: 'POST', body: { expectedVersion: task.version, executionMode: 'AGENT', ...(executor ? { executor } : {}) },
+      method: 'POST', body: {
+        expectedVersion: task.version,
+        executionMode: 'AGENT',
+        isolated: Boolean(options.isolate),
+        ...(executor ? { executor } : {}),
+      },
     })).task;
   }
   if (task.status !== 'IN_PROGRESS') throw new Error(`Task must be IN_PROGRESS to dispatch (now ${task.status}).`);
 
   let worktree = null;
   if (options.execute && options.isolate) {
-    worktree = await createTaskWorktree(bootstrap.workspace?.root || process.cwd(), task.id);
+    const repoRoot = bootstrap.workspace?.root || process.cwd();
+    const existing = worktreePath(repoRoot, task.id);
+    try {
+      await access(existing);
+      worktree = { dir: existing, branch: `task/${task.id}` };
+    } catch {
+      worktree = await createTaskWorktree(repoRoot, task.id);
+    }
     workspace = worktree.dir;
     if (!json) process.stdout.write(`Isolated worktree: ${worktree.dir} (branch ${worktree.branch})\n`);
   }
@@ -711,13 +724,14 @@ async function runDispatch(client, positionals, options, json) {
       maxAttempts,
     });
     try {
-      run = await runExecutor(tool, attemptPrompt, {
+      run = await runWithTaskHeartbeat(client, task, () => runExecutor(tool, attemptPrompt, {
         workspace, model, permission, sandbox, inherit: !json,
         timeoutMs: Math.max(1, numberOption(options, 'max-minutes', 30)) * 60_000,
-      });
+      }));
     } catch (error) {
       run = { code: 1, output: error.message, error: error.message };
     }
+    task = findTask((await client.request('/api/bootstrap')).tasks, task.id) || task;
     if (!json) process.stdout.write(`Executor exited with code ${run.code}. Verifying ...\n`);
     task = await reportTaskActivity(client, task, {
       phase: 'verifying',
@@ -1155,6 +1169,7 @@ function extractCliUsage(tool, output) {
     const usage = payload.usage || {};
     return {
       inputTokens: Number(usage.input_tokens || 0) + Number(usage.cache_read_input_tokens || 0),
+      inputCachedTokens: Number(usage.cache_read_input_tokens || 0),
       outputTokens: Number(usage.output_tokens || 0),
       totalTokens: Number(usage.input_tokens || 0) + Number(usage.cache_read_input_tokens || 0) + Number(usage.output_tokens || 0),
       costUsd: Number(payload.total_cost_usd || 0),
@@ -1228,7 +1243,19 @@ async function runWorkerOnce(client, options, json) {
     retry: option(options, 'retry', 2),
     'auto-learn': !options['no-auto-learn'],
   }, json);
-  const completedTask = findTask((await client.request('/api/bootstrap')).tasks, started.task.id);
+  let completedTask = findTask((await client.request('/api/bootstrap')).tasks, started.task.id);
+  if (code === 0 && completedTask?.status === 'REVIEW') {
+    const reviewSelection = selectReviewer(completedTask, config, {
+      reviewerProfileId: completedTask.reviewerProfileId || String(option(options, 'reviewer-profile-id', '')),
+      executorProfileId: completedTask.executorProfileId || selected.candidate.id,
+    });
+    if (!reviewSelection.candidate) throw new Error('No eligible AI review profile.');
+    const reviewResult = await runAiProfileReview(client, completedTask, reviewSelection.candidate, {
+      workspace: (await client.request('/api/bootstrap')).workspace?.root || process.cwd(),
+      json,
+    });
+    completedTask = reviewResult.task;
+  }
   return {
     worked: true,
     code,
@@ -1237,8 +1264,110 @@ async function runWorkerOnce(client, options, json) {
   };
 }
 
+async function runAiProfileReview(client, task, profile, { workspace, json }) {
+  const prompt = [
+    'You are an independent read-only reviewer. Do not edit files.',
+    `Task: ${task.title}`,
+    task.description || '',
+    `Acceptance criteria: ${JSON.stringify(task.acceptanceCriteria || [])}`,
+    `Allowed paths: ${JSON.stringify(task.allowedPaths || [])}`,
+    'Inspect the current git diff and the verification evidence below.',
+    JSON.stringify(compactVerificationForPrompt(task.verification || {}), null, 2),
+    'Return exactly one final line in this format:',
+    'TEAM_LOOP_REVIEW: {"verdict":"APPROVE|REJECT","summary":"concise evidence-based summary","concerns":["item"]}',
+  ].join('\n\n');
+  const run = await runExecutor(profile.tool, prompt, {
+    workspace,
+    model: profile.model || '',
+    permission: 'plan',
+    sandbox: 'read-only',
+    inherit: false,
+    timeoutMs: 15 * 60_000,
+  });
+  if (run.code !== 0) throw new Error(`AI reviewer ${profile.id} failed with exit code ${run.code}.`);
+  const match = String(run.output || '').match(/TEAM_LOOP_REVIEW:\s*(\{[^\r\n]*\})/);
+  if (!match) throw new Error(`AI reviewer ${profile.id} did not return the review contract.`);
+  let recommendation;
+  try {
+    recommendation = JSON.parse(match[1]);
+  } catch {
+    throw new Error(`AI reviewer ${profile.id} returned invalid JSON.`);
+  }
+  const verdict = String(recommendation.verdict || '').toUpperCase();
+  if (!['APPROVE', 'REJECT'].includes(verdict)) throw new Error(`AI reviewer ${profile.id} returned an invalid verdict.`);
+  let reviewed = (await client.request(`/api/tasks/${encodeURIComponent(task.id)}/ai-review`, {
+    method: 'POST',
+    body: {
+      expectedVersion: task.version,
+      reviewerProfileId: profile.id,
+      verdict,
+      summary: recommendation.summary || '',
+      concerns: Array.isArray(recommendation.concerns) ? recommendation.concerns : [],
+    },
+  })).task;
+  const automaticApproval = reviewed.approvalPolicy === 'AUTO'
+    || (reviewed.approvalPolicy === 'AUTO_LOW_RISK' && isLowRiskTask(reviewed));
+  if (verdict === 'REJECT' || automaticApproval) {
+    reviewed = (await client.request(`/api/tasks/${encodeURIComponent(reviewed.id)}/review`, {
+      method: 'POST',
+      body: {
+        expectedVersion: reviewed.version,
+        decision: verdict,
+        comment: `AI ${profile.id}: ${String(recommendation.summary || '').slice(0, 1800)}`,
+      },
+    })).task;
+  }
+  if (!json) process.stdout.write(`AI review ${profile.id}: ${verdict}${automaticApproval ? ' (auto-applied)' : ' (awaiting user approval)'}\n`);
+  return { task: reviewed, verdict, automaticApproval };
+}
+
+async function runProfileReview(client, positionals, options, json) {
+  const taskId = requirePositional(positionals, 0, 'Task ID is required.');
+  const bootstrap = await client.request('/api/bootstrap');
+  const task = findTask(bootstrap.tasks, taskId);
+  if (!task || task.status !== 'REVIEW') throw new Error(`Task ${taskId} is not waiting for review.`);
+  const config = (await loadConfig()) || {};
+  const selection = selectReviewer(task, config, {
+    reviewerProfileId: task.reviewerProfileId || String(option(options, 'reviewer-profile-id', '')),
+    executorProfileId: task.executorProfileId || '',
+  });
+  if (!selection.candidate) throw new Error('No eligible AI review profile.');
+  const result = await runAiProfileReview(client, task, selection.candidate, {
+    workspace: bootstrap.workspace?.root || process.cwd(),
+    json,
+  });
+  if (json) printValue(result, { json: true });
+  return result.task.status === 'IN_PROGRESS' && result.verdict === 'REJECT' ? 2 : 0;
+}
+
+function isLowRiskTask(task) {
+  const paths = task.allowedPaths || [];
+  return paths.length > 0 && paths.every((value) =>
+    /^(docs?|test|tests|examples)\//i.test(String(value)) || /\.(md|txt|json)$/i.test(String(value)));
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function runWithTaskHeartbeat(client, task, work) {
+  let stopped = false;
+  const beat = async () => {
+    if (stopped) return;
+    await client.request(`/api/tasks/${encodeURIComponent(task.id)}/heartbeat`, {
+      method: 'POST',
+      body: { runId: task.executionRun?.id || null },
+    }).catch(() => {});
+  };
+  await beat();
+  const interval = setInterval(beat, 5_000);
+  interval.unref();
+  try {
+    return await work();
+  } finally {
+    stopped = true;
+    clearInterval(interval);
+  }
 }
 
 function booleanOption(options, name) {

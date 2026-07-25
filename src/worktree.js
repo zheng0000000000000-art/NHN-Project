@@ -13,7 +13,7 @@ const WORKTREE_DIRNAME = '.team-loop-worktrees';
 
 function git(args, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(process.env.TEAM_LOOP_GIT_BIN || 'git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     let err = '';
     child.stdout.on('data', (chunk) => { out += chunk; });
@@ -73,6 +73,15 @@ export async function worktreeHasChanges(repoRoot, taskId) {
   } catch (error) {
     if (error?.code === 'ENOENT' || /cannot change to|not a working tree|No such file/i.test(error.message)) return false;
     throw error;
+  }
+}
+
+export async function taskBranchMerged(repoRoot, taskId) {
+  try {
+    await git(['merge-base', '--is-ancestor', worktreeBranch(taskId), 'HEAD'], repoRoot);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -91,6 +91,7 @@ export class Store {
     const user = db.users.find((entry) => entry.name.toLowerCase() === String(name ?? '').trim().toLowerCase());
     const valid = await verifyPassword(String(password ?? ''), user || DUMMY_PASSWORD_RECORD);
     if (!user || !valid) throw new HttpError(401, 'Invalid name or password.');
+    if (user.disabledAt) throw new HttpError(403, 'This account is disabled.');
     return this.#publicUser(user);
   }
 
@@ -103,6 +104,20 @@ export class Store {
   async listUsers() {
     const db = await readJson(this.usersPath, EMPTY_USERS);
     return db.users.map((user) => this.#publicUser(user)).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async setUserDisabled(actor, userId, disabled) {
+    if (actor.role !== 'admin') throw new HttpError(403, 'Administrator access required.');
+    return this.#withLock(async () => {
+      const db = await readJson(this.usersPath, EMPTY_USERS);
+      const user = db.users.find((entry) => entry.id === userId);
+      if (!user) throw new HttpError(404, 'User not found.');
+      if (user.id === actor.id && disabled) throw new HttpError(409, 'You cannot disable your own account.');
+      user.disabledAt = disabled ? (user.disabledAt || nowIso()) : null;
+      await atomicWriteJson(this.usersPath, db);
+      await this.#audit(actor.id, disabled ? 'USER_DISABLED' : 'USER_ENABLED', { userId: user.id });
+      return this.#publicUser(user);
+    });
   }
 
   async listTasks() {
@@ -147,6 +162,77 @@ export class Store {
     });
   }
 
+  async initializeAiProfiles({ executorProfileId, reviewerProfileId, approvalPolicy = 'USER_CONFIRM' }) {
+    if (!executorProfileId || !reviewerProfileId) return 0;
+    return this.#withLock(async () => {
+      const db = await readJson(this.tasksPath, EMPTY_TASKS);
+      let changed = 0;
+      for (const task of db.tasks) {
+        let taskChanged = false;
+        if (!task.executorProfileId) {
+          task.executorProfileId = executorProfileId;
+          taskChanged = true;
+        }
+        if (!task.reviewerProfileId) {
+          task.reviewerProfileId = reviewerProfileId;
+          taskChanged = true;
+        }
+        if (!task.approvalPolicy) {
+          task.approvalPolicy = normalizeApprovalPolicy(approvalPolicy);
+          taskChanged = true;
+        }
+        if (taskChanged) changed += 1;
+      }
+      if (changed) await atomicWriteJson(this.tasksPath, db);
+      return changed;
+    });
+  }
+
+  async recoverInterruptedAgentTasks({ recoveryId = 'startup' } = {}) {
+    return this.#withLock(async () => {
+      const db = await readJson(this.tasksPath, EMPTY_TASKS);
+      const recovered = [];
+      const at = nowIso();
+      for (const task of db.tasks) {
+        if (task.executionRun?.recoveryId === recoveryId) continue;
+        const legacyInterrupted = task.executionState === 'IDLE'
+          && task.status === 'IN_PROGRESS'
+          && task.agentActivity?.phase === 'interrupted';
+        if (!['RUNNING', 'RECOVERING'].includes(task.executionState) && !legacyInterrupted) continue;
+        task.executionState = 'RECOVERING';
+        task.executionRun = {
+          ...(task.executionRun || {}),
+          status: 'RECOVERING',
+          heartbeatAt: task.executionRun?.heartbeatAt || task.agentActivity?.updatedAt || null,
+          recoveryStartedAt: at,
+          recoveryReason: 'SERVER_RESTART_NO_LIVE_PROCESS',
+          recoveryId,
+        };
+        task.agentActivity = {
+          ...(task.agentActivity || {}),
+          phase: 'recovering',
+          label: '자동 작업 복구 중',
+          detail: '서버 시작 시 살아 있는 작업자 프로세스를 찾지 못해 격리 작업물과 검증 상태를 확인하고 있습니다.',
+          updatedAt: at,
+          finishedAt: null,
+          passed: false,
+        };
+        task.updatedAt = at;
+        task.version = Math.max(1, Number(task.version) || 1) + 1;
+        recovered.push({ taskId: task.id, ownerUserId: task.assigneeUserId || task.creatorUserId || null });
+      }
+      if (!recovered.length) return [];
+      await atomicWriteJson(this.tasksPath, db);
+      for (const item of recovered) {
+        await this.#audit(item.ownerUserId || 'system', 'TASK_AGENT_INTERRUPTED', {
+          taskId: item.taskId,
+          reason: 'SERVER_RESTART_NO_LIVE_PROCESS',
+        });
+      }
+      return recovered.map((item) => item.taskId);
+    });
+  }
+
   async createPlan(actor, input, profileNames) {
     const objective = String(input.objective || '').trim().slice(0, 2000);
     const title = String(input.title || objective).trim().slice(0, 120);
@@ -177,6 +263,9 @@ export class Store {
       verificationProfile: step.verificationProfile || input.verificationProfile,
       assigneeUserId: step.assigneeUserId || input.assigneeUserId,
       reviewerUserId: step.reviewerUserId || input.reviewerUserId,
+      executorProfileId: step.executorProfileId || input.executorProfileId,
+      reviewerProfileId: step.reviewerProfileId || input.reviewerProfileId,
+      approvalPolicy: step.approvalPolicy || input.approvalPolicy,
       planId,
       planStepId: stepIds[index],
       planTitle: title,
@@ -215,8 +304,11 @@ export class Store {
       status: 'READY',
       priority: Number.isFinite(Number(input.priority)) ? Math.max(1, Math.min(999, Number(input.priority))) : 100,
       creatorUserId: actor.id,
-      assigneeUserId: input.assigneeUserId || null,
+      assigneeUserId: input.assigneeUserId || actor.id,
       reviewerUserId: input.reviewerUserId || null,
+      executorProfileId: String(input.executorProfileId || '').trim().slice(0, 80) || null,
+      reviewerProfileId: String(input.reviewerProfileId || '').trim().slice(0, 80) || null,
+      approvalPolicy: normalizeApprovalPolicy(input.approvalPolicy),
       allowedPaths,
       acceptanceCriteria: this.#normalizeList(input.acceptanceCriteria, 10, 1000),
       verificationProfile,
@@ -255,6 +347,7 @@ export class Store {
       },
       supersedesTaskId: input.supersedesTaskId || null,
       supersededByTaskId: null,
+      delegation: normalizeDelegation(input.delegation),
       archived: false,
       archivedAt: null,
       archivedByUserId: null,
@@ -355,7 +448,14 @@ export class Store {
   }
 
   #publicUser(user) {
-    return { id: user.id, name: user.name, role: user.role, createdAt: user.createdAt };
+    return {
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      createdAt: user.createdAt,
+      disabledAt: user.disabledAt || null,
+      active: !user.disabledAt,
+    };
   }
 
   #withLock(work) {
@@ -363,6 +463,25 @@ export class Store {
     this.lock = result.catch(() => {});
     return result;
   }
+}
+
+function normalizeDelegation(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    parentTaskId: String(value.parentTaskId || '').trim().slice(0, 160) || null,
+    rootTaskId: String(value.rootTaskId || '').trim().slice(0, 160) || null,
+    depth: Math.max(1, Math.min(2, Number(value.depth) || 1)),
+    role: String(value.role || 'EXECUTE').toUpperCase() === 'REVIEW' ? 'REVIEW' : 'EXECUTE',
+    reason: String(value.reason || '').trim().slice(0, 1000),
+    fingerprint: String(value.fingerprint || '').trim().slice(0, 64),
+    requestedByProfileId: String(value.requestedByProfileId || '').trim().slice(0, 80) || null,
+    targetProfileId: String(value.targetProfileId || '').trim().slice(0, 80) || null,
+    budget: {
+      tokenBudget: Math.max(1_000, Math.min(2_000_000, Number(value.budget?.tokenBudget) || 500_000)),
+      costBudgetUsd: Math.max(0.01, Math.min(100, Number(value.budget?.costBudgetUsd) || 10)),
+      maxCalls: Math.max(1, Math.min(5, Number(value.budget?.maxCalls) || 2)),
+    },
+  };
 }
 
 function normalizeTaskSchedule(input = {}) {
@@ -376,6 +495,11 @@ function normalizeTaskSchedule(input = {}) {
     plannedEnd,
     note: String(input?.note ?? '').trim().slice(0, 1000),
   };
+}
+
+function normalizeApprovalPolicy(value) {
+  const policy = String(value || 'USER_CONFIRM').trim().toUpperCase();
+  return ['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'].includes(policy) ? policy : 'USER_CONFIRM';
 }
 
 function normalizeDateOnly(value) {

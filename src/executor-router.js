@@ -19,7 +19,7 @@ export function normalizeWorkerConfig(value = {}) {
 export function selectExecutor(task, config, { quality = 'auto', allowRemote, executorId = '' } = {}) {
   const policy = normalizeWorkerConfig(config);
   const remoteAllowed = allowRemote ?? policy.allowRemote;
-  const available = policy.executors.filter((item) => item.enabled && (remoteAllowed || item.tier !== 'remote'));
+  const available = policy.executors.filter((item) => item.enabled && item.roles.includes('execute') && (remoteAllowed || item.tier !== 'remote'));
   if (!available.length) return { executor: null, reason: 'NO_EXECUTOR' };
   if (executorId) {
     const candidate = available.find((item) => item.id === executorId);
@@ -47,6 +47,36 @@ export function selectExecutor(task, config, { quality = 'auto', allowRemote, ex
   return { executor: null, reason: remoteAllowed ? 'NO_EXECUTOR' : 'NO_LOCAL_EXECUTOR' };
 }
 
+export function selectReviewer(task, config, { quality = 'high', allowRemote, reviewerProfileId = '', executorProfileId = '' } = {}) {
+  const policy = normalizeWorkerConfig(config);
+  const remoteAllowed = allowRemote ?? policy.allowRemote;
+  const available = policy.executors.filter((item) =>
+    item.enabled && item.roles.includes('review') && (remoteAllowed || item.tier !== 'remote'));
+  if (!available.length) return { reviewer: null, candidate: null, reason: 'NO_REVIEWER' };
+  if (reviewerProfileId) {
+    const candidate = available.find((item) => item.id === reviewerProfileId);
+    if (!candidate) return { reviewer: null, candidate: null, reason: 'REVIEWER_NOT_AVAILABLE' };
+    return {
+      reviewer: { tool: candidate.tool, ...(candidate.model ? { model: candidate.model } : {}) },
+      candidate,
+      reason: 'USER_SELECTED',
+      independent: candidate.id !== executorProfileId,
+    };
+  }
+  const ranked = [...available].sort((a, b) =>
+    Number(a.id === executorProfileId) - Number(b.id === executorProfileId)
+    || b.quality - a.quality
+    || b.weight - a.weight
+    || a.id.localeCompare(b.id));
+  const candidate = ranked[0];
+  return {
+    reviewer: { tool: candidate.tool, ...(candidate.model ? { model: candidate.model } : {}) },
+    candidate,
+    reason: candidate.id === executorProfileId ? 'SAME_PROFILE_FALLBACK' : 'INDEPENDENT_REVIEW',
+    independent: candidate.id !== executorProfileId,
+  };
+}
+
 function normalizeCandidate(value) {
   if (!value || typeof value !== 'object') return null;
   const id = String(value.id || '').trim().slice(0, 80);
@@ -55,10 +85,19 @@ function normalizeCandidate(value) {
   if (!id || !EXECUTOR_TOOLS.includes(tool) || !['local', 'remote'].includes(tier)) return null;
   return {
     id, tool, tier,
+    label: String(value.label || id).trim().slice(0, 120),
     model: String(value.model || '').trim().slice(0, 120),
     enabled: value.enabled !== false,
     weight: boundedNumber(value.weight, 50, 0, 100),
+    quality: boundedNumber(value.quality, tier === 'remote' ? 80 : 50, 0, 100),
+    roles: normalizeRoles(value.roles),
   };
+}
+
+function normalizeRoles(value) {
+  const roles = Array.isArray(value) ? value.map((item) => String(item).toLowerCase()) : ['execute', 'review'];
+  const valid = [...new Set(roles.filter((item) => ['execute', 'review'].includes(item)))];
+  return valid.length ? valid : ['execute', 'review'];
 }
 
 function boundedNumber(value, fallback, min, max) {

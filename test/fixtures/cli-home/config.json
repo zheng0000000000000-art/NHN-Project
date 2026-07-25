@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "routing": {
+    "strategy": "local-first",
+    "allowRemote": true,
+    "remoteEscalationPriority": 80
+  },
+  "executors": [
+    {
+      "id": "test-local",
+      "label": "Hermetic test executor",
+      "tool": "custom",
+      "tier": "local",
+      "weight": 100,
+      "quality": 50,
+      "enabled": true,
+      "roles": ["execute", "review"]
+    }
+  ]
+}

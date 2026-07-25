@@ -24,3 +24,32 @@ test('a passing run resets consecutive failure counters', () => {
   assert.equal(result.guard.failedRuns, 0);
   assert.equal(result.guard.circuitOpen, false);
 });
+
+test('automation circuit pauses after a single expensive run even when it passes', () => {
+  const result = recordAutomationResult({}, {
+    passed: true,
+    usage: { totalTokens: 600_000, costUsd: 2 },
+    budget: { tokenBudget: 500_000, costBudgetUsd: 10 },
+  });
+  assert.equal(result.guard.circuitOpen, true);
+  assert.equal(result.guard.budgetExceeded, true);
+  assert.equal(result.guard.cumulativeTokens, 600_000);
+  assert.match(result.reason, /token budget 500000 reached/);
+});
+
+test('automation cost accumulates across attempts', () => {
+  const first = recordAutomationResult({}, {
+    passed: false,
+    failureSignature: 'a',
+    usage: { totalTokens: 10, costUsd: 3.5 },
+    budget: { costBudgetUsd: 5 },
+  });
+  const second = recordAutomationResult(first.guard, {
+    passed: true,
+    usage: { totalTokens: 10, costUsd: 1.5 },
+    budget: { costBudgetUsd: 5 },
+  });
+  assert.equal(second.guard.circuitOpen, true);
+  assert.equal(second.guard.cumulativeCostUsd, 5);
+  assert.match(second.reason, /cost budget/);
+});

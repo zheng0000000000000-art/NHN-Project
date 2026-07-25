@@ -44,9 +44,12 @@ export class UsageTracker {
 
   async record({ actorUserId, feature, model, source = 'api', status = 'SUCCESS', usage = {}, providerRequestId = null, durationMs = 0, error = null, context = null }) {
     const normalizedUsage = normalizeUsage(usage);
-    const estimatedCostUsd = normalizedUsage.totalTokens > 0
-      ? estimateCost(model, normalizedUsage, this.config.modelPricingUsdPerMillionTokens)
-      : null;
+    const providerCostUsd = Number(usage?.costUsd ?? usage?.cost_usd);
+    const estimatedCostUsd = Number.isFinite(providerCostUsd) && providerCostUsd >= 0
+      ? providerCostUsd
+      : normalizedUsage.totalTokens > 0
+        ? estimateCost(model, normalizedUsage, this.config.modelPricingUsdPerMillionTokens)
+        : null;
     const event = {
       eventId: randomId('use_'),
       at: nowIso(),

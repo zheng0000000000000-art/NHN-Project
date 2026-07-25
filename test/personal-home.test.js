@@ -115,3 +115,18 @@ test('workboard exposes executor selection and an honest usage preview', async (
   assert.match(app, /\/api\/orchestration\/preview-next/);
   assert.match(app, /공식 잔여 할당량은 제공되지 않아/);
 });
+
+test('workboard can stream important changes to desktop notifications', async () => {
+  const [html, app, server] = await Promise.all([
+    readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../server.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(html, /id="enable-work-notifications"/);
+  assert.match(app, /new EventSource\('\/api\/events\/work'\)/);
+  assert.match(app, /Notification\.requestPermission/);
+  assert.match(app, /검증 통과/);
+  assert.match(app, /자동 작업 중단/);
+  assert.match(server, /Content-Type': 'text\/event-stream/);
+  assert.match(server, /streamWorkEvents/);
+});

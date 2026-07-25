@@ -63,7 +63,15 @@ const TOOLS = {
       },
     },
     async run(client, args) {
-      return client.request('/api/orchestration/enter', { method: 'POST', body: args });
+      const response = await client.request('/api/orchestration/enter', { method: 'POST', body: args });
+      const decision = response.decision?.kind === 'LOOP_DECISION' ? response.decision : response;
+      const handoffRefs = (decision.readPlan?.required || [])
+        .map((ref) => String(ref).match(/^project:\/\/([^/]+)\/handoff\/current$/)?.[1])
+        .filter(Boolean);
+      if (!handoffRefs.length) return response;
+      const requiredContext = await Promise.all(handoffRefs.map(async (projectId) =>
+        (await client.request(`/api/projects/${encodeURIComponent(projectId)}/handoff`)).handoff));
+      return { ...response, requiredContext };
     },
   },
   plan_create: {
@@ -75,8 +83,9 @@ const TOOLS = {
         objective: { type: 'string' },
         allowedPaths: { type: 'array', items: { type: 'string' } },
         verificationProfile: { type: 'string', default: 'repository-basic' },
-        assigneeUserId: { type: 'string' },
-        reviewerUserId: { type: 'string' },
+        executorProfileId: { type: 'string', description: 'AI profile that performs the work. Omit for automatic routing.' },
+        reviewerProfileId: { type: 'string', description: 'Independent AI profile that reviews the verified result. Omit for automatic routing.' },
+        approvalPolicy: { type: 'string', enum: ['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'], default: 'USER_CONFIRM' },
         steps: {
           type: 'array',
           minItems: 1,
@@ -92,8 +101,9 @@ const TOOLS = {
               priority: { type: 'number' },
               dependsOn: { type: 'array', items: { type: 'string' } },
               verificationProfile: { type: 'string' },
-              assigneeUserId: { type: 'string' },
-              reviewerUserId: { type: 'string' },
+              executorProfileId: { type: 'string' },
+              reviewerProfileId: { type: 'string' },
+              approvalPolicy: { type: 'string', enum: ['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'] },
             },
             required: ['stepId', 'title', 'acceptanceCriteria'],
           },
@@ -121,7 +131,9 @@ const TOOLS = {
         intent: { type: 'string' },
         currentPath: { type: 'string' },
         executionMode: { type: 'string', enum: ['HUMAN', 'AGENT'], default: 'AGENT' },
-        executor: { type: 'object' },
+        executorId: { type: 'string', description: 'Execution AI profile id. Omit for automatic routing.' },
+        reviewerProfileId: { type: 'string', description: 'Review AI profile id. Omit for independent automatic routing.' },
+        approvalPolicy: { type: 'string', enum: ['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'], default: 'USER_CONFIRM' },
       },
     },
     async run(client, args) {
@@ -164,6 +176,58 @@ const TOOLS = {
       if (args.workId) query.set('workId', args.workId);
       if (args.maxTokens) query.set('maxTokens', String(args.maxTokens));
       return client.request(`/api/projects/${encodeURIComponent(args.projectId || 'team-loop')}/read-plan?${query}`);
+    },
+  },
+  delegate_work: {
+    description: 'Ask Team Loop to broker bounded work to another AI profile. The server prevents duplicate active delegations, caps nesting at depth 2, inherits tighter token/cost budgets, and records the relationship on the workboard. Set launchWorker=true only when execution should begin immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        parentTaskId: { type: 'string' },
+        title: { type: 'string' },
+        reason: { type: 'string' },
+        role: { type: 'string', enum: ['EXECUTE', 'REVIEW'], default: 'EXECUTE' },
+        requestedByProfileId: { type: 'string' },
+        targetProfileId: { type: 'string' },
+        description: { type: 'string' },
+        allowedPaths: { type: 'array', items: { type: 'string' } },
+        acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+        verificationProfile: { type: 'string', default: 'repository-basic' },
+        tokenBudget: { type: 'number', default: 500000 },
+        costBudgetUsd: { type: 'number', default: 10 },
+        maxCalls: { type: 'number', default: 2 },
+        maxDepth: { type: 'number', default: 2 },
+        approvalPolicy: { type: 'string', enum: ['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'], default: 'USER_CONFIRM' },
+        launchWorker: { type: 'boolean', default: false },
+      },
+      required: ['title', 'reason'],
+    },
+    async run(client, args) {
+      return client.request('/api/orchestration/delegate', { method: 'POST', body: args });
+    },
+  },
+  delegation_status: {
+    description: 'Read one delegated work item, its bounded delegation contract, child delegations, verification state, and final result when complete.',
+    inputSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string' } },
+      required: ['taskId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/orchestration/delegations/${encodeURIComponent(args.taskId)}`);
+    },
+  },
+  project_handoff_read: {
+    description: 'Read the current file-backed handoff declared by a managed project workspace. Returns its content with SHA-256, modified time, byte size, and source path so an agent can verify exactly what it received.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Managed workspace id, for example unknown-auction.' },
+      },
+      required: ['projectId'],
+    },
+    async run(client, args) {
+      return client.request(`/api/projects/${encodeURIComponent(args.projectId)}/handoff`);
     },
   },
   work_inspect: {
@@ -520,6 +584,9 @@ const TOOLS = {
         allowedPaths: { type: 'array', items: { type: 'string' } },
         acceptanceCriteria: { type: 'array', items: { type: 'string' } },
         verificationProfile: { type: 'string' }, priority: { type: 'number' },
+        executorProfileId: { type: 'string' },
+        reviewerProfileId: { type: 'string' },
+        approvalPolicy: { type: 'string', enum: ['USER_CONFIRM', 'AUTO_LOW_RISK', 'AUTO'], default: 'USER_CONFIRM' },
         supersedesTaskId: { type: 'string', description: 'Original task replaced by this reissued task.' },
       },
       required: ['title'],
@@ -530,6 +597,9 @@ const TOOLS = {
         allowedPaths: Array.isArray(args.allowedPaths) && args.allowedPaths.length ? args.allowedPaths : ['**'],
         acceptanceCriteria: Array.isArray(args.acceptanceCriteria) ? args.acceptanceCriteria : [],
         verificationProfile: args.verificationProfile || 'repository-basic',
+        executorProfileId: args.executorProfileId || '',
+        reviewerProfileId: args.reviewerProfileId || '',
+        approvalPolicy: args.approvalPolicy || 'USER_CONFIRM',
         supersedesTaskId: args.supersedesTaskId || null,
       };
       return (await client.request('/api/tasks', { method: 'POST', body })).task;

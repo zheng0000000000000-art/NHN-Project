@@ -162,6 +162,23 @@ export class FailureCaseStore {
     });
   }
 
+  async resolveTaskProcessFailures(taskId, harnessId, actorUserId, note = '') {
+    return this.#withLock(async () => {
+      const db = await readJson(this.path, EMPTY_DB);
+      const resolved = [];
+      for (const item of db.cases) {
+        if (item.status !== 'OPEN' || item.harnessId !== harnessId || !(item.taskIds || []).includes(taskId)) continue;
+        item.status = 'RESOLVED';
+        item.statusNote = String(note || `Resolved by a successful ${harnessId} process for ${taskId}.`).slice(0, 2000);
+        item.statusChangedByUserId = actorUserId;
+        item.statusChangedAt = nowIso();
+        resolved.push(item.id);
+      }
+      if (resolved.length) await atomicWriteJson(this.path, db);
+      return resolved;
+    });
+  }
+
   async #record(observation, actorUserId) {
     return this.#withLock(async () => {
       const db = await readJson(this.path, EMPTY_DB);

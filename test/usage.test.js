@@ -21,6 +21,24 @@ test('normalizes Responses API token usage', () => {
   });
 });
 
+test('usage tracker preserves provider-reported CLI cost without local pricing', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-provider-cost-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = path.join(root, 'usage.json');
+  await writeFile(configPath, JSON.stringify({ timeZone: 'Asia/Seoul' }));
+  const tracker = new UsageTracker({ dataDirectory: path.join(root, 'data'), configPath });
+  await tracker.initialize();
+  const event = await tracker.record({
+    actorUserId: 'usr_a',
+    feature: 'task-executor',
+    model: 'claude-default',
+    source: 'cli',
+    usage: { inputTokens: 100, inputCachedTokens: 80, outputTokens: 10, costUsd: 1.25 },
+  });
+  assert.equal(event.estimatedCostUsd, 1.25);
+  assert.equal(event.usage.inputCachedTokens, 80);
+});
+
 test('usage tracker aggregates by user, source, feature and budget', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'team-loop-usage-'));
   t.after(() => rm(root, { recursive: true, force: true }));
