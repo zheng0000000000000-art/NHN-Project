@@ -120,24 +120,47 @@ const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
 const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
 // 팩을 조립해 턴 예산을 도출한다. 팩이 이 일에 무엇이 실제로 필요한지 아는 유일한 실체다.
 // 조립에 실패하면 예산을 지어내지 않고 가장 좁은 값으로 떨어뜨린 뒤 그 사실을 남긴다.
-async function deriveWorkBudget(task) {
+// 조립한 팩을 버리지 않고 기록·잠금까지 해서 id를 남긴다. 워커는 그 id로 같은 팩을 받아가므로
+// 같은 조립을 두 번 하지 않고, 예산을 정할 때 본 것과 실행자가 받는 것이 같음이 보장된다.
+async function deriveWorkBudget(task, actor) {
   try {
     const seed = contextSeeds.get(selectContextTier(task)) ?? contextSeeds.get('implementation');
+    if (!seed) throw new HttpError(404, 'Context seed not found.');
     const pack = await experienceEngine.prepare({
       goal: task.title,
       description: task.description,
       allowedPaths: task.allowedPaths || [],
       acceptanceCriteria: task.acceptanceCriteria || [],
       defaultHarnessId: task.verificationProfile,
-      maxWikiEntries: seed?.maxWikiEntries,
-      maxSourceChunks: seed?.maxSourceChunks,
-      maxSourceCharacters: seed?.maxSourceCharacters,
+      maxWikiEntries: seed.maxWikiEntries,
+      maxSourceChunks: seed.maxSourceChunks,
+      maxSourceCharacters: seed.maxSourceCharacters,
+      forbiddenActions: seed.forbiddenActions,
     });
-    return { ...decideWorkBudget({ pack, allowedPaths: task.allowedPaths }), packPrepared: true };
+    pack.layers = seed.layers;
+    const record = await contextPacks.record(actor, seed, pack, null);
+    const locked = await contextPacks.lockPack(record.id, actor);
+    await store.recordAudit(actor.id, 'CONTEXT_PACK_PREPARED', {
+      contextPackId: record.id,
+      packId: pack.contract.packId,
+      seedId: seed.id,
+      sourceCount: pack.sources.sourceCount,
+      estimatedTokens: pack.sources.estimatedTokens,
+      preparedFor: task.id,
+    });
+    return {
+      ...decideWorkBudget({ pack, allowedPaths: task.allowedPaths }),
+      packPrepared: true,
+      contextPackId: locked.id,
+      contextPackReceiptId: locked.receipt?.receiptId ?? null,
+    };
   } catch (error) {
+    // 팩을 세우지 못하면 상한만 돌려주고 워커가 스스로 조립하게 둔다. 실패를 감추지는 않는다.
     return {
       ...decideWorkBudget({ pack: null, allowedPaths: task.allowedPaths }),
       packPrepared: false,
+      contextPackId: null,
+      contextPackReceiptId: null,
       packError: String(error?.message || error).slice(0, 300),
     };
   }
@@ -477,7 +500,7 @@ async function handleApi(request, response) {
     const config = await loadConfig();
     // 팩을 먼저 조립하고 그 사실에서 예산을 정한다. 반대 순서로는 "파일 하나만 고치는 일"과
     // "파일 하나만 고치되 참조를 읽어야 하는 일"이 같은 예산을 받고, 후자는 빈손으로 끝난다.
-    const workBudget = await deriveWorkBudget(current);
+    const workBudget = await deriveWorkBudget(current, actor);
     const executionSelection = selectExecutor(current, config, {
       quality: String(body.quality || 'auto'),
       allowRemote: body.localOnly ? false : undefined,

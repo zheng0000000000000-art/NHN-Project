@@ -1077,7 +1077,14 @@ export function selectContextTier(task = {}) {
   return isSingleFileScope(task.allowedPaths) ? 'single-file' : 'implementation';
 }
 
-async function prepareExecutorContext(client, task, indexedTokens = 0) {
+// 서버가 남긴 팩을 받아온다. 가져오지 못하면 조용히 넘어가지 않고 직접 조립으로 되돌린다.
+async function fetchPreparedPack(client, contextPackId) {
+  const fetched = await client.request(`/api/context-packs/${encodeURIComponent(contextPackId)}`).catch(() => null);
+  return fetched?.record ?? null;
+}
+
+// 팩을 직접 조립하고 잠근다. 서버가 미리 만들어두지 않은 경로(수동 dispatch 등)를 위한 길이다.
+async function assembleContextPack(client, task) {
   const prepared = await client.request('/api/context-packs/prepare', {
     method: 'POST',
     body: {
@@ -1093,10 +1100,20 @@ async function prepareExecutorContext(client, task, indexedTokens = 0) {
     method: 'POST',
     body: {},
   });
-  const record = locked.record;
+  return locked.record;
+}
+
+async function prepareExecutorContext(client, task, indexedTokens = 0) {
+  // 서버가 예산을 정하며 이미 조립·잠금한 팩이 있으면 그것을 받아 쓴다. 같은 조립을 두 번 하지 않고,
+  // 예산을 정할 때 본 팩과 실행자가 받는 팩이 같음을 보장한다. 없으면 직접 조립한다.
+  const preparedId = task?.workBudget?.contextPackId;
+  const reused = preparedId ? await fetchPreparedPack(client, preparedId) : null;
+  const record = reused ?? await assembleContextPack(client, task);
   const sources = Array.isArray(record.pack?.sources?.sources) ? record.pack.sources.sources : [];
   return {
     id: record.id,
+    // 서버 팩을 재사용했는지 남긴다. 중복 조립이 다시 생기면 관측에서 보인다.
+    reusedServerPack: Boolean(reused),
     receiptId: record.receipt?.receiptId || null,
     sources: sources.map((source) => ({
       path: source.path,
