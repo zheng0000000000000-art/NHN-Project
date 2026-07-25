@@ -47,6 +47,7 @@ import { ConstitutionCompiler, ConstitutionObservationStore } from './src/consti
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
+import { buildMaxTurnRecoveryPlan, isExhaustedMaxTurnFailure } from './src/max-turn-decomposition.js';
 import { selectAutomaticNextPlanTask } from './src/plan-progression.js';
 import { applyAgentDeliveryGate } from './src/delivery-gate.js';
 import { classifyDeliveryFailure } from './src/delivery-failures.js';
@@ -1391,7 +1392,7 @@ async function handleApi(request, response) {
     return;
   }
 
-  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|ai-review|review-failure|review|block|unblock|archive|unarchive|schedule|activity|heartbeat|automation-result|delete)$/);
+  const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(artifact|assign|queue-agent|cancel-agent|claim|files|submit|verify|request-review|ai-review|review-failure|review|block|unblock|recover-max-turns|archive|unarchive|schedule|activity|heartbeat|automation-result|delete)$/);
   if (!match || method !== 'POST') throw new HttpError(404, 'API route not found.');
   const [, taskId, action] = match;
   const body = await readBody(request, action === 'artifact' ? 12 * 1024 * 1024 : undefined);
@@ -1894,7 +1895,7 @@ async function handleApi(request, response) {
     }
     const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: decision === 'APPROVE' ? 'WORK_COMPLETED' : 'REVIEW_REJECTED' });
     const planProgression = decision === 'APPROVE'
-      ? await autoStartNextPlanTask(task, actor)
+      ? await progressAfterApproval(task, actor)
       : { decision: 'NONE', reason: 'REVIEW_REJECTED', task: null, worker: null };
     sendJson(response, 200, { task, merge, handoff, autoArchived: decision === 'APPROVE', planProgression });
     return;
@@ -1938,6 +1939,14 @@ async function handleApi(request, response) {
       next.executionState = 'IDLE';
     });
     sendJson(response, 200, { task });
+    return;
+  }
+
+  if (action === 'recover-max-turns') {
+    const current = await store.getTask(taskId);
+    requireTaskParticipantOrAdmin(current, actor);
+    sendJson(response, 200, await decomposeMaxTurnTask(current, actor));
+    return;
   }
 
   if (action === 'archive' || action === 'unarchive') {
@@ -2322,6 +2331,7 @@ function requireAssigneeOrAdmin(task, actor) {
 }
 
 function requireTaskParticipantOrAdmin(task, actor) {
+  if (!task) throw new HttpError(404, 'Task not found.');
   if (![task.creatorUserId, task.assigneeUserId, task.reviewerUserId].includes(actor.id) && actor.role !== 'admin') {
     throw new HttpError(403, 'Only a task participant can do this.');
   }
@@ -2409,6 +2419,77 @@ function workEventTask(task) {
   };
 }
 
+async function decomposeMaxTurnTask(task, actor) {
+  if (!task) throw new HttpError(404, 'Task not found.');
+  if (task.recovery?.childTaskIds?.length) {
+    const tasks = await store.listTasks();
+    const childTaskIds = task.recovery.childTaskIds;
+    const candidate = childTaskIds
+      .map((id) => tasks.find((item) => item.id === id))
+      .find((item) => item?.status === 'READY'
+        && item.executionState !== 'RUNNING'
+        && (item.dependsOnTaskIds || []).every((id) => tasks.find((dependency) => dependency.id === id)?.status === 'DONE'));
+    const resumed = candidate ? await startRecoveryTask(candidate, actor) : null;
+    return { outcome: resumed ? 'RESUMED' : 'EXISTING', task, childTaskIds, resumed };
+  }
+  if (!isExhaustedMaxTurnFailure(task)) throw new HttpError(409, 'Task is not an exhausted maximum-turn failure.');
+  const definition = buildMaxTurnRecoveryPlan(task);
+  if (!definition) throw new HttpError(409, 'Task cannot be decomposed further.');
+  const plan = await store.createPlan(actor, definition, await verifier.profileNames());
+  const childTaskIds = plan.tasks.map((item) => item.id);
+  const parent = await store.mutateTask(task.id, actor, task.version, 'MAX_TURNS_TASK_DECOMPOSED', async (next) => {
+    next.status = 'BLOCKED';
+    next.executionState = 'IDLE';
+    next.blocked = { reason: `Automatically decomposed into ${childTaskIds.length} bounded recovery tasks.`, byUserId: actor.id, at: nowIso(), automatic: true };
+    next.recovery = { reason: 'MAX_TURNS_RECOVERY_EXHAUSTED', planId: plan.planId, childTaskIds, depth: Number(task.recovery?.depth || 0), createdAt: nowIso() };
+  });
+  await store.recordAudit(actor.id, 'MAX_TURNS_RECOVERY_PLAN_CREATED', { taskId: task.id, planId: plan.planId, childTaskIds });
+  const first = await startRecoveryTask(plan.tasks[0], actor);
+  return { outcome: 'DECOMPOSED', task: parent, plan, first };
+}
+
+async function startRecoveryTask(task, actor) {
+  const config = await loadConfig();
+  const execution = selectExecutor(task, config, { executorId: task.executorProfileId || '' });
+  const review = selectReviewer(task, config, { reviewerProfileId: task.reviewerProfileId || '', executorProfileId: execution.candidate?.id || '' });
+  if (!execution.candidate || !review.candidate) throw new Error('No eligible recovery execution or review profile.');
+  const queued = await store.mutateTask(task.id, actor, task.version, 'RECOVERY_CHILD_AUTO_QUEUED', async (next) => {
+    next.assigneeUserId = actor.id;
+    next.executorProfileId = execution.candidate.id;
+    next.reviewerProfileId = review.candidate.id;
+    next.approvalPolicy = 'AUTO';
+    next.executionMode = 'AGENT';
+    next.executionState = 'QUEUED';
+    next.executor = sanitizeExecutorInput(execution.executor, { actorUserId: actor.id, at: nowIso() });
+  });
+  const worker = launchBoardWorker(queued, actor, serviceSessionCookie(actor.id), { executorId: queued.executorProfileId, reviewerProfileId: queued.reviewerProfileId });
+  return { task: queued, worker };
+}
+
+async function progressAfterApproval(completedTask, actor) {
+  const ordinary = await autoStartNextPlanTask(completedTask, actor);
+  if (ordinary.decision === 'START' || !completedTask.delegation?.parentTaskId) return ordinary;
+  const parent = await store.getTask(completedTask.delegation.parentTaskId);
+  if (!parent?.recovery?.childTaskIds?.length) return ordinary;
+  const tasks = await store.listTasks();
+  if (!parent.recovery.childTaskIds.every((id) => tasks.find((item) => item.id === id)?.status === 'DONE')) return ordinary;
+  const finalized = await store.mutateTask(parent.id, actor, parent.version, 'MAX_TURNS_RECOVERY_COMPLETED', async (next) => {
+    const at = nowIso();
+    next.status = 'DONE';
+    next.executionState = 'IDLE';
+    next.blocked = null;
+    next.completedAt = at;
+    next.archived = true;
+    next.archivedAt = at;
+    next.archivedByUserId = actor.id;
+    next.verification = { status: 'PASSED', passed: true, profile: 'recovery-aggregate', finishedAt: at, childTaskIds: next.recovery.childTaskIds };
+    next.review = { status: 'APPROVED', reviewerUserId: actor.id, reviewerProfileId: next.reviewerProfileId, comment: 'All bounded recovery tasks passed and were approved.', reviewedAt: at, automaticRecovery: true };
+    next.recovery = { ...next.recovery, completedAt: at };
+  });
+  await store.recordAudit(actor.id, 'MAX_TURNS_RECOVERY_PARENT_COMPLETED', { taskId: finalized.id, childTaskIds: finalized.recovery.childTaskIds });
+  return autoStartNextPlanTask(finalized, actor);
+}
+
 async function autoStartNextPlanTask(completedTask, actor) {
   const selection = selectAutomaticNextPlanTask(await store.listTasks(), completedTask);
   if (selection.decision !== 'START') {
@@ -2482,6 +2563,7 @@ function launchBoardWorker(task, actor, cookie, options = {}) {
     '--to', 'review',
     '--isolate',
     '--json',
+    '--task-id', task.id,
   ];
   if (options.localOnly) args.push('--local-only');
   if (options.executorId) args.push('--executor-id', String(options.executorId));
@@ -2689,6 +2771,12 @@ async function finishBoardWorker(taskId, actor, exitCode, errorMessage) {
   }
 
   await store.recordAudit(actor.id, 'BOARD_WORKER_EXITED', { taskId, exitCode, error: errorMessage || null }).catch(() => {});
+  const finished = await store.getTask(taskId).catch(() => null);
+  if (exitCode !== 0 && isExhaustedMaxTurnFailure(finished)) {
+    await decomposeMaxTurnTask(finished, actor).catch(async (error) => {
+      await store.recordAudit(actor.id, 'MAX_TURNS_DECOMPOSITION_FAILED', { taskId, error: error.message }).catch(() => {});
+    });
+  }
 }
 
 async function requireCompletedDependencies(task) {

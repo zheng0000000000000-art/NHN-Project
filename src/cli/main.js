@@ -1401,19 +1401,27 @@ async function runWorker(client, positionals, options, json) {
 
 async function runWorkerOnce(client, options, json) {
   const config = (await loadConfig()) || {};
-  const preview = await client.request('/api/orchestration/enter', {
-    method: 'POST',
-    body: { intent: 'START_WORK', projectId: option(options, 'project') || undefined },
-  });
-  if (preview.decision?.decision !== 'YES' || !preview.decision.work) {
-    if (json) printValue({ worked: false, decision: preview.decision }, { json: true });
-    return { worked: false, code: 0 };
+  const explicitTaskId = String(option(options, 'task-id', '')).trim();
+  let work = null;
+  if (explicitTaskId) {
+    work = findTask((await client.request('/api/bootstrap')).tasks, explicitTaskId);
+    if (!work) throw new Error(`Task ${explicitTaskId} not found.`);
+  } else {
+    const preview = await client.request('/api/orchestration/enter', {
+      method: 'POST',
+      body: { intent: 'START_WORK', projectId: option(options, 'project') || undefined },
+    });
+    if (preview.decision?.decision !== 'YES' || !preview.decision.work) {
+      if (json) printValue({ worked: false, decision: preview.decision }, { json: true });
+      return { worked: false, code: 0 };
+    }
+    work = preview.decision.work;
   }
-  if (preview.decision.work.status === 'BLOCKED' || preview.decision.work.automationGuard?.circuitOpen) {
-    if (json) printValue({ worked: false, stop: true, reason: 'CIRCUIT_OPEN', task: preview.decision.work }, { json: true });
+  if (work.status === 'BLOCKED' || work.automationGuard?.circuitOpen) {
+    if (json) printValue({ worked: false, stop: true, reason: 'CIRCUIT_OPEN', task: work }, { json: true });
     return { worked: false, stop: true, reason: 'CIRCUIT_OPEN', code: 2 };
   }
-  const selected = selectExecutor(preview.decision.work, config, {
+  const selected = selectExecutor(work, config, {
     quality: String(option(options, 'quality', 'auto')),
     allowRemote: options['local-only'] ? false : undefined,
     executorId: String(option(options, 'executor-id', '')),
@@ -1421,15 +1429,17 @@ async function runWorkerOnce(client, options, json) {
   if (!selected.executor) {
     throw new Error('No eligible worker executor. Add one with: team-loop config add-executor --id local --tool codex --tier local');
   }
-  const started = await client.request('/api/orchestration/start-next', {
-    method: 'POST',
-    body: {
-      intent: 'START_WORK',
-      projectId: option(options, 'project') || undefined,
-      executionMode: 'AGENT',
-      executor: selected.executor,
-    },
-  });
+  const started = explicitTaskId
+    ? { task: work, outcome: work.executionState === 'QUEUED' ? 'QUEUED' : 'RESUMED' }
+    : await client.request('/api/orchestration/start-next', {
+      method: 'POST',
+      body: {
+        intent: 'START_WORK',
+        projectId: option(options, 'project') || undefined,
+        executionMode: 'AGENT',
+        executor: selected.executor,
+      },
+    });
   if (!started.task || !['QUEUED', 'RESUMED'].includes(started.outcome)) {
     if (json) printValue({ worked: false, ...started }, { json: true });
     return { worked: false, code: 0 };
