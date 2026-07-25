@@ -59,7 +59,17 @@ test('compares conservative, value, and speculative policies against the human r
     assert.equal(typeof policy.roiPercent, 'number');
     assert.equal(typeof policy.vsHuman.roiPercentDelta, 'number');
     assert.ok(policy.lotsSeen <= 2);
+    assert.equal(typeof policy.regret, 'number');
+    assert.ok(policy.regret >= 0);
+    assert.ok(policy.paybackLotIndex === null || (Number.isInteger(policy.paybackLotIndex) && policy.paybackLotIndex >= 1));
   }
+});
+
+test('a policy that never spends on information has no payback lot, since there is nothing to recoup', () => {
+  const result = compareHumanAndAiPolicies(fakeSession(), {});
+  const speculative = result.policies.find((policy) => policy.id === 'speculative');
+  assert.equal(speculative.informationSpent, 0);
+  assert.equal(speculative.paybackLotIndex, null);
 });
 
 test('every policy replays the exact same lots the human session generated from its seed', () => {

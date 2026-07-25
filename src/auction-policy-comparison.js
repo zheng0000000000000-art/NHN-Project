@@ -101,6 +101,8 @@ function runPolicy(policyId, lots, rules) {
   let realizedProfit = 0;
   let lotsSeen = 0;
   let ruined = false;
+  let regret = 0;
+  let paybackLotIndex = null;
 
   for (const lot of lots) {
     if (cash <= rules.startingAssets * rules.ruinThresholdRatio) { ruined = true; break; }
@@ -122,12 +124,22 @@ function runPolicy(policyId, lots, rules) {
 
     // Hidden truth (clearingPrice, trueSalePrice) is only consulted now, at settlement.
     const won = bid > 0 && bid >= lot.clearingPrice && cash >= lot.clearingPrice;
+    let lotProfit = 0;
     if (won) {
       const netSale = lot.trueSalePrice * (1 - rules.saleFeeRate);
-      cash += netSale - lot.clearingPrice;
+      lotProfit = netSale - lot.clearingPrice;
+      cash += lotProfit;
       wins += 1;
-      realizedProfit += netSale - lot.clearingPrice;
+      realizedProfit += lotProfit;
     }
+
+    // Same regret definition as analyzeInformationValue: the profit a perfectly-informed
+    // bidder would have captured on this lot, minus what the policy actually captured.
+    const trueNetSale = lot.trueSalePrice * (1 - rules.saleFeeRate);
+    const optimalProfit = trueNetSale > lot.clearingPrice ? trueNetSale - lot.clearingPrice : 0;
+    regret += Math.max(0, optimalProfit - lotProfit);
+
+    if (paybackLotIndex === null && informationSpent > 0 && realizedProfit >= informationSpent) paybackLotIndex = lotsSeen;
   }
 
   return {
@@ -142,6 +154,8 @@ function runPolicy(policyId, lots, rules) {
     lotsSeen,
     lotWinRate: lotsSeen ? round2(wins / lotsSeen * 100) : 0,
     realizedProfit: round2(realizedProfit),
+    regret: round2(regret),
+    paybackLotIndex,
     ruined,
   };
 }

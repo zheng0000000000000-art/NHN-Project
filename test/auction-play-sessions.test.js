@@ -122,3 +122,28 @@ test('the same seed run twice yields identical policy-comparison results', async
   const rightComparison = store.policyComparison(right.id, actor);
   assert.deepEqual(leftComparison.policies, rightComparison.policies);
 });
+
+test('information value report is unavailable until the human session settles', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'auction-play-infovaluereport-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new AuctionPlaySessionStore({ dataDirectory: directory, seedPath });
+  await store.initialize();
+
+  const started = await store.start(actor, { seed: 321 });
+  assert.throws(() => store.informationValueReport(started.id, actor), /completed/i);
+
+  let current = started;
+  while (current.status === 'ACTIVE') {
+    current = await store.act(started.id, actor, { type: 'PASS' });
+  }
+  assert.equal(current.status, 'COMPLETED');
+
+  const report = store.informationValueReport(started.id, actor);
+  assert.equal(report.seed, 321);
+  assert.deepEqual(report.returns.map((entry) => entry.id).sort(), ['conservative', 'human', 'speculative', 'value']);
+  assert.deepEqual(report.regret.map((entry) => entry.id).sort(), ['conservative', 'human', 'speculative', 'value']);
+  assert.deepEqual(report.payback.map((entry) => entry.id).sort(), ['conservative', 'human', 'speculative', 'value']);
+  assert.equal(report.prices, null);
+  assert.equal(typeof report.recommendedNextExperiment.title, 'string');
+  assert.ok(report.recommendedNextExperiment.title.length > 0);
+});
