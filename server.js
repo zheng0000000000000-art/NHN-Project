@@ -2519,6 +2519,7 @@ async function handleTerminalMaxTurnTask(task, actor) {
       executorId: queued.executorProfileId,
       reviewerProfileId: queued.reviewerProfileId,
       maxTurns: decision.maxTurns,
+      retry: 1,
     });
     await store.recordAudit(actor.id, 'MAX_TURNS_TERMINAL_RETRY_STARTED', {
       taskId: task.id,
@@ -2704,6 +2705,7 @@ function launchBoardWorker(task, actor, cookie, options = {}) {
   if (options.localOnly) args.push('--local-only');
   if (options.executorId) args.push('--executor-id', String(options.executorId));
   if (options.maxTurns) args.push('--max-turns', String(options.maxTurns));
+  if (options.retry) args.push('--retry', String(options.retry));
   const child = spawn(process.execPath, args, {
     cwd: workspaceRoot,
     env: {
