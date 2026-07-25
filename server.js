@@ -47,6 +47,7 @@ import { ConstitutionCompiler, ConstitutionObservationStore } from './src/consti
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
+import { selectAutomaticNextPlanTask } from './src/plan-progression.js';
 import { classifyDeliveryFailure } from './src/delivery-failures.js';
 import { loadConfig } from './src/cli/session.js';
 import { normalizeWorkerConfig, selectExecutor, selectReviewer } from './src/executor-router.js';
@@ -1878,7 +1879,10 @@ async function handleApi(request, response) {
       }
     }
     const handoff = await entryService.writeHandoff(actor, 'team-loop', task, await store.listAuditEvents(), { trigger: decision === 'APPROVE' ? 'WORK_COMPLETED' : 'REVIEW_REJECTED' });
-    sendJson(response, 200, { task, merge, handoff, autoArchived: decision === 'APPROVE' });
+    const planProgression = decision === 'APPROVE'
+      ? await autoStartNextPlanTask(task, actor)
+      : { decision: 'NONE', reason: 'REVIEW_REJECTED', task: null, worker: null };
+    sendJson(response, 200, { task, merge, handoff, autoArchived: decision === 'APPROVE', planProgression });
     return;
   }
 
@@ -2334,6 +2338,68 @@ function workEventTask(task) {
     } : null,
     blockedReason: task.blocked?.reason || '',
   };
+}
+
+async function autoStartNextPlanTask(completedTask, actor) {
+  const selection = selectAutomaticNextPlanTask(await store.listTasks(), completedTask);
+  if (selection.decision !== 'START') {
+    await store.recordAudit(actor.id, 'PLAN_AUTO_PROGRESSION_PAUSED', {
+      planId: completedTask.planId || null,
+      completedTaskId: completedTask.id,
+      reason: selection.reason,
+      candidateTaskIds: selection.candidates,
+    });
+    return { ...selection, task: null, worker: null };
+  }
+  const current = await store.getTask(selection.task.id);
+  try {
+    await requireCompletedDependencies(current);
+    await requireAvailableTaskScope(current);
+    const config = await loadConfig();
+    const executionSelection = selectExecutor(current, config, {
+      quality: 'auto',
+      executorId: current.executorProfileId || '',
+    });
+    const reviewSelection = selectReviewer(current, config, {
+      quality: 'high',
+      reviewerProfileId: current.reviewerProfileId || '',
+      executorProfileId: executionSelection.candidate?.id || current.executorProfileId || '',
+    });
+    if (!executionSelection.candidate || !reviewSelection.candidate) {
+      throw new Error('No eligible execution or review AI profile is available.');
+    }
+    const queued = await store.mutateTask(current.id, actor, current.version, 'PLAN_NEXT_TASK_AUTO_QUEUED', async (next) => {
+      next.assigneeUserId = actor.id;
+      next.reviewerUserId = null;
+      next.executorProfileId = executionSelection.candidate.id;
+      next.reviewerProfileId = reviewSelection.candidate.id;
+      next.executionMode = 'AGENT';
+      next.executionState = 'QUEUED';
+      next.blocked = null;
+      next.review = null;
+      next.executor = sanitizeExecutorInput(executionSelection.executor, { actorUserId: actor.id, at: nowIso() });
+    });
+    const worker = launchBoardWorker(queued, actor, serviceSessionCookie(actor.id), {
+      executorId: queued.executorProfileId,
+      reviewerProfileId: queued.reviewerProfileId,
+    });
+    await store.recordAudit(actor.id, 'PLAN_NEXT_TASK_AUTO_STARTED', {
+      planId: queued.planId,
+      completedTaskId: completedTask.id,
+      taskId: queued.id,
+      workerPid: worker.pid || null,
+    });
+    return { decision: 'START', reason: selection.reason, task: queued, worker };
+  } catch (error) {
+    await store.recordAudit(actor.id, 'PLAN_AUTO_PROGRESSION_PAUSED', {
+      planId: completedTask.planId,
+      completedTaskId: completedTask.id,
+      candidateTaskIds: selection.candidates,
+      reason: 'START_FAILED',
+      error: error.message,
+    });
+    return { decision: 'ASK', reason: 'START_FAILED', task: current, worker: null, error: error.message };
+  }
 }
 
 function launchBoardWorker(task, actor, cookie, options = {}) {
