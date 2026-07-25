@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { nowIso } from './utils.js';
+import { classifyWorkKind } from './work-kind.js';
 
 const TERMINAL_MAX_TURNS = 'max_turns';
 
@@ -41,6 +42,9 @@ export function observationFromTask(task) {
     allowedPaths: Array.isArray(task?.allowedPaths) ? task.allowedPaths : [],
     criteriaCount: Array.isArray(task?.acceptanceCriteria) ? task.acceptanceCriteria.length : 0,
     delegationDepth: Number(task?.delegation?.depth) || 0,
+    // 종류 판정과 그 근거를 함께 남긴다. 판정이 틀린 것으로 드러나면 근거를 보고 고칠 수 있다.
+    workKind: classifyWorkKind(task).kind,
+    readOnlyReferenceCount: classifyWorkKind(task).evidence.readOnlyReferenceCount,
     // 준 예산
     maxTurns: Number.isFinite(Number(preflight?.maxTurns)) ? Number(preflight.maxTurns) : null,
     contextEstimatedTokens: Number.isFinite(Number(preflight?.selectedContext?.estimatedTokens))

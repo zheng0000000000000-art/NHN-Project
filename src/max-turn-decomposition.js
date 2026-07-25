@@ -8,7 +8,14 @@ export function buildMaxTurnRecoveryPlan(task = {}) {
   const steps = criteria.map((criterion, index) => ({
     stepId: `recovery-${index + 1}`,
     title: `${String(task.title || 'Recovery').slice(0, 85)} · ${index + 1}/${criteria.length}`,
-    description: `Bounded recovery unit for ${task.id}. Implement only this criterion: ${criterion}`,
+    // 부모 지시를 버리면 자식은 무엇을 읽어야 하는지 모른 채 탐색으로 턴을 태우고,
+    // 읽기 부담이 문면에서 사라져 작은 일로 오분류된다. 범위는 좁히되 맥락은 넘긴다.
+    description: [
+      `Bounded recovery unit for ${task.id}. Implement only this criterion: ${criterion}`,
+      ...(String(task.description || '').trim()
+        ? ['', 'Context inherited from the parent task (scope is still only the criterion above):', String(task.description).trim()]
+        : []),
+    ].join('\n'),
     acceptanceCriteria: [criterion],
     allowedPaths: task.allowedPaths || ['**'],
     verificationProfile: task.verificationProfile,
