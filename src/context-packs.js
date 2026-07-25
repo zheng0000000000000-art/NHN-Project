@@ -55,7 +55,9 @@ export class ContextPackStore {
     return structuredClone(pack);
   }
 
-  async record(actor, seed, pack) {
+  async record(actor, seed, pack, budgetIncrease = null) {
+    const rationale = String(budgetIncrease?.rationale || '').trim();
+    if (budgetIncrease && !rationale) throw new HttpError(400, 'Increasing a context budget requires a rationale.');
     const record = {
       id: randomId('ctx_'),
       actorUserId: actor.id,
@@ -63,6 +65,7 @@ export class ContextPackStore {
       seed: structuredClone(seed),
       status: 'DRAFT',
       pack: structuredClone(pack),
+      budgetRationale: rationale || null,
       receipt: null,
       createdAt: nowIso(),
       lockedAt: null,
@@ -167,6 +170,7 @@ function summary(record) {
     sourceCount: record.pack.sources?.sourceCount || 0,
     estimatedTokens: record.pack.sources?.estimatedTokens || 0,
     integrityOk: record.receipt?.integrity?.ok ?? null,
+    budgetRationale: record.budgetRationale || null,
     createdAt: record.createdAt,
     lockedAt: record.lockedAt,
   };
