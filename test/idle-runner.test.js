@@ -129,3 +129,54 @@ test('a runner without a real idle probe or job refuses to be built', () => {
   assert.throws(() => new IdleRunner({ name: 'x', run: async () => {} }), /isIdle/);
   assert.throws(() => new IdleRunner({ name: 'x', isIdle: () => ({ idle: true }) }), /run/);
 });
+
+test('repeated failures open the circuit, stop the schedule, and stay open until reset', async () => {
+  const time = clock();
+  let attempts = 0;
+  const seen = [];
+  const runner = new IdleRunner({
+    name: 'probe',
+    isIdle: () => ({ idle: true }),
+    run: async () => { attempts += 1; return { ok: false }; },
+    minGapMs: 0,
+    maxConsecutiveFailures: 3,
+    now: time.now,
+    onResult: (outcome) => seen.push(outcome),
+  });
+  runner.start();
+
+  for (let i = 0; i < 3; i += 1) { time.advance(1); await runner.tick(); }
+  assert.equal(attempts, 3);
+  assert.equal(runner.status().circuitOpen, true);
+  assert.equal(runner.status().scheduled, false, 'an open circuit must stop the schedule, not keep retrying');
+  assert.ok(seen.some((outcome) => outcome.circuitOpened === true), 'opening must be announced, not just counted');
+
+  time.advance(10_000);
+  const blocked = await runner.tick();
+  assert.equal(blocked.reason, 'CIRCUIT_OPEN');
+  assert.equal(attempts, 3, 'no further work runs while the circuit is open');
+
+  runner.resetCircuit();
+  assert.equal(runner.status().circuitOpen, false);
+  assert.equal(runner.status().consecutiveFailures, 0);
+  time.advance(1);
+  await runner.tick();
+  assert.equal(attempts, 4, 'a human reset lets it run again');
+});
+
+test('a success before the limit clears the count and the circuit never opens', async () => {
+  const time = clock();
+  let ok = false;
+  const runner = new IdleRunner({
+    name: 'probe', isIdle: () => ({ idle: true }), run: async () => ({ ok }), minGapMs: 0, maxConsecutiveFailures: 3, now: time.now,
+  });
+  await runner.tick();
+  time.advance(1);
+  await runner.tick();
+  assert.equal(runner.status().consecutiveFailures, 2);
+  ok = true;
+  time.advance(1);
+  await runner.tick();
+  assert.equal(runner.status().consecutiveFailures, 0);
+  assert.equal(runner.status().circuitOpen, false);
+});

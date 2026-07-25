@@ -15,6 +15,7 @@ export class IdleRunner {
     run,
     intervalMs = DEFAULT_INTERVAL_MS,
     minGapMs = DEFAULT_MIN_GAP_MS,
+    maxConsecutiveFailures = 3,
     now = () => Date.now(),
     onResult = null,
   }) {
@@ -27,15 +28,20 @@ export class IdleRunner {
     this.minGapMs = Math.max(0, Number(minGapMs) || 0);
     this.now = now;
     this.onResult = onResult;
+    this.maxConsecutiveFailures = Math.max(1, Number(maxConsecutiveFailures) || 1);
     this.timer = null;
     this.running = false;
     this.lastRunAt = null;
     this.lastOutcome = null;
     this.consecutiveFailures = 0;
+    // 반복 실패를 세기만 하면 조용한 실패가 된다. 세었으면 멈추고 알려야 한다.
+    this.circuitOpen = false;
+    this.circuitOpenedAt = null;
   }
 
   // 한 번 평가한다. 돌았는지와 그 이유를 항상 돌려준다.
   async tick() {
+    if (this.circuitOpen) return this.#record({ ran: false, reason: 'CIRCUIT_OPEN', failures: this.consecutiveFailures });
     if (this.running) return this.#record({ ran: false, reason: 'ALREADY_RUNNING' });
     const gap = this.lastRunAt === null ? Infinity : this.now() - this.lastRunAt;
     if (gap < this.minGapMs) return this.#record({ ran: false, reason: 'TOO_SOON', waitedMs: gap });
@@ -56,16 +62,19 @@ export class IdleRunner {
     const startedAt = this.now();
     try {
       const result = await this.run();
-      this.consecutiveFailures = result?.ok === false ? this.consecutiveFailures + 1 : 0;
-      return this.#record({ ran: true, reason: 'RAN', result, startedAt, finishedAt: this.now() });
+      let opened = null;
+      if (result?.ok === false) opened = this.#noteFailure();
+      else this.consecutiveFailures = 0;
+      return this.#record({ ran: true, reason: 'RAN', result, startedAt, finishedAt: this.now(), ...(opened ?? {}) });
     } catch (error) {
-      this.consecutiveFailures += 1;
+      const opened = this.#noteFailure();
       return this.#record({
         ran: true,
         reason: 'THREW',
         error: error instanceof Error ? error.message : String(error),
         startedAt,
         finishedAt: this.now(),
+        ...(opened ?? {}),
       });
     } finally {
       this.running = false;
@@ -99,7 +108,28 @@ export class IdleRunner {
       lastRunAt: this.lastRunAt,
       lastOutcome: this.lastOutcome,
       consecutiveFailures: this.consecutiveFailures,
+      maxConsecutiveFailures: this.maxConsecutiveFailures,
+      circuitOpen: this.circuitOpen,
+      circuitOpenedAt: this.circuitOpenedAt,
     };
+  }
+
+  // 사람이 원인을 처리한 뒤 회로를 닫는다. 자동으로 닫히지 않는다.
+  resetCircuit() {
+    this.circuitOpen = false;
+    this.circuitOpenedAt = null;
+    this.consecutiveFailures = 0;
+    return this.status();
+  }
+
+  // 실패를 세고, 한도를 넘으면 스케줄을 멈춘다.
+  #noteFailure() {
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures < this.maxConsecutiveFailures || this.circuitOpen) return null;
+    this.circuitOpen = true;
+    this.circuitOpenedAt = this.now();
+    this.stop();
+    return { circuitOpened: true, failures: this.consecutiveFailures };
   }
 
   // 결과를 기록하고 통지한다. 조용히 삼키지 않는다.

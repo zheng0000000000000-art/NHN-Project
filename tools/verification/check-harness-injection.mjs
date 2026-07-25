@@ -260,7 +260,24 @@ export function simulateInjections(cwd = process.cwd(), injections = INJECTIONS,
 const invokedDirectly = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));
 if (invokedDirectly) {
   const requireIdle = process.argv.includes('--require-idle');
+  const asJson = process.argv.includes('--json');
   const report = simulateInjections(process.cwd(), INJECTIONS, { requireIdle });
+  if (asJson) {
+    // 기계가 읽는 출력. 결과를 레지스트리에 반영하려면 이 형태가 필요하다.
+    process.stdout.write(`${JSON.stringify({
+      skipped: report.skipped,
+      idle: report.idle,
+      sandbox: report.sandbox ? { root: report.sandbox.root, baseFingerprint: report.sandbox.baseFingerprint } : null,
+      results: report.results.map((item) => ({
+        harness: item.harness, contract: item.contract, name: item.name,
+        injectedExit: item.injectedExit ?? null, restoredExit: item.restoredExit ?? null,
+        caught: item.caught === true, detail: item.detail ?? null,
+      })),
+      unproven: report.unproven,
+      cleanup: report.cleanup,
+    })}\n`);
+    process.exit(report.skipped || report.results.some((item) => !item.caught) ? 1 : 0);
+  }
   if (report.skipped) {
     console.error(`Skipped: the workspace is not idle (${report.idle.reason}).`);
     report.idle.activeWorktrees.forEach((entry) => console.error(`  - ${entry}`));

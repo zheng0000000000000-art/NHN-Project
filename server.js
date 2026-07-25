@@ -17,7 +17,7 @@ import { executionMode } from './public/task-execution.js';
 import { canReviewTask } from './public/review-policy.js';
 import { existsSync } from 'node:fs';
 import { findActiveScopeOverlap, scopesOverlap } from './src/scope.js';
-import { mergeTaskWorktree, taskBranchMerged, worktreeHasChanges, worktreePath } from './src/worktree.js';
+import { mergeTaskWorktree, removeTaskWorktree, taskBranchMerged, worktreeHasChanges, worktreePath } from './src/worktree.js';
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
@@ -147,25 +147,67 @@ async function workspaceIdleState() {
   return { idle: true, reason: null };
 }
 
+// 주입 실증을 fixture 후보에 반영한다. 주입은 "이 하네스가 심은 결함을 잡는다"를 증명할 뿐이므로,
+// 후보의 실패 종류가 일치할 때만 표시한다. 종류가 다르면 그 후보는 여전히 미증명이다.
+async function recordInjectionReplays(report) {
+  let recorded = 0;
+  for (const result of report.results) {
+    const harnesses = await harnessRegistry.findByCommandScript(result.harness).catch(() => []);
+    for (const harness of harnesses) {
+      for (const candidate of harness.fixtureCandidates ?? []) {
+        if (!String(candidate.name || '').startsWith('exit_mismatch')) continue;
+        await harnessRegistry.recordFixtureReplay(harness.id, candidate.id, {
+          name: result.name,
+          injectedExit: result.injectedExit,
+          restoredExit: result.restoredExit,
+          caught: result.caught,
+          detail: result.detail,
+        }, 'system').then(() => { recorded += 1; }).catch(() => {});
+      }
+    }
+  }
+  return recorded;
+}
+
 // 유휴에 도는 무비용 검증. 토큰을 쓰지 않고 전용 worktree 안에서만 변형한다.
 const idleVerifier = new IdleRunner({
   name: 'harness-injection-simulation',
   isIdle: workspaceIdleState,
   intervalMs: Number(process.env.TEAM_LOOP_IDLE_INTERVAL_MS) || 5 * 60_000,
   minGapMs: Number(process.env.TEAM_LOOP_IDLE_MIN_GAP_MS) || 60 * 60_000,
-  run: () => new Promise((resolve) => {
-    // --require-idle을 넘기지 않는다. 서버는 이미 살아있는 워커와 태스크 상태로 판정했고,
-    // 자식의 worktree 기반 판정은 더 약한 프록시라 재확인하면 위음성만 만든다.
-    const child = spawn(process.execPath, [path.join(projectRoot, 'tools', 'verification', 'check-harness-injection.mjs')], {
-      cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  run: async () => {
+    const raw = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(projectRoot, 'tools', 'verification', 'check-harness-injection.mjs'), '--json'], {
+        cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (chunk) => { out += chunk; });
+      child.stderr.on('data', (chunk) => { err += chunk; });
+      child.on('error', (error) => resolve({ code: 1, out: '', err: String(error.message) }));
+      child.on('close', (code) => resolve({ code, out, err }));
     });
-    let out = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.stderr.on('data', (chunk) => { out += chunk; });
-    child.on('error', (error) => resolve({ ok: false, summary: String(error.message).slice(0, 500) }));
-    child.on('close', (code) => resolve({ ok: code === 0, exitCode: code, summary: out.trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 500) }));
-  }),
+    let report = null;
+    try { report = JSON.parse(raw.out); } catch { report = null; }
+    if (!report) {
+      return { ok: false, exitCode: raw.code, summary: (raw.err || raw.out).trim().slice(-400) || 'no output' };
+    }
+    const replays = await recordInjectionReplays(report);
+    const caught = report.results.filter((item) => item.caught).length;
+    return {
+      ok: raw.code === 0,
+      exitCode: raw.code,
+      summary: `${caught}/${report.results.length} faults caught, ${replays} fixture replay(s) recorded, ${report.unproven.length} unproven`,
+    };
+  },
   onResult: (outcome) => {
+    if (outcome.circuitOpened) {
+      // 반복 실패는 조용히 지나가면 안 된다. 스케줄은 이미 멈췄고, 사람이 볼 자리에 남긴다.
+      console.error(`IDLE VERIFICATION STOPPED after ${outcome.failures} consecutive failures: ${outcome.result?.summary ?? outcome.error ?? 'no detail'}`);
+      store.recordAudit('system', 'IDLE_VERIFICATION_CIRCUIT_OPENED', {
+        job: outcome.name, failures: outcome.failures, summary: outcome.result?.summary ?? outcome.error ?? null,
+      }).catch(() => {});
+    }
     if (!outcome.ran) return;
     store.recordAudit('system', 'IDLE_VERIFICATION_RUN', {
       job: outcome.name, reason: outcome.reason, ok: outcome.result?.ok ?? false, summary: outcome.result?.summary ?? outcome.error ?? null,
@@ -2042,8 +2084,23 @@ async function handleApi(request, response) {
   }
 
   if (action === 'delete') {
+    // 삭제된 태스크의 worktree를 남기면 디스크에 고아가 쌓이고, 그 존재가 유휴 판정을 오염시킨다.
+    // 다만 착지하지 않은 작업을 조용히 파괴하지는 않는다 — archive와 같은 가드를 쓴다.
+    if (await worktreeHasChanges(workspaceRoot, taskId)) {
+      throw new HttpError(409, 'Delete blocked: this task still has unlanded worktree changes.');
+    }
     const result = await store.deleteTask(taskId, actor, expectedVersion);
-    sendJson(response, 200, result);
+    // 없던 worktree를 지우려다 실패했다고 보고하면 그건 오보다. 있을 때만 시도한다.
+    const worktree = existsSync(worktreePath(workspaceRoot, taskId))
+      ? await removeTaskWorktree(workspaceRoot, taskId)
+        .then(() => ({ removed: true, error: null }))
+        .catch((error) => ({ removed: false, error: String(error.message || error).slice(0, 300) }))
+      : { removed: false, error: null, absent: true };
+    if (!worktree.removed && !worktree.absent) {
+      // 정리 실패를 조용히 삼키지 않는다.
+      await store.recordAudit(actor.id, 'TASK_WORKTREE_CLEANUP_FAILED', { taskId, error: worktree.error }).catch(() => {});
+    }
+    sendJson(response, 200, { ...result, worktree });
   }
 }
 

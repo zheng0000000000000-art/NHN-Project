@@ -212,6 +212,47 @@ export class HarnessRegistry {
     });
   }
 
+  // 장애주입 실증 결과를 fixture 후보에 기록한다. replayReady를 켜는 유일한 경로이며,
+  // 결함을 심었을 때 실제로 잡혔다는 증거가 있어야만 켜진다.
+  async recordFixtureReplay(harnessId, fixtureCandidateId, replay, actorUserId) {
+    return this.#withLock(async () => {
+      const db = await readJson(this.path, EMPTY_DB);
+      const harness = db.harnesses.find((item) => item.id === harnessId);
+      if (!harness) throw new HttpError(404, 'Harness not found.');
+      const candidate = (harness.fixtureCandidates ?? []).find((item) => item.id === fixtureCandidateId);
+      if (!candidate) throw new HttpError(404, 'Fixture candidate not found.');
+      const caught = replay?.caught === true;
+      candidate.replayReady = caught;
+      candidate.replayBlocker = caught
+        ? null
+        : String(replay?.detail || 'The injected fault was not caught.').slice(0, 300);
+      candidate.status = caught ? 'READY' : 'DRAFT';
+      candidate.lastReplay = {
+        injection: String(replay?.name ?? '').slice(0, 120) || null,
+        injectedExit: replay?.injectedExit ?? null,
+        restoredExit: replay?.restoredExit ?? null,
+        caught,
+        verifiedByUserId: actorUserId,
+        at: nowIso(),
+      };
+      harness.version += 1;
+      harness.updatedAt = nowIso();
+      await atomicWriteJson(this.path, db);
+      return structuredClone(candidate);
+    });
+  }
+
+  // 주어진 스크립트를 실행하는 하네스를 찾는다. 주입 명세(스크립트 경로)와 레지스트리(id)를 잇는다.
+  async findByCommandScript(scriptPath) {
+    const needle = String(scriptPath || '').replace(/\\/g, '/').trim();
+    if (!needle) return [];
+    const db = await readJson(this.path, EMPTY_DB);
+    return db.harnesses
+      .filter((harness) => (harness.commands || []).some((command) =>
+        (command.args || []).some((arg) => String(arg).replace(/\\/g, '/').endsWith(needle))))
+      .map((harness) => structuredClone(harness));
+  }
+
   #withLock(work) {
     const result = this.lock.then(work, work);
     this.lock = result.catch(() => {});
