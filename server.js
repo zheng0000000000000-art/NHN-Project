@@ -47,6 +47,8 @@ import { ConstitutionCompiler, ConstitutionObservationStore } from './src/consti
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { IdleRunner } from './src/idle-runner.js';
 import { TurnBudgetObservationStore } from './src/turn-budget-observations.js';
+import { decideWorkBudget } from './src/work-budget.js';
+import { selectContextTier } from './src/cli/main.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
 import {
@@ -116,6 +118,31 @@ const auctionPlaySessions = new AuctionPlaySessionStore({
 });
 const contextSeeds = new ContextSeedRegistry(contextSeedManifestPath);
 const contextPacks = new ContextPackStore({ dataDirectory, workspaceRoot });
+// 팩을 조립해 턴 예산을 도출한다. 팩이 이 일에 무엇이 실제로 필요한지 아는 유일한 실체다.
+// 조립에 실패하면 예산을 지어내지 않고 가장 좁은 값으로 떨어뜨린 뒤 그 사실을 남긴다.
+async function deriveWorkBudget(task) {
+  try {
+    const seed = contextSeeds.get(selectContextTier(task)) ?? contextSeeds.get('implementation');
+    const pack = await experienceEngine.prepare({
+      goal: task.title,
+      description: task.description,
+      allowedPaths: task.allowedPaths || [],
+      acceptanceCriteria: task.acceptanceCriteria || [],
+      defaultHarnessId: task.verificationProfile,
+      maxWikiEntries: seed?.maxWikiEntries,
+      maxSourceChunks: seed?.maxSourceChunks,
+      maxSourceCharacters: seed?.maxSourceCharacters,
+    });
+    return { ...decideWorkBudget({ pack, allowedPaths: task.allowedPaths }), packPrepared: true };
+  } catch (error) {
+    return {
+      ...decideWorkBudget({ pack: null, allowedPaths: task.allowedPaths }),
+      packPrepared: false,
+      packError: String(error?.message || error).slice(0, 300),
+    };
+  }
+}
+
 // ADR-002 독립 관찰자 원칙을 승격에 적용한다: 태스크 리뷰와 같은 라우팅을 재사용해
 // 산출물을 만든 프로필과 다른 프로필이 검증할 수 있을 때만 자동 활성화를 허용한다.
 async function resolvePromotionReview({ artifact }) {
@@ -448,6 +475,9 @@ async function handleApi(request, response) {
     }
     const executionModeValue = String(body.executionMode || 'HUMAN').toUpperCase() === 'AGENT' ? 'AGENT' : 'HUMAN';
     const config = await loadConfig();
+    // 팩을 먼저 조립하고 그 사실에서 예산을 정한다. 반대 순서로는 "파일 하나만 고치는 일"과
+    // "파일 하나만 고치되 참조를 읽어야 하는 일"이 같은 예산을 받고, 후자는 빈손으로 끝난다.
+    const workBudget = await deriveWorkBudget(current);
     const executionSelection = selectExecutor(current, config, {
       quality: String(body.quality || 'auto'),
       allowRemote: body.localOnly ? false : undefined,
@@ -473,6 +503,8 @@ async function handleApi(request, response) {
       next.blocked = null;
       next.review = null;
       if (executionSelection.executor) next.executor = sanitizeExecutorInput(executionSelection.executor, { actorUserId: actor.id, at: nowIso() });
+      // 예산을 무엇에서 정했는지 남긴다. 관측이 쌓이면 이 기록으로 값을 고친다.
+      next.workBudget = workBudget;
     });
     await store.recordAudit(actor.id, 'ORCHESTRATION_WORK_STARTED', {
       taskId: task.id,
@@ -481,9 +513,10 @@ async function handleApi(request, response) {
       reasonCode: decision.reasonCode,
     });
     const worker = body.launchWorker && executionModeValue === 'AGENT'
-      ? launchBoardWorker(task, actor, workerSessionCookie(request), body)
+      // 호출자가 명시하지 않으면 팩에서 정한 예산을 쓴다. 워커가 스스로 상수를 고르지 않게 한다.
+      ? launchBoardWorker(task, actor, workerSessionCookie(request), { maxTurns: workBudget.maxTurns, ...body })
       : null;
-    sendJson(response, 200, { outcome: executionModeValue === 'AGENT' ? 'QUEUED' : 'STARTED', decision, task, worker });
+    sendJson(response, 200, { outcome: executionModeValue === 'AGENT' ? 'QUEUED' : 'STARTED', decision, task, worker, workBudget });
     return;
   }
 

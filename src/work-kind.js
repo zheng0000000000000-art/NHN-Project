@@ -9,8 +9,8 @@ const PATH_PATTERN = /(?:^|[\s"'`(\[])((?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]{1,6})(
 const EXISTENCE_ONLY = /\b(exists|is the only changed file|존재한다|생성된다)\b/i;
 const COMPREHENSION = /\b(assert|asserts|drives|matches|pattern|copy the|reuse|reproduce|단언|재현|패턴)\b/i;
 
-// glob을 리터럴 접두사로 줄인다. 비교는 경계를 지켜서 한다.
-function writablePrefixes(allowedPaths) {
+// glob을 리터럴 접두사로 줄인다. 비교는 경계를 지켜서 한다. 팩 판정에서도 같은 규칙을 쓴다.
+export function writablePrefixes(allowedPaths) {
   return (Array.isArray(allowedPaths) ? allowedPaths : [])
     .map((entry) => String(entry).replace(/\\/g, '/').split('*')[0].replace(/\/+$/, ''))
     .filter(Boolean);
