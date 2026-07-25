@@ -166,17 +166,41 @@ async function deriveWorkBudget(task, actor) {
   }
 }
 
+// 승격 대상 산출물이 딸린 실패 사례를 거쳐 실제로 그 실패를 만든 태스크의 실행자를
+// 찾는다. sourceFailureCaseIds -> failure.taskIds -> task.executorProfileId 순서로
+// 이미 기록된 사슬만 따라가며, 설정 기본 실행자를 대리인으로 쓰지 않는다.
+async function resolveProducerProfileIds(artifact) {
+  const failureCaseIds = Array.isArray(artifact?.sourceFailureCaseIds) ? artifact.sourceFailureCaseIds : [];
+  const taskIds = new Set();
+  for (const failureCaseId of failureCaseIds) {
+    const failureCase = await failureCases.get(failureCaseId);
+    for (const taskId of failureCase?.taskIds || []) taskIds.add(taskId);
+  }
+  const producerProfileIds = new Set();
+  for (const taskId of taskIds) {
+    const task = await store.getTask(taskId);
+    if (task?.executorProfileId) producerProfileIds.add(task.executorProfileId);
+  }
+  return [...producerProfileIds];
+}
+
 // ADR-002 독립 관찰자 원칙을 승격에 적용한다: 태스크 리뷰와 같은 라우팅을 재사용해
 // 산출물을 만든 프로필과 다른 프로필이 검증할 수 있을 때만 자동 활성화를 허용한다.
+// 제작 주체는 config 기본 실행자를 대신 쓰지 않고, 실제로 기록된 실패-태스크 사슬로만 정한다.
 async function resolvePromotionReview({ artifact }) {
   const config = await loadConfig();
-  const producerProfileId = String(artifact?.createdByProfileId || config?.executor?.id || '');
-  const selection = selectReviewer({}, config, { quality: 'high', executorProfileId: producerProfileId });
-  if (!selection.candidate) return { independent: false, reason: 'NO_REVIEWER', reviewerProfileId: null };
+  const producerProfileIds = await resolveProducerProfileIds(artifact);
+  if (!producerProfileIds.length) {
+    return { independent: false, reason: 'PRODUCER_UNKNOWN', reviewerProfileId: null, producerProfileIds };
+  }
+  const selection = selectReviewer({}, config, { quality: 'high', executorProfileId: producerProfileIds[0] });
+  if (!selection.candidate) return { independent: false, reason: 'NO_REVIEWER', reviewerProfileId: null, producerProfileIds };
+  const independent = !producerProfileIds.includes(selection.candidate.id);
   return {
-    independent: selection.candidate.id !== producerProfileId,
-    reason: selection.candidate.id === producerProfileId ? 'SAME_PROFILE_FALLBACK' : null,
+    independent,
+    reason: independent ? null : 'SAME_PROFILE_FALLBACK',
     reviewerProfileId: selection.candidate.id,
+    producerProfileIds,
   };
 }
 
@@ -3480,3 +3504,6 @@ function sendError(response, error) {
     details: error instanceof HttpError ? error.details : undefined,
   });
 }
+
+// 프로모션 리뷰어 provenance 판정을 독립적으로 검증할 수 있도록 노출한다.
+export { resolvePromotionReview, server };
