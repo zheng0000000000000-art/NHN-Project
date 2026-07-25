@@ -7,6 +7,7 @@ data/balance-portfolio/
 !data/.gitkeep
 .team-loop/
 .team-loop-worktrees/
+.team-loop-sandboxes/
 .runtime/
 workspaces/*/
 !workspaces/team-loop-tool-lane/

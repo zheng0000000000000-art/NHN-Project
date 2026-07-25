@@ -1,13 +1,19 @@
 // 유휴 시간 장애주입 시뮬레이션: 하네스가 "통과한다"가 아니라 "막을 때 막는다"를 증명한다.
 //
 // 하네스가 exit 0을 내는 것은 아무것도 증명하지 않는다. 아무것도 검사하지 않는 하네스도 exit 0을 낸다.
-// 각 하네스마다 알려진 결함을 실제로 주입해 exit 1이 뜨는지 확인하고, 되돌린 뒤 다시 exit 0으로
-// 돌아오는지 확인해야 그 하네스가 증명된 것이다. 주입 명세가 없는 하네스는 미증명으로 보고한다.
+// 알려진 결함을 실제로 주입해 exit 1이 뜨고, 되돌리면 다시 exit 0으로 돌아와야 그 하네스가 증명된다.
+//
+// 주입은 소스를 변형하므로 살아있는 트리에서 하면 안 된다. 전용 git worktree 스냅샷을 만들어
+// 그 안에서만 변형하고, 끝나면 정리한다. 정리 실패는 조용히 삼키지 않는다.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const GIT = process.env.TEAM_LOOP_GIT_BIN || 'git';
+const SANDBOX_DIR = '.team-loop-sandboxes';
+const SANDBOX_NAME = 'harness-injection';
+const HARNESS_TIMEOUT_MS = 120_000;
+const OUTPUT_CAP_BYTES = 256 * 1024;
 
 // 하네스별 장애주입 명세. mutate는 원문을 받아 결함이 심긴 원문을 돌려준다.
 export const INJECTIONS = [
@@ -46,19 +52,19 @@ export const INJECTIONS = [
     file: 'src/context-packs.js',
     mutate: (text) => text.replace('serialized: true', 'serialized: false'),
   },
-  {
-    harness: 'tools/verification/check-integration-tree.mjs',
-    contract: 'integration-tree',
-    name: 'conflict-marker-committed',
-    file: 'README.md',
-    mutate: (text) => `${text}\n<<<<<<< HEAD\n`,
-  },
 ];
 
-// 주입 명세가 없어 아직 증명되지 않은 하네스. 숨기지 않고 드러낸다.
+// 샌드박스 주입으로는 증명할 수 없지만 다른 곳에서 적대적으로 증명된 하네스. 미증명과 섞지 않는다.
+export const PROVEN_ELSEWHERE = {
+  'tools/verification/check-integration-tree.mjs':
+    'test/integration-tree.test.js — 임시 저장소에 충돌 마커를 커밋해 검출을 확인한다. '
+    + '이 하네스는 설계상 자기가 실행된 트리가 아니라 메인 worktree를 검사하므로, 샌드박스에 심은 결함에는 닿지 않는다.',
+};
+
+// 주입 명세가 없어 아직 증명되지 않은 하네스. 목록을 손으로 들고 있지 않고 디렉터리에서 도출한다.
 export function unprovenHarnesses(cwd = process.cwd(), injections = INJECTIONS) {
   const directory = path.join(cwd, 'tools', 'verification');
-  const covered = new Set(injections.map((item) => item.harness));
+  const covered = new Set([...injections.map((item) => item.harness), ...Object.keys(PROVEN_ELSEWHERE)]);
   return readdirSync(directory)
     .filter((name) => name.startsWith('check-') && name.endsWith('.mjs'))
     .map((name) => path.posix.join('tools', 'verification', name))
@@ -66,89 +72,164 @@ export function unprovenHarnesses(cwd = process.cwd(), injections = INJECTIONS) 
     .sort();
 }
 
-// 하네스를 실행하고 exit code를 돌려준다.
-function runHarness(harness, cwd) {
-  const result = spawnSync(process.execPath, [harness], { cwd, encoding: 'utf8' });
-  return Number(result.status ?? 1);
+// 진행 중인 태스크 worktree가 있으면 유휴가 아니다. 무엇을 근거로 판정했는지 같이 돌려준다.
+export function detectIdle(cwd = process.cwd()) {
+  let listed = '';
+  try {
+    listed = execFileSync(GIT, ['worktree', 'list', '--porcelain'], { cwd, encoding: 'utf8' });
+  } catch {
+    return { idle: false, reason: 'WORKTREE_LIST_UNAVAILABLE', activeWorktrees: [] };
+  }
+  const activeWorktrees = listed.split(/\r?\n/)
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => line.slice('worktree '.length).trim())
+    .filter((entry) => entry.includes('.team-loop-worktrees'));
+  return {
+    idle: activeWorktrees.length === 0,
+    reason: activeWorktrees.length ? 'TASK_WORKTREE_ACTIVE' : null,
+    activeWorktrees,
+  };
 }
 
-// 대상 파일이 이미 수정돼 있으면 주입을 거부한다. 남의 변경을 되돌려 덮어쓰지 않기 위해서다.
-function dirtyTargets(files, cwd) {
+// 커밋되지 않은 변경은 HEAD 스냅샷에 없다. 검사되지 않았다는 사실을 보고에 남긴다.
+export function untestedChanges(cwd = process.cwd()) {
   try {
-    const status = execFileSync(GIT, ['status', '--porcelain', '--', ...files], { cwd, encoding: 'utf8' });
-    return status.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return execFileSync(GIT, ['status', '--porcelain'], { cwd, encoding: 'utf8' })
+      .split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   } catch {
     return [];
   }
 }
 
-// 하나의 주입을 수행하고 결과를 돌려준다. 원문 복원은 finally에서 보장한다.
-export function runInjection(injection, cwd) {
-  const target = path.join(cwd, injection.file);
+// 전용 worktree 스냅샷을 만든다. 살아있는 트리는 건드리지 않는다.
+export function createSandbox(cwd, name = SANDBOX_NAME) {
+  const root = path.join(cwd, SANDBOX_DIR, name);
+  removeSandbox(cwd, name, { force: true });
+  execFileSync(GIT, ['worktree', 'add', '--detach', '--quiet', root, 'HEAD'], { cwd, encoding: 'utf8' });
+  const baseFingerprint = execFileSync(GIT, ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
+  return { root, baseFingerprint };
+}
+
+// 정리한다. 실패하면 삼키지 않고 사유를 돌려준다.
+export function removeSandbox(cwd, name = SANDBOX_NAME, { force = false } = {}) {
+  const root = path.join(cwd, SANDBOX_DIR, name);
+  if (!existsSync(root) && !force) return { removed: false, error: null };
+  try {
+    execFileSync(GIT, ['worktree', 'remove', '--force', root], { cwd, stdio: 'ignore' });
+    return { removed: true, error: null };
+  } catch (error) {
+    try { rmSync(root, { recursive: true, force: true }); } catch { /* 아래에서 보고한다 */ }
+    try { execFileSync(GIT, ['worktree', 'prune'], { cwd, stdio: 'ignore' }); } catch { /* 위와 같다 */ }
+    if (existsSync(root)) return { removed: false, error: String(error.message || error).slice(0, 300) };
+    return { removed: true, error: null };
+  }
+}
+
+// 하네스를 제한된 환경에서 실행한다. timeout과 출력 상한 위반은 통과로 세지 않는다.
+function runHarness(harness, cwd) {
+  const result = spawnSync(process.execPath, [harness], {
+    cwd, encoding: 'utf8', timeout: HARNESS_TIMEOUT_MS, maxBuffer: OUTPUT_CAP_BYTES,
+  });
+  if (result.error) return { exit: 1, violation: String(result.error.code || result.error.message) };
+  return { exit: Number(result.status ?? 1), violation: null };
+}
+
+// 샌드박스 안에서 결함 하나를 주입하고, 잡히는지 확인한 뒤 되돌린다.
+export function runInjection(injection, sandboxRoot) {
+  const target = path.join(sandboxRoot, injection.file);
   const original = readFileSync(target, 'utf8');
   const mutated = injection.mutate(original);
   if (mutated === original) {
     return { ...injection, caught: false, detail: 'the mutation changed nothing; the injection spec is stale' };
   }
-  let injectedExit = null;
+  let injected = { exit: null, violation: null };
   try {
     writeFileSync(target, mutated, 'utf8');
-    injectedExit = runHarness(injection.harness, cwd);
+    injected = runHarness(injection.harness, sandboxRoot);
   } finally {
     writeFileSync(target, original, 'utf8');
   }
-  const restoredExit = runHarness(injection.harness, cwd);
+  const restored = runHarness(injection.harness, sandboxRoot);
   return {
     ...injection,
-    injectedExit,
-    restoredExit,
-    caught: injectedExit !== 0 && restoredExit === 0,
-    detail: injectedExit === 0
+    injectedExit: injected.exit,
+    restoredExit: restored.exit,
+    violation: injected.violation || restored.violation || null,
+    caught: injected.exit !== 0 && restored.exit === 0,
+    detail: injected.exit === 0
       ? 'the harness passed while the fault was present'
-      : restoredExit !== 0
+      : restored.exit !== 0
         ? 'the harness stayed red after the fault was reverted'
         : null,
   };
 }
 
-// 모든 주입을 돌려 증명/미증명을 집계한다.
-export function simulateInjections(cwd = process.cwd(), injections = INJECTIONS) {
-  const files = [...new Set(injections.map((item) => item.file))];
-  const dirty = dirtyTargets(files, cwd);
-  if (dirty.length) {
-    return { skipped: true, dirty, results: [], proven: [], unproven: unprovenHarnesses(cwd, injections) };
+// 샌드박스를 세우고 모든 주입을 돌린다. 실패하면 조사할 수 있게 샌드박스를 남긴다.
+export function simulateInjections(cwd = process.cwd(), injections = INJECTIONS, { requireIdle = false } = {}) {
+  const idle = detectIdle(cwd);
+  const unproven = unprovenHarnesses(cwd, injections);
+  if (requireIdle && !idle.idle) {
+    return { skipped: true, idle, untested: [], sandbox: null, results: [], proven: [], unproven, cleanup: null };
   }
-  const results = injections.map((injection) => runInjection(injection, cwd));
+  const sandbox = createSandbox(cwd);
+  let results = [];
+  let cleanup = null;
+  try {
+    results = injections.map((injection) => runInjection(injection, sandbox.root));
+  } finally {
+    // 결과가 나쁘면 남긴다: 조사 대상 workspace를 무조건 지우지 않는다.
+    cleanup = results.length && results.every((item) => item.caught)
+      ? removeSandbox(cwd)
+      : { removed: false, error: null, preserved: sandbox.root };
+  }
   return {
     skipped: false,
-    dirty: [],
+    idle,
+    untested: untestedChanges(cwd),
+    sandbox,
     results,
     proven: [...new Set(results.filter((item) => item.caught).map((item) => item.harness))],
-    unproven: unprovenHarnesses(cwd, injections),
+    unproven,
+    cleanup,
   };
 }
 
 const invokedDirectly = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));
 if (invokedDirectly) {
-  const report = simulateInjections();
+  const requireIdle = process.argv.includes('--require-idle');
+  const report = simulateInjections(process.cwd(), INJECTIONS, { requireIdle });
   if (report.skipped) {
-    console.error('Refusing to inject faults while the target files have uncommitted changes:');
-    report.dirty.forEach((entry) => console.error(`  - ${entry}`));
+    console.error(`Skipped: the workspace is not idle (${report.idle.reason}).`);
+    report.idle.activeWorktrees.forEach((entry) => console.error(`  - ${entry}`));
     process.exit(1);
   }
-  const missed = report.results.filter((item) => !item.caught);
+  console.log(`Sandbox ${report.sandbox.root} at ${report.sandbox.baseFingerprint}`);
   report.results.forEach((item) => {
     const mark = item.caught ? 'caught' : 'MISSED';
     console.log(`  [${mark}] ${item.contract} / ${item.name} -> injected exit ${item.injectedExit}, restored exit ${item.restoredExit}`);
   });
+  if (report.untested.length) {
+    console.log(`Not covered by this run (${report.untested.length} uncommitted change(s); the sandbox is a HEAD snapshot):`);
+    report.untested.slice(0, 10).forEach((entry) => console.log(`  - ${entry}`));
+  }
+  const provenElsewhere = Object.entries(PROVEN_ELSEWHERE);
+  if (provenElsewhere.length) {
+    console.log('Proven by a dedicated adversarial test instead of sandbox injection:');
+    provenElsewhere.forEach(([harness, why]) => console.log(`  - ${harness}: ${why}`));
+  }
   if (report.unproven.length) {
     console.log('Unproven harnesses (no failure injection specified yet):');
     report.unproven.forEach((entry) => console.log(`  - ${entry}`));
   }
-  if (missed.length) {
-    console.error(`Harness injection simulation failed (${missed.length} fault(s) not caught):`);
+  if (report.cleanup?.preserved) {
+    console.error(`Sandbox preserved for inspection: ${report.cleanup.preserved}`);
+  } else if (report.cleanup && !report.cleanup.removed) {
+    console.error(`Sandbox cleanup failed: ${report.cleanup.error}`);
+  }
+  const missed = report.results.filter((item) => !item.caught);
+  if (missed.length || (report.cleanup && !report.cleanup.removed && !report.cleanup.preserved)) {
     missed.forEach((item) => console.error(`  - ${item.contract} / ${item.name}: ${item.detail}`));
     process.exit(1);
   }
-  console.log(`Harness injection simulation passed: ${report.results.length} faults injected, all caught.`);
+  console.log(`Harness injection simulation passed: ${report.results.length} faults injected, all caught, sandbox cleaned.`);
 }
