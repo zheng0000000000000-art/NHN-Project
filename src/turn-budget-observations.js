@@ -11,6 +11,19 @@ import { unverifiedClaims } from './unverified-claims.js';
 
 const TERMINAL_MAX_TURNS = 'max_turns';
 
+// 실행자 보고 문면을 저장할 때의 한도. 실패 경로가 발췌를 자르는 폭과 같게 둔다.
+export const EXECUTOR_REPORT_LIMIT = 4000;
+
+// 끝난 실행의 보고 문면을 한도 안에서 보관 가능한 모양으로 만든다.
+//
+// 지금까지 보고 문면은 executorFailure에만 남았다. 즉 실패한 실행만 감사 대상이었다.
+// 정작 위험한 모양은 "성공했다"고 자신 있게 보고한 실행이므로, 성공 경로도 같은 한도로
+// 잘라 남긴다. 끝부분이 최종 보고이므로 앞이 아니라 뒤를 남긴다.
+export function retainExecutorReport(output, at = nowIso()) {
+  const excerpt = String(output ?? '').trim().slice(-EXECUTOR_REPORT_LIMIT);
+  return excerpt ? { at, outputExcerpt: excerpt } : null;
+}
+
 // 실행자 결과 문자열에서 턴 수와 종료 사유를 꺼낸다. 없으면 null이지 0이 아니다.
 export function executorTelemetry(verification) {
   const checks = Array.isArray(verification?.checks) ? verification.checks : [];
@@ -49,7 +62,7 @@ export function observationFromTask(task) {
     // 실행자가 Y/N을 주장했는데 프로그램 판정이 뒷받침하지 않으면 하네스가 빠진 자리다.
     claimAudit: (() => {
       const audited = unverifiedClaims({
-        report: executorReport(verification),
+        report: executorReport(task),
         verification,
         source: task?.executor?.tool ?? null,
       });
@@ -74,10 +87,15 @@ export function observationFromTask(task) {
 }
 
 // 실행자가 남긴 보고 문면을 꺼낸다. 없으면 빈 문자열이지 null이 아니다.
-function executorReport(verification) {
-  const checks = Array.isArray(verification?.checks) ? verification.checks : [];
+//
+// 실패한 실행은 executorFailure에 발췌가 남고, 끝까지 돌아 성공을 보고한 실행은
+// task.executorReport에 남는다. 둘 다 봐야 감사가 성공한 실행까지 닿는다.
+function executorReport(task) {
+  const checks = Array.isArray(task?.verification?.checks) ? task.verification.checks : [];
   const failure = [...checks].reverse().find((check) => check?.executorFailure)?.executorFailure;
-  return String(failure?.outputExcerpt ?? failure?.reason ?? '');
+  const fromFailure = String(failure?.outputExcerpt ?? failure?.reason ?? '');
+  if (fromFailure) return fromFailure;
+  return String(task?.executorReport?.outputExcerpt ?? '');
 }
 
 // 결과를 한 낱말로 요약한다. 턴이 모자라 죽은 것과 그냥 실패한 것을 구분한다.

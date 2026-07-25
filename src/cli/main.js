@@ -14,6 +14,7 @@ import { auditSkills, buildSkillPolicy } from '../skill-policy.js';
 import { ScopeLeaseService } from '../scope-leases.js';
 import { RunLedger } from '../run-ledger.js';
 import { initializeProject, loadProjectConfig } from '../project-setup.js';
+import { EXECUTOR_REPORT_LIMIT } from '../turn-budget-observations.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1029,6 +1030,9 @@ async function runDispatch(client, positionals, options, json) {
     body: {
       passed,
       failureSignature: passed ? '' : failureIds.join('|') || `executor:${run?.code ?? 'error'}|verification:${final.verification?.status || 'missing'}`,
+      // 성공한 실행도 보고 문면을 남긴다. "전부 통과, exit 0"이 실패한 실행 위에 얹혀 있는지는
+      // 문면이 남아야만 감사할 수 있다. 한도는 실패 발췌와 같고, 최종 보고인 끝부분을 남긴다.
+      executorReport: String(run?.output || '').slice(-EXECUTOR_REPORT_LIMIT),
       executionUsage: {
         tool,
         model: model || selectedModelLabel(tool),

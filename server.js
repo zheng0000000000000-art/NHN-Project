@@ -46,7 +46,7 @@ import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
 import { IdleRunner } from './src/idle-runner.js';
-import { TurnBudgetObservationStore } from './src/turn-budget-observations.js';
+import { TurnBudgetObservationStore, retainExecutorReport } from './src/turn-budget-observations.js';
 import { decideWorkBudget } from './src/work-budget.js';
 import { selectContextTier } from './src/cli/main.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
@@ -1734,9 +1734,13 @@ async function handleApi(request, response) {
       ...usage,
       totalTokens: effectiveAutomationTokens(usage),
     };
+    // 끝까지 돌아 성공을 보고한 실행에는 executorFailure가 없어 보고 문면이 어디에도 남지
+    // 않았다. 실패 발췌와 같은 한도로 잘라 남겨야 주장 감사가 성공한 실행까지 본다.
+    const retainedReport = retainExecutorReport(body.executorReport);
     const currentForBudget = await store.getTask(taskId);
     const task = await store.mutateTask(taskId, actor, null, 'TASK_AUTOMATION_RESULT_RECORDED', async (next) => {
       requireAssigneeOrAdmin(next, actor);
+      if (retainedReport) next.executorReport = retainedReport;
       const result = recordAutomationResult(next.automationGuard, {
         passed,
         failureSignature: signature,
