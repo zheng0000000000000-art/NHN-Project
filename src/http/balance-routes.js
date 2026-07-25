@@ -29,6 +29,13 @@ export async function handleBalanceRoute({
     return true;
   }
 
+  const policyComparisonMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)\/policy-comparison$/);
+  if (method === 'GET' && policyComparisonMatch) {
+    const sessionId = decodeURIComponent(policyComparisonMatch[1]);
+    sendJson(response, 200, { policyComparison: auctionPlaySessions.policyComparison(sessionId, actor) });
+    return true;
+  }
+
   const playMatch = url.pathname.match(/^\/api\/balance\/play\/sessions\/([^/]+)(?:\/actions)?$/);
   if (playMatch) {
     const sessionId = decodeURIComponent(playMatch[1]);

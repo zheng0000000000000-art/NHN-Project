@@ -72,3 +72,53 @@ test('greybox sessions are deterministic for a shared seed', async (t) => {
   const right = await store.start(actor, { seed: 7123 });
   assert.deepEqual(left.currentLot, right.currentLot);
 });
+
+test('policy comparison is unavailable until the human session settles', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'auction-play-policycmp-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new AuctionPlaySessionStore({ dataDirectory: directory, seedPath });
+  await store.initialize();
+
+  const started = await store.start(actor, { seed: 321 });
+  assert.throws(() => store.policyComparison(started.id, actor), /completed/i);
+
+  let current = started;
+  while (current.status === 'ACTIVE') {
+    current = await store.act(started.id, actor, { type: 'PASS' });
+  }
+  assert.equal(current.status, 'COMPLETED');
+
+  const comparison = store.policyComparison(started.id, actor);
+  assert.equal(comparison.seed, 321);
+  assert.equal(comparison.comparison.commonWorldSeed, 321);
+  assert.deepEqual(
+    comparison.policies.map((policy) => policy.id).sort(),
+    ['conservative', 'speculative', 'value'],
+  );
+  assert.equal(typeof comparison.human.roiPercent, 'number');
+  for (const policy of comparison.policies) {
+    assert.equal(policy.lotsSeen <= comparison.comparison.sharedLotCount, true);
+    assert.equal(typeof policy.vsHuman.roiPercentDelta, 'number');
+  }
+});
+
+test('the same seed run twice yields identical policy-comparison results', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'auction-play-policycmp-seed-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new AuctionPlaySessionStore({ dataDirectory: directory, seedPath });
+  await store.initialize();
+
+  async function playToCompletion(seed) {
+    let current = await store.start(actor, { seed });
+    while (current.status === 'ACTIVE') {
+      current = await store.act(current.id, actor, { type: 'PASS' });
+    }
+    return current;
+  }
+
+  const left = await playToCompletion(555);
+  const right = await playToCompletion(555);
+  const leftComparison = store.policyComparison(left.id, actor);
+  const rightComparison = store.policyComparison(right.id, actor);
+  assert.deepEqual(leftComparison.policies, rightComparison.policies);
+});

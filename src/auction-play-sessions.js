@@ -8,6 +8,7 @@ import {
 } from './engine/economy-simulator.js';
 import { HttpError, nowIso, randomId } from './utils.js';
 import { analyzeInformationValue } from './auction-information-value.js';
+import { compareHumanAndAiPolicies } from './auction-policy-comparison.js';
 
 export class AuctionPlaySessionStore {
   constructor({ dataDirectory, seedPath }) {
@@ -72,6 +73,14 @@ export class AuctionPlaySessionStore {
 
   informationValue(id, actor) {
     return analyzeInformationValue(this.findOwned(id, actor));
+  }
+
+  policyComparison(id, actor) {
+    const session = this.findOwned(id, actor);
+    if (session.status !== 'COMPLETED') {
+      throw new HttpError(409, 'Auction play session must be completed before comparing policies.');
+    }
+    return compareHumanAndAiPolicies(session, this.config);
   }
 
   findOwned(id, actor) {
