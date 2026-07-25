@@ -45,6 +45,7 @@ import { PromotionEngine } from './src/promotion-engine.js';
 import { EntryService } from './src/entry-service.js';
 import { ConstitutionCompiler, ConstitutionObservationStore } from './src/constitution.js';
 import { OrchestrationEngine } from './src/orchestration-engine.js';
+import { IdleRunner } from './src/idle-runner.js';
 import { AuctionPlaySessionStore } from './src/auction-play-sessions.js';
 import { effectiveAutomationTokens, recordAutomationResult } from './src/automation-guard.js';
 import {
@@ -136,6 +137,41 @@ const constitutionCompiler = new ConstitutionCompiler({
 });
 const constitutionObservations = new ConstitutionObservationStore(dataDirectory);
 const orchestrationEngine = new OrchestrationEngine({ constitutionCompiler, entryService });
+
+// 유휴 판정은 프록시가 아니라 권위 있는 신호로 한다: 살아있는 워커와 태스크 실행 상태.
+async function workspaceIdleState() {
+  if (boardWorkers.size) return { idle: false, reason: 'BOARD_WORKER_ACTIVE' };
+  const tasks = await store.listTasks();
+  const busy = tasks.find((task) => !task.archived && ['RUNNING', 'QUEUED', 'RECOVERING'].includes(String(task.executionState || '')));
+  if (busy) return { idle: false, reason: `TASK_${busy.executionState}` };
+  return { idle: true, reason: null };
+}
+
+// 유휴에 도는 무비용 검증. 토큰을 쓰지 않고 전용 worktree 안에서만 변형한다.
+const idleVerifier = new IdleRunner({
+  name: 'harness-injection-simulation',
+  isIdle: workspaceIdleState,
+  intervalMs: Number(process.env.TEAM_LOOP_IDLE_INTERVAL_MS) || 5 * 60_000,
+  minGapMs: Number(process.env.TEAM_LOOP_IDLE_MIN_GAP_MS) || 60 * 60_000,
+  run: () => new Promise((resolve) => {
+    // --require-idle을 넘기지 않는다. 서버는 이미 살아있는 워커와 태스크 상태로 판정했고,
+    // 자식의 worktree 기반 판정은 더 약한 프록시라 재확인하면 위음성만 만든다.
+    const child = spawn(process.execPath, [path.join(projectRoot, 'tools', 'verification', 'check-harness-injection.mjs')], {
+      cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.stderr.on('data', (chunk) => { out += chunk; });
+    child.on('error', (error) => resolve({ ok: false, summary: String(error.message).slice(0, 500) }));
+    child.on('close', (code) => resolve({ ok: code === 0, exitCode: code, summary: out.trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 500) }));
+  }),
+  onResult: (outcome) => {
+    if (!outcome.ran) return;
+    store.recordAudit('system', 'IDLE_VERIFICATION_RUN', {
+      job: outcome.name, reason: outcome.reason, ok: outcome.result?.ok ?? false, summary: outcome.result?.summary ?? outcome.error ?? null,
+    }).catch(() => {});
+  },
+});
 const experienceEngine = new ExperienceEngine({
   projectContext, contextIndex, wiki, failureCases, harnessRegistry, skillRegistry,
 });
@@ -190,6 +226,14 @@ server.listen(port, host, async () => {
     await recoverPersistedAgentTask(taskId).catch((error) => {
       console.error(`Agent recovery failed for ${taskId}: ${error.message}`);
     });
+  }
+  // 유휴 검증은 무비용·로컬·되돌릴 수 있어 자동 실행이 허용되는 부류다. 끄려면 TEAM_LOOP_IDLE_VERIFY=off.
+  if (String(process.env.TEAM_LOOP_IDLE_VERIFY || 'on').toLowerCase() !== 'off') {
+    idleVerifier.start();
+    const { intervalMs, minGapMs } = idleVerifier.status();
+    console.log(`Idle verification scheduled: every ${Math.round(intervalMs / 1000)}s, at most once per ${Math.round(minGapMs / 60000)}min`);
+  } else {
+    console.log('Idle verification disabled by TEAM_LOOP_IDLE_VERIFY=off');
   }
 });
 
@@ -715,6 +759,7 @@ async function handleApi(request, response) {
       constitution: constitutionCompiler.status(),
       constitutionAudit: await constitutionObservations.audit(constitutionCompiler.status().constitutionVersion, { limit: 10 }),
       learningAudit: auditLearningArtifacts({ harnesses, skills }),
+      idleVerification: idleVerifier.status(),
     });
     return;
   }
