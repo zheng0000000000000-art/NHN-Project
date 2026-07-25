@@ -752,6 +752,12 @@ async function handleApi(request, response) {
     assertPlainObject(body);
     const seed = contextSeeds.get(body.seedId);
     if (!seed) throw new HttpError(404, 'Context seed not found.');
+    const budgetIncrease = ['maxSourceChunks', 'maxSourceCharacters', 'maxWikiEntries']
+      .some((key) => body[key] != null && Number(body[key]) > seed[key]);
+    const budgetRationale = String(body.budgetRationale || '').trim();
+    if (budgetIncrease && !budgetRationale) {
+      throw new HttpError(400, 'Increasing a context budget requires a rationale.');
+    }
     const pack = await experienceEngine.prepare({
       ...body,
       maxWikiEntries: body.maxWikiEntries ?? seed.maxWikiEntries,
@@ -760,13 +766,15 @@ async function handleApi(request, response) {
       forbiddenActions: body.forbiddenActions ?? seed.forbiddenActions,
     });
     pack.layers = seed.layers;
-    const record = await contextPacks.record(actor, seed, pack);
+    const record = await contextPacks.record(actor, seed, pack, budgetIncrease ? { rationale: budgetRationale } : null);
     await store.recordAudit(actor.id, 'CONTEXT_PACK_PREPARED', {
       contextPackId: record.id,
       packId: pack.contract.packId,
       seedId: seed.id,
       sourceCount: pack.sources.sourceCount,
       estimatedTokens: pack.sources.estimatedTokens,
+      budgetIncreased: budgetIncrease,
+      budgetRationale: budgetIncrease ? budgetRationale : null,
     });
     sendJson(response, 201, { record });
     return;

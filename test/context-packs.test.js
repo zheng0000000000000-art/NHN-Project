@@ -48,6 +48,23 @@ test('locking a context pack verifies inputs and records serialized evidence', a
   assert.equal(locked.receipt.requiredInputs[0].includedInModelRequest, true);
 });
 
+test('recording a context pack requires and stores a rationale for a budget increase', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'context-pack-budget-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new ContextPackStore({ dataDirectory: directory, workspaceRoot: directory });
+  await store.initialize();
+  const actor = { id: 'owner', role: 'member' };
+  const seed = { id: 'test', label: 'Test', maxSourceCharacters: 1000, layers: ['L0'] };
+  const pack = {
+    goal: 'Increase budget',
+    contract: { packId: 'budget-test', requiredInputs: [], readOrder: [], writeScope: [], forbiddenActions: [] },
+    sources: { sources: [], sourceCount: 0, characters: 0, estimatedTokens: 0, budgetCharacters: 2000 },
+  };
+  await assert.rejects(() => store.record(actor, seed, pack, { rationale: '' }), (error) => error.status === 400);
+  const record = await store.record(actor, seed, pack, { rationale: 'Need more headroom for a large migration.' });
+  assert.equal(record.budgetRationale, 'Need more headroom for a large migration.');
+});
+
 test('locking fails closed when a declared input becomes stale', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'context-pack-stale-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
