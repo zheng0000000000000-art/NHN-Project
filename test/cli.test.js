@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { parseCliArgs, listOption, repeatedOption } from '../src/cli/args.js';
 import { CliClient, ApiError } from '../src/cli/client.js';
 import { clearSession, loadSession, normalizeServer, saveSession } from '../src/cli/session.js';
-import { normalizeAiReviewVerdict } from '../src/cli/main.js';
+import { computePreflightDecision, normalizeAiReviewVerdict } from '../src/cli/main.js';
 
 test('CLI parser keeps repeated task scope and criteria options', () => {
   const parsed = parseCliArgs([
@@ -34,6 +34,42 @@ test('AI review verdict adapter accepts explicit model synonyms and rejects ambi
   assert.equal(normalizeAiReviewVerdict('approved'), 'APPROVE');
   assert.equal(normalizeAiReviewVerdict('changes requested'), 'REJECT');
   assert.equal(normalizeAiReviewVerdict('maybe'), '');
+});
+
+test('execution preflight exposes context, executor, turns, cumulative budget and a RUN decision', () => {
+  const result = computePreflightDecision({
+    task: {
+      delegation: { budget: { tokenBudget: 100_000, costBudgetUsd: 5 } },
+      automationGuard: { cumulativeTokens: 10_000, cumulativeCostUsd: 1.25 },
+    },
+    contextPlan: { id: 'ctx_small', estimatedTokens: 2_000, sources: [{}, {}] },
+    tool: 'claude-code',
+    model: 'sonnet',
+    maxTurns: 8,
+  });
+  assert.equal(result.decision, 'RUN');
+  assert.equal(result.hardLimitExceeded, false);
+  assert.equal(result.selectedContext.estimatedTokens, 2_000);
+  assert.equal(result.selectedContext.sourceCount, 2);
+  assert.deepEqual(result.executor, { tool: 'claude-code', model: 'sonnet' });
+  assert.equal(result.maxTurns, 8);
+  assert.equal(result.budget.cumulativeTokens, 10_000);
+  assert.equal(result.budget.remainingTokens, 90_000);
+});
+
+test('execution preflight asks before launch when the task token budget cannot fit the run', () => {
+  const result = computePreflightDecision({
+    task: {
+      delegation: { budget: { tokenBudget: 20_000, costBudgetUsd: 5 } },
+      automationGuard: { cumulativeTokens: 15_000, cumulativeCostUsd: 1 },
+    },
+    contextPlan: { id: 'ctx_large', estimatedTokens: 2_000, sources: [{}] },
+    tool: 'codex',
+    maxTurns: 12,
+  });
+  assert.equal(result.decision, 'ASK');
+  assert.equal(result.hardLimitExceeded, true);
+  assert.match(result.reason, /only 5000 remain/);
 });
 
 test('CLI client captures login cookie and sends it to protected requests', async (t) => {

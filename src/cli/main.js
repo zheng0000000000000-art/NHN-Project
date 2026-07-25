@@ -610,11 +610,74 @@ async function reportTaskActivity(client, task, activity) {
     body: {
       activity: {
         startedAt: task.agentActivity?.startedAt,
+        preflight: task.agentActivity?.preflight,
         ...activity,
       },
     },
   });
   return result.task;
+}
+
+export function computePreflightDecision({ task = {}, contextPlan = {}, tool = '', model = '', maxTurns = 12 } = {}) {
+  const estimatedContextTokens = Math.max(0, Number(contextPlan.estimatedTokens) || 0);
+  const turns = Math.max(1, Math.min(100, Number(maxTurns) || 12));
+  const tokenBudget = Math.max(1_000, Number(task.delegation?.budget?.tokenBudget) || 500_000);
+  const costBudgetUsd = Math.max(0.01, Number(task.delegation?.budget?.costBudgetUsd) || 10);
+  const cumulativeTokens = Math.max(0, Number(task.automationGuard?.cumulativeTokens) || 0);
+  const cumulativeCostUsd = Math.max(0, Number(task.automationGuard?.cumulativeCostUsd) || 0);
+  const remainingTokens = Math.max(0, tokenBudget - cumulativeTokens);
+  const remainingCostUsd = Math.max(0, costBudgetUsd - cumulativeCostUsd);
+  const estimatedRunTokens = Math.ceil(estimatedContextTokens * Math.min(turns, 4));
+  const hardLimitExceeded = remainingTokens <= 0 || remainingCostUsd <= 0 || estimatedRunTokens > remainingTokens;
+  const decision = hardLimitExceeded
+    ? 'ASK'
+    : estimatedRunTokens > tokenBudget * 0.5 || estimatedContextTokens > 12_000
+      ? 'SHRINK'
+      : 'RUN';
+  const reason = remainingTokens <= 0
+    ? `Task token budget is exhausted (${cumulativeTokens}/${tokenBudget}).`
+    : remainingCostUsd <= 0
+      ? `Task cost budget is exhausted ($${cumulativeCostUsd}/$${costBudgetUsd}).`
+      : estimatedRunTokens > remainingTokens
+        ? `Estimated run requires ${estimatedRunTokens} tokens but only ${remainingTokens} remain.`
+        : decision === 'SHRINK'
+          ? 'Selected context is large for the remaining task budget; shrink it before a later run.'
+          : 'Estimated run fits the remaining task budget.';
+  return {
+    decision,
+    reason,
+    hardLimitExceeded,
+    selectedContext: {
+      id: contextPlan.id || null,
+      sourceCount: Array.isArray(contextPlan.sources) ? contextPlan.sources.length : 0,
+      estimatedTokens: estimatedContextTokens,
+    },
+    executor: { tool: String(tool || ''), model: String(model || '') || null },
+    maxTurns: turns,
+    estimatedRunTokens,
+    budget: {
+      tokenBudget,
+      costBudgetUsd,
+      cumulativeTokens,
+      cumulativeCostUsd,
+      remainingTokens,
+      remainingCostUsd,
+    },
+  };
+}
+
+async function reportPreflight(client, task, preflight) {
+  return reportTaskActivity(client, task, {
+    phase: preflight.hardLimitExceeded ? 'preflight-blocked' : 'preflight-ready',
+    label: preflight.hardLimitExceeded ? 'Preflight requires approval' : `Preflight ${preflight.decision}`,
+    detail: preflight.reason,
+    tool: preflight.executor.tool,
+    model: preflight.executor.model || '',
+    attempt: 0,
+    maxAttempts: 0,
+    preflight,
+    finished: preflight.hardLimitExceeded,
+  });
 }
 
 // Dispatch: hand an existing board task to a CLI executor that actually does the work,
@@ -688,6 +751,7 @@ async function runDispatch(client, positionals, options, json) {
     throw new Error(`Refusing to run the agent with ${dangerousPermission ? `permission "${permission}"` : `sandbox "${sandbox}"`} and no safeguards. Pass --trust to confirm you trust this task, or use a safer mode.`);
   }
   const maxAttempts = Math.max(1, Math.min(10, numberOption(options, 'retry', 1)));
+  const maxTurns = Math.max(1, numberOption(options, 'max-turns', 12));
   const autoLearn = Boolean(options['auto-learn']);
   const contextPlan = await prepareExecutorContext(client, task, bootstrap.contextIndex?.estimatedTokens);
   const prompt = buildDispatchPrompt(task, rules, workspace, contextPlan);
@@ -706,6 +770,26 @@ async function runDispatch(client, positionals, options, json) {
     printValue(plan, { json: true });
     if (!json) process.stdout.write('\n[dry-run] Re-run with --execute to actually run the agent in the workspace.\n');
     return 0;
+  }
+
+  const preflight = computePreflightDecision({ task, contextPlan, tool, model, maxTurns });
+  task = await reportPreflight(client, task, preflight);
+  if (preflight.hardLimitExceeded) {
+    task = await reportTaskActivity(client, task, {
+      phase: 'preflight-blocked',
+      label: '사전 예산 점검 중단',
+      detail: preflight.reason,
+      tool,
+      model,
+      workspace,
+      worktreeBranch: worktree?.branch || '',
+      attempt: 0,
+      maxAttempts,
+      finished: true,
+    });
+    if (json) printValue({ taskId: task.id, preflight, blocked: true, task }, { json: true });
+    else process.stdout.write(`Preflight blocked before launch: ${preflight.reason}\n`);
+    return 2;
   }
 
   let run = null;
