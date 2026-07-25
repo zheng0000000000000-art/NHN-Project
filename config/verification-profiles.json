@@ -116,6 +116,18 @@
         }
       ]
     },
+    "token-efficiency-regression": {
+      "label": "Token efficiency regression",
+      "description": "Fails when a context or traceability contract regresses: context tier budgets, the bounded turn ladder, context pack receipt ids, review-safe state under an exhausted AI review budget, and READY-over-REVIEW START_WORK priority.",
+      "commands": [
+        {
+          "file": "node",
+          "args": ["tools/verification/check-token-efficiency.mjs"],
+          "expectedExit": 0,
+          "timeoutMs": 120000
+        }
+      ]
+    },
     "failure-dedupe-regression": {
       "label": "Failure dedupe regression",
       "description": "Ensures repeated failure events do not explode into duplicate file-level cases.",
