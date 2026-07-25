@@ -18,8 +18,20 @@ try {
   if (!page.ok || !(await page.text()).includes('<main id="app">')) throw new Error('Dashboard root did not render the app shell');
   await verifyBrowserModuleTree(port, '/app.js');
   process.stdout.write(`runtime check passed: syntax + HTTP ${health.status} + dashboard ${page.status} + browser modules\n`);
+} catch (error) {
+  // 실패는 실패로 보고한다. 던진 채 빠져나가면 종료 중인 자식 핸들 때문에 런타임이 죽고,
+  // exit code가 인프라 장애와 구분되지 않는 값으로 바뀐다.
+  process.exitCode = 1;
+  process.stderr.write(`runtime check failed: ${error instanceof Error ? error.message : String(error)}\n`);
 } finally {
-  child?.kill('SIGTERM');
+  if (child && child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGTERM');
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 3_000);
+      timer.unref?.();
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+  }
   await rm(dataDirectory, { recursive: true, force: true });
 }
 
