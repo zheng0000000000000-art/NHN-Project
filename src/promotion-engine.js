@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { atomicWriteJson, HttpError, nowIso, randomId, readJson } from './utils.js';
+import { evidenceBasis, isRerunnableFailure } from './failure-evidence.js';
 
 const EMPTY_LEDGER = { schemaVersion: 1, receipts: [] };
 
@@ -163,7 +164,9 @@ export class PromotionEngine {
 
 function scoreCandidate(cases) {
   const occurrences = cases.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
-  const executable = cases.some((item) => String(item.lastEvidence?.file || '').trim());
+  // 파일명이 비어있지 않다는 사실은 근거가 아니다. delivery gate가 남긴 라벨도 그 조건을 통과한다.
+  // 다시 실행 가능한 명령 근거가 있을 때만 하네스로 점수화한다.
+  const executable = cases.some((item) => isRerunnableFailure(item));
   const readOnly = cases.every((item) => !item.lastEvidence?.changedPaths?.length);
   const observable = cases.some((item) => item.lastEvidence?.actualExit != null || item.lastEvidence?.error || item.lastEvidence?.paths?.length);
   const dimensions = {
@@ -180,6 +183,7 @@ function scoreCandidate(cases) {
     title: cases.map((item) => item.title).join(' · '),
     occurrences,
     suggestedType: executable ? 'HARNESS' : 'SKILL',
+    evidenceBasis: evidenceBasis(cases),
     score: { total, dimensions, verdict: total >= 11 ? 'CREATE_NOW' : total >= 8 ? 'OPTIMISTIC_TRIAL' : total >= 5 ? 'HOLD' : 'NOTE' },
   };
 }

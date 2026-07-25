@@ -2,6 +2,9 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { atomicWriteJson, HttpError, normalizeRelativePath, nowIso, randomId, readJson, sha256 } from './utils.js';
 import { runProcess } from './verifier.js';
+import { isRerunnableFailure } from './failure-evidence.js';
+
+export { SYNTHETIC_COMMAND_FILES, SYNTHETIC_FAILURE_KINDS, isRerunnableFailure } from './failure-evidence.js';
 
 const EMPTY_DB = { schemaVersion: 1, harnesses: [] };
 const STATUS = new Set(['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED']);
@@ -308,23 +311,6 @@ function definitionHash(harness) {
   }));
 }
 
-// Delivery-gate verdicts are recorded in the same shape as a real command check, but their
-// "file" is a label, not an executable. Copying one into a harness yields a command that can
-// only ever fail with ENOENT, which is why every harness derived from an agent failure was
-// born dead and quarantined. Recognise those verdicts and skip them.
-export const SYNTHETIC_FAILURE_KINDS = new Set(['EXECUTOR_FAILED', 'NO_DELIVERABLE']);
-export const SYNTHETIC_COMMAND_FILES = new Set(['agent-executor', 'agent-delivery']);
-
-// A failure case yields a rerunnable command only when its evidence came from a real process.
-export function isRerunnableFailure(failure) {
-  const evidence = failure?.lastEvidence ?? {};
-  const file = String(evidence.file ?? '').trim();
-  if (!file) return false;
-  if (SYNTHETIC_FAILURE_KINDS.has(String(failure?.kind ?? ''))) return false;
-  if (SYNTHETIC_COMMAND_FILES.has(file)) return false;
-  if (evidence.spawnError === true) return false;
-  return true;
-}
 
 function commandsFromFailures(failureCases) {
   const seen = new Set();

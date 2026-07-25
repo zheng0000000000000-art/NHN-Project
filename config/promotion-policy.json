@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mode": "OPTIMISTIC",
-  "minimumOccurrences": 1,
+  "minimumOccurrences": 2,
   "stableAfterCleanAudits": 3,
   "snapshotRequired": true,
   "autoRollback": true,
