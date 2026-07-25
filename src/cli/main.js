@@ -1054,19 +1054,32 @@ async function runDispatch(client, positionals, options, json) {
   return passed ? 0 : 2;
 }
 
+// Task shape -> bounded context tier. Pure and deterministic: the same task
+// always resolves to the same seed id, so the resulting source/wiki budget
+// (defined per seed in config/context-seeds.json) is stable across retries.
+const CONTEXT_TIER_RULES = [
+  { id: 'balance-research', pattern: /balance|econom|simulat/i },
+  { id: 'knowledge-research', pattern: /wiki|knowledge|document-review|brainstorm-review/i },
+];
+
+export function selectContextTier(task = {}) {
+  const shape = [task.verificationProfile, ...(Array.isArray(task.allowedPaths) ? task.allowedPaths : [])]
+    .filter(Boolean)
+    .join(' ');
+  const rule = CONTEXT_TIER_RULES.find((candidate) => candidate.pattern.test(shape));
+  return rule ? rule.id : 'implementation';
+}
+
 async function prepareExecutorContext(client, task, indexedTokens = 0) {
   const prepared = await client.request('/api/context-packs/prepare', {
     method: 'POST',
     body: {
-      seedId: 'implementation',
+      seedId: selectContextTier(task),
       goal: task.title,
       description: task.description,
       allowedPaths: task.allowedPaths || [],
       acceptanceCriteria: task.acceptanceCriteria || [],
       defaultHarnessId: task.verificationProfile,
-      maxSourceChunks: 6,
-      maxSourceCharacters: 9000,
-      maxWikiEntries: 6,
     },
   });
   const locked = await client.request(`/api/context-packs/${encodeURIComponent(prepared.record.id)}/lock`, {
