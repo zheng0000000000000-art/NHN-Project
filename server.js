@@ -130,7 +130,7 @@ async function resolvePromotionReview({ artifact }) {
   };
 }
 
-const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry, resolveIndependentReview: resolvePromotionReview });
+const promotionEngine = new PromotionEngine({ dataDirectory, policyPath: promotionPolicyPath, failureCases, harnessRegistry, skillRegistry, wikiStore: wiki, resolveIndependentReview: resolvePromotionReview });
 const entryService = new EntryService({ dataDirectory, workspaceRoot });
 const turnBudgetObservations = new TurnBudgetObservationStore(dataDirectory);
 const constitutionCompiler = new ConstitutionCompiler({
@@ -1262,6 +1262,17 @@ async function handleApi(request, response) {
     for (const candidate of candidates.filter((item) => item.score.verdict !== 'NOTE').slice(0, 10)) {
       try {
         const cases = await selectedFailureCases(candidate.failureCaseIds);
+        // 기계가 판정할 수 없는 후보를 하네스나 스킬로 빚으려 하면 안 된다. 지식으로 남긴다.
+        if (candidate.suggestedType === 'WIKI') {
+          const filed = await promotionEngine.fileAsKnowledge(actor, candidate, cases);
+          await store.recordAudit(actor.id, filed.duplicate ? 'WIKI_CANDIDATE_DUPLICATE' : 'WIKI_CANDIDATE_PROPOSED', {
+            wikiEntryId: filed.entry.id,
+            sourceFailureCaseIds: candidate.failureCaseIds,
+            reason: 'UNDECIDABLE_BY_MACHINE',
+          });
+          promotions.push(filed);
+          continue;
+        }
         const plan = await planLearningArtifact({ cases, context });
         const crafted = await learning.craft(actor, { ...plan, failureCaseIds: candidate.failureCaseIds });
         const promoted = await promotionEngine.activate(actor, crafted, plan);

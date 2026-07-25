@@ -5,12 +5,14 @@ import { evidenceBasis } from './failure-evidence.js';
 const EMPTY_LEDGER = { schemaVersion: 1, receipts: [] };
 
 export class PromotionEngine {
-  constructor({ dataDirectory, policyPath, failureCases, harnessRegistry, skillRegistry, resolveIndependentReview = null }) {
+  constructor({ dataDirectory, policyPath, failureCases, harnessRegistry, skillRegistry, wikiStore = null, resolveIndependentReview = null }) {
     this.path = path.join(dataDirectory, 'promotion-receipts.json');
     this.policyPath = policyPath;
     this.failureCases = failureCases;
     this.harnessRegistry = harnessRegistry;
     this.skillRegistry = skillRegistry;
+    // 기계가 판정할 수 없는 것은 규칙으로 굳히지 않고 지식으로 남긴다.
+    this.wikiStore = wikiStore;
     // ADR-002 독립 관찰자 원칙: 만든 주체가 자기 산출물을 켜지 못하게 한다.
     this.resolveIndependentReview = resolveIndependentReview;
     this.policy = null;
@@ -118,6 +120,52 @@ export class PromotionEngine {
     return { ...result, [type === 'SKILL' ? 'skill' : 'harness']: activated, promotion: structuredClone(receipt) };
   }
 
+  // 판정 불가로 분류된 후보를 위키 후보로 올린다. 규칙이 아니라 관측 기록이므로
+  // CANDIDATE 상태로만 들어가고, 채택은 사람 몫이다. 영수증을 남겨 같은 것이 다시 올라오지 않게 한다.
+  async fileAsKnowledge(actor, candidate, cases) {
+    if (!this.wikiStore) throw new HttpError(409, 'No wiki store is configured for undecidable candidates.');
+    if (candidate?.suggestedType !== 'WIKI') throw new HttpError(400, 'Only undecidable candidates are filed as knowledge.');
+    const proposal = await this.wikiStore.propose(actor, {
+      title: `관측: ${String(candidate.title).slice(0, 160)}`,
+      content: knowledgeContent(candidate, cases),
+      tags: ['promotion', 'undecidable', ...new Set(cases.map((item) => String(item.kind || '').toLowerCase()).filter(Boolean))],
+      evidence: candidate.failureCaseIds,
+    });
+    const receipt = {
+      schemaVersion: 1,
+      kind: 'team-loop-promotion-receipt',
+      id: randomId('promo_'),
+      actorUserId: actor.id,
+      mode: this.policy.mode,
+      type: 'WIKI',
+      artifactId: proposal.entry.id,
+      artifactVersion: 1,
+      status: proposal.duplicate ? 'ALREADY_FILED' : 'FILED',
+      sourceFailureCaseIds: candidate.failureCaseIds,
+      baselineOccurrences: Object.fromEntries(cases.map((item) => [item.id, item.occurrences])),
+      score: candidate.score,
+      rationale: 'A machine cannot decide this from the recorded evidence, so it is filed as knowledge rather than enforced as a rule.',
+      planner: 'decidability-routing',
+      snapshot: structuredClone(proposal.entry),
+      test: null,
+      review: null,
+      blockedReason: null,
+      cleanAudits: 0,
+      createdAt: nowIso(),
+      activatedAt: null,
+      stabilizedAt: null,
+      rolledBackAt: null,
+      rollbackReason: null,
+    };
+    await this.#withLock(async () => {
+      const db = await readJson(this.path, EMPTY_LEDGER);
+      db.receipts.unshift(receipt);
+      db.receipts = db.receipts.slice(0, 500);
+      await atomicWriteJson(this.path, db);
+    });
+    return { entry: proposal.entry, duplicate: proposal.duplicate, promotion: structuredClone(receipt) };
+  }
+
   async audit(actor) {
     return this.#withLock(async () => {
       const db = await readJson(this.path, EMPTY_LEDGER);
@@ -219,6 +267,22 @@ function scoreCandidate(cases) {
     evidenceBasis: basis,
     score: { total, dimensions, verdict: total >= 11 ? 'CREATE_NOW' : total >= 8 ? 'OPTIMISTIC_TRIAL' : total >= 5 ? 'HOLD' : 'NOTE' },
   };
+}
+
+// 위키 본문. 무엇이 관측됐고 왜 규칙으로 굳히지 않았는지를 적는다. 규칙처럼 읽히면 안 된다.
+function knowledgeContent(candidate, cases) {
+  const lines = [
+    `관측 ${candidate.occurrences}회. 근거 성격: ${candidate.evidenceBasis}.`,
+    '',
+    '기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.',
+    '재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.',
+    '',
+    '관측된 실패:',
+    ...cases.map((item) => `- ${item.kind}: ${String(item.title || '').slice(0, 200)} (${item.occurrences}회, ${item.id})`),
+    '',
+    `점수 ${candidate.score.total}/12 · 판정 ${candidate.score.verdict} · 결정가능성 ${candidate.score.dimensions.decidability}`,
+  ];
+  return lines.join('\n');
 }
 
 function approvalReason(type, artifact) {
