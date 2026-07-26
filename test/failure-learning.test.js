@@ -57,7 +57,12 @@ test('multiple failures can produce an active reusable skill', async (t) => {
   assert.equal(crafted.skill.status, 'DRAFT');
   assert.equal(crafted.skill.rules.length, 2);
   assert.match(crafted.skill.rules.join('\n'), /node --test/);
-  assert.match(crafted.skill.rules.join('\n'), /Secrets\/key\.txt/);
+  // 위반된 경로는 규칙 문장에 들어가지 않는다. 한 번의 위반에서 나온 파일 이름을 영구 규칙으로
+  // 굳히면 위반마다 거의 같은 스킬이 새로 생긴다(2026-07-27: scope-violation 계열 4개가 그랬다).
+  // 규칙은 재사용 가능해야 하고, 어느 경로였는지는 sourceFailureCaseIds가 가리킨다.
+  assert.doesNotMatch(crafted.skill.rules.join('\n'), /Secrets\/key\.txt/);
+  assert.match(crafted.skill.rules.join('\n'), /allowedPaths/);
+  assert.ok(crafted.skill.sourceFailureCaseIds.includes(scopeFailure.id), 'evidence link must survive');
   const active = await skillRegistry.setStatus(crafted.skill.id, actor.id, crafted.skill.version, 'ACTIVE');
   assert.equal(active.status, 'ACTIVE');
   assert.deepEqual(active.sourceFailureCaseIds.sort(), [commandFailure.id, scopeFailure.id].sort());
