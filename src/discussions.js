@@ -24,6 +24,28 @@ export class DiscussionStore {
     };
   }
 
+  // 읽음 표시. 읽은 주체와 시각을 남긴다 — "봤다"가 안 보이면 이 채널을 믿고 쓸 수 없다.
+  // 같은 주체가 다시 읽어도 기록은 하나다(처음 읽은 시각이 의미 있는 값이다).
+  async markRead(readerId, messageIds = []) {
+    const reader = String(readerId ?? '').trim();
+    if (!reader) throw new HttpError(400, 'Reader id is required.');
+    const wanted = new Set((Array.isArray(messageIds) ? messageIds : []).map((item) => String(item)));
+    return this.#withLock(async () => {
+      const db = normalizeDb(await readJson(this.path, EMPTY_DISCUSSIONS));
+      const marked = [];
+      for (const message of db.messages) {
+        if (wanted.size > 0 && !wanted.has(message.id)) continue;
+        if (message.authorUserId === reader) continue;
+        if (!Array.isArray(message.readBy)) message.readBy = [];
+        if (message.readBy.some((item) => item.userId === reader)) continue;
+        message.readBy.push({ userId: reader, at: nowIso() });
+        marked.push(message.id);
+      }
+      if (marked.length > 0) await atomicWriteJson(this.path, db);
+      return { marked };
+    });
+  }
+
   async findMemoryBySourceIds(sourceMessageIds = []) {
     const signature = memorySourceSignature(sourceMessageIds);
     const db = normalizeDb(await readJson(this.path, EMPTY_DISCUSSIONS));

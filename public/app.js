@@ -1535,7 +1535,16 @@ function renderDiscussionMessage(message) {
   return `<article class="discussion-message">
     <div class="discussion-message-head"><strong>${escapeHtml(userName(message.authorUserId) || '알 수 없음')}</strong><span class="muted">${escapeHtml(formatDateTime(message.createdAt))}</span></div>
     <p>${escapeHtml(message.content)}</p>
+    ${renderDiscussionReadReceipt(message)}
   </article>`;
+}
+
+// 누가 언제 읽었는지 보인다. 안 보이면 이 채널을 믿고 쓸 수 없다.
+function renderDiscussionReadReceipt(message) {
+  const readBy = Array.isArray(message.readBy) ? message.readBy : [];
+  if (readBy.length === 0) return '';
+  const names = readBy.map((item) => `${userName(item.userId) || item.userId} ${formatDateTime(item.at)}`);
+  return `<div class="discussion-read muted">읽음 ✓ ${escapeHtml(names.join(' · '))}</div>`;
 }
 
 function renderDiscussionMemory(memory) {

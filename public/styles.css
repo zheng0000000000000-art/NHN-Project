@@ -312,6 +312,7 @@ button.compact { padding: .38rem .55rem; font-size: .7rem; }
 .discussion-message { max-width: 78%; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.022); }
 .discussion-message-head { display: flex; justify-content: space-between; gap: .75rem; align-items: center; margin-bottom: .35rem; }
 .discussion-message p { margin: 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .86rem; }
+.discussion-read { margin-top: .4rem; font-size: .72rem; }
 .discussion-form { display: grid; grid-template-columns: 1fr; gap: .6rem; }
 .case-archive-grid { display: grid; gap: .5rem; }
 .case-archive-item { padding: .65rem .75rem; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.022); }

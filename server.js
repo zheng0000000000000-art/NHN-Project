@@ -1095,6 +1095,14 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (method === 'POST' && url.pathname === '/api/discussions/read') {
+    const body = await readBody(request);
+    assertPlainObject(body);
+    const result = await discussions.markRead(actor.id, body.messageIds ?? []);
+    sendJson(response, 200, result);
+    return;
+  }
+
   if (method === 'POST' && url.pathname === '/api/discussions/ai-save') {
     const body = await readBody(request);
     assertPlainObject(body);
