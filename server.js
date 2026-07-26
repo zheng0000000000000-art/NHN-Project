@@ -70,6 +70,9 @@ const publicRoot = path.join(projectRoot, 'public');
 const dataDirectory = path.resolve(process.env.DATA_DIR || path.join(projectRoot, 'data'));
 const taskArtifactRoot = path.join(dataDirectory, 'task-artifacts');
 const workspaceRoot = path.resolve(process.env.WORKSPACE_ROOT || projectRoot);
+// 스킬·하네스의 소속 판정에 쓰는 현재 workspace 이름.
+// 이것이 없으면 한 프로젝트에서 승격된 지식이 다른 프로젝트 에이전트에게도 규칙으로 실린다.
+const currentWorkspaceId = path.basename(workspaceRoot);
 const profilePath = path.resolve(process.env.VERIFICATION_PROFILES || path.join(projectRoot, 'config', 'verification-profiles.json'));
 const learningSeedPath = path.resolve(process.env.LEARNING_SEEDS || path.join(projectRoot, 'config', 'learning-seeds.json'));
 const usageConfigPath = path.resolve(process.env.USAGE_CONFIG || path.join(projectRoot, 'config', 'usage-dashboard.json'));
@@ -89,7 +92,7 @@ const store = new Store(dataDirectory, { signupCode, serverStartedAt });
 const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
 const verifier = new Verifier({ workspaceRoot, harnessRegistry, runtimeRoot: projectRoot });
 const failureCases = new FailureCaseStore(dataDirectory);
-const skillRegistry = new SkillRegistry({ dataDirectory, seedSkillPath: learningSeedPath });
+const skillRegistry = new SkillRegistry({ dataDirectory, seedSkillPath: learningSeedPath, workspaceId: currentWorkspaceId });
 const learning = new FailureLearningService({ failureCases, harnessRegistry, skillRegistry });
 const projectContext = new ProjectContextStore(dataDirectory);
 const discussions = new DiscussionStore(dataDirectory);
@@ -1235,7 +1238,7 @@ async function handleApi(request, response) {
   }
 
   if (method === 'GET' && url.pathname === '/api/skills') {
-    sendJson(response, 200, { skills: await skillRegistry.list() });
+    sendJson(response, 200, { skills: await skillRegistry.list({ workspaceId: currentWorkspaceId }) });
     return;
   }
 

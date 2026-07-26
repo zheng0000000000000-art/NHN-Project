@@ -6,9 +6,12 @@ const EMPTY_DB = { schemaVersion: 1, skills: [] };
 const STATUSES = new Set(['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED']);
 
 export class SkillRegistry {
-  constructor({ dataDirectory, seedSkillPath = null }) {
+  // workspaceId는 실패에서 승격된 스킬에 소속을 찍는 데 쓴다. 안 찍으면 한 프로젝트의 지식이
+  // 전역 규칙이 되어 다른 프로젝트 에이전트에게도 실린다(2026-07-27 관측: 심사 스킬 4개).
+  constructor({ dataDirectory, seedSkillPath = null, workspaceId = null }) {
     this.path = path.join(dataDirectory, 'skills.json');
     this.seedSkillPath = seedSkillPath;
+    this.workspaceId = workspaceId;
     this.lock = Promise.resolve();
   }
 
@@ -28,10 +31,20 @@ export class SkillRegistry {
     });
   }
 
-  async list({ includeDisabled = true } = {}) {
+  // 소속(scope)이 없거나 global인 스킬은 모든 workspace에서 보이고,
+  // 특정 workspace id를 가진 스킬은 그 workspace에서만 보인다.
+  // scope가 없으면 global로 읽는다 — 기존 기록을 한꺼번에 감추지 않기 위해서다.
+  static visibleIn(skill, workspaceId) {
+    const scope = skill?.scope;
+    if (!scope || scope === 'global') return true;
+    return workspaceId != null && scope === workspaceId;
+  }
+
+  async list({ includeDisabled = true, workspaceId = null } = {}) {
     const db = await readJson(this.path, EMPTY_DB);
     return db.skills
       .filter((item) => includeDisabled || item.status === 'ACTIVE')
+      .filter((item) => workspaceId == null || SkillRegistry.visibleIn(item, workspaceId))
       .map((item) => structuredClone(item))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -59,6 +72,8 @@ export class SkillRegistry {
 
   async createFromFailures(actor, input, failureCases) {
     const skill = normalizeSkill(input, actor.id, failureCases);
+    // 실패에서 나온 규칙은 그 실패가 난 곳의 것이다. 전역으로 올리려면 사람이 scope를 바꾼다.
+    if (this.workspaceId) skill.scope = this.workspaceId;
     return this.#withLock(async () => {
       const db = await readJson(this.path, EMPTY_DB);
       if (db.skills.some((item) => item.id === skill.id)) throw new HttpError(409, 'Skill ID already exists.');
@@ -115,6 +130,8 @@ function upsertBuiltinSkill(db, id, seed) {
       ? [...new Set(seed.rules.map((item) => String(item).trim()).filter(Boolean))].slice(0, 40)
       : [],
     sourceFailureCaseIds: [],
+    // 씨드는 저장소에 추적되는 공용 규칙이므로 전역이다.
+    scope: 'global',
     createdByUserId: current?.createdByUserId ?? null,
     createdAt: current?.createdAt ?? at,
     updatedAt: current?.updatedAt ?? at,
