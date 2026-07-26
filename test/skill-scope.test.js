@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { SkillRegistry } from '../src/skill-registry.js';
+import { SkillRegistry, ruleFromFailure } from '../src/skill-registry.js';
 import { HarnessRegistry } from '../src/harness-registry.js';
 
 // 한 프로젝트에서 승격된 지식이 다른 프로젝트 에이전트에게도 규칙으로 실리면 안 된다.
@@ -80,4 +80,27 @@ test('harness scope hides another project\'s checks and stamps promoted ones', (
   assert.equal(HarnessRegistry.visibleIn({ id: 'h', scope: 'global' }, 'unknown-auction'), true);
   assert.equal(HarnessRegistry.visibleIn({ id: 'h', scope: 'unknown-auction' }, 'unknown-auction'), true);
   assert.equal(HarnessRegistry.visibleIn({ id: 'h', scope: 'unknown-auction' }, 'team-loop-lite-ai-learning'), false);
+});
+
+// 한 번의 위반에서 나온 파일 이름이 영구 규칙이 되면 위반마다 거의 같은 스킬이 새로 생긴다.
+test('a scope violation produces a reusable rule, not a file name', () => {
+  const rule = ruleFromFailure({ kind: 'SCOPE_VIOLATION', title: 't', lastEvidence: { path: 'src/cli/args.js' } });
+  assert.ok(!rule.includes('src/cli/args.js'), 'the offending path must stay in the failure case, not the rule');
+  assert.ok(rule.includes('allowedPaths'));
+});
+
+// 객체가 규칙으로 들어오면 String()이 "[object Object]"를 만들어 영구 규칙에 박힌다.
+test('a non-string rule is dropped instead of becoming "[object Object]"', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'skill-rule-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, 'skills.json'), JSON.stringify({ schemaVersion: 1, skills: [] }), 'utf8');
+
+  const registry = new SkillRegistry({ dataDirectory: directory });
+  const created = await registry.createFromFailures(
+    { id: 'usr_test' },
+    { id: 'junk-rule', label: 'Junk', rules: [{ nested: 'object' }, 'a real rule'] },
+    [{ id: 'fail_1', title: 'boom' }],
+  );
+  assert.ok(!created.rules.includes('[object Object]'));
+  assert.ok(created.rules.includes('a real rule'));
 });

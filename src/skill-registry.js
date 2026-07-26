@@ -150,7 +150,9 @@ function normalizeSkill(input, actorUserId, failureCases) {
   if (label.length < 3 || label.length > 120) throw new HttpError(400, 'Skill label must be 3-120 characters.');
   if (!Array.isArray(failureCases) || failureCases.length === 0) throw new HttpError(400, 'At least one failure case is required.');
 
-  const suppliedRules = Array.isArray(input.rules) ? input.rules : [];
+  // 문자열이 아닌 규칙은 버린다. String()으로 감싸면 객체가 "[object Object]"가 되어
+  // 그대로 영구 규칙에 박힌다(2026-07-27 관측: delivery-gate-verdicts-only의 첫 규칙).
+  const suppliedRules = (Array.isArray(input.rules) ? input.rules : []).filter((item) => typeof item === 'string');
   const generatedRules = failureCases.map(ruleFromFailure).filter(Boolean);
   const rules = [...new Set([...suppliedRules, ...generatedRules]
     .map((item) => String(item).trim().slice(0, 1200))
@@ -198,7 +200,11 @@ export function ruleFromFailure(failure) {
   const command = [evidence.file, ...(evidence.args ?? [])].filter(Boolean).join(' ').trim();
   switch (failure?.kind) {
     case 'SCOPE_VIOLATION':
-      return `작업의 allowedPaths 밖인 \`${evidence.path || failure.title}\` 경로를 수정하지 않는다. 완료 전 변경 경로를 다시 확인한다.`;
+      // 파일 이름을 규칙에 박지 않는다. 한 번의 위반에서 나온 경로는 그 실패 사례의 사실이지
+      // 다음 작업의 규칙이 아니다. 경로를 넣으면 위반마다 거의 같은 스킬이 새로 생긴다
+      // (2026-07-27 관측: scope-violation 계열 스킬 4개가 서로 거의 같았다).
+      // 어느 경로였는지는 sourceFailureCaseIds가 이미 가리킨다.
+      return '완료 전에 변경한 파일이 모두 작업의 allowedPaths 안인지 확인하고, 밖이면 별도 작업으로 분리한다.';
     case 'TIMEOUT':
       return `완료 전에 \`${command || failure.title}\` 검증을 실행하고 제한 시간 안에 종료되는지 확인한다.`;
     case 'SPAWN_ERROR':
