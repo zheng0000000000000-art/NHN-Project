@@ -89,7 +89,7 @@ const authRateLimiter = new FixedWindowRateLimiter({ limit: 10, windowMs: 60_000
 const boardWorkers = new Map();
 
 const store = new Store(dataDirectory, { signupCode, serverStartedAt });
-const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot });
+const harnessRegistry = new HarnessRegistry({ dataDirectory, seedProfilePath: profilePath, workspaceRoot, workspaceId: currentWorkspaceId });
 const verifier = new Verifier({ workspaceRoot, harnessRegistry, runtimeRoot: projectRoot });
 const failureCases = new FailureCaseStore(dataDirectory);
 const skillRegistry = new SkillRegistry({ dataDirectory, seedSkillPath: learningSeedPath, workspaceId: currentWorkspaceId });
@@ -1182,7 +1182,7 @@ async function handleApi(request, response) {
   }
 
   if (method === 'GET' && url.pathname === '/api/harnesses') {
-    sendJson(response, 200, { harnesses: await harnessRegistry.list() });
+    sendJson(response, 200, { harnesses: await harnessRegistry.list({ workspaceId: currentWorkspaceId }) });
     return;
   }
 

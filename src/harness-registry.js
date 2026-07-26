@@ -10,11 +10,22 @@ const EMPTY_DB = { schemaVersion: 1, harnesses: [] };
 const STATUS = new Set(['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED']);
 
 export class HarnessRegistry {
-  constructor({ dataDirectory, seedProfilePath, workspaceRoot }) {
+  // workspaceId는 실패에서 승격된 하네스에 소속을 찍는 데 쓴다. 스킬과 같은 이유다 —
+  // 안 찍으면 한 프로젝트의 실패에서 나온 검사가 다른 프로젝트에도 규칙으로 실린다.
+  constructor({ dataDirectory, seedProfilePath, workspaceRoot, workspaceId = null }) {
     this.path = path.join(dataDirectory, 'harnesses.json');
     this.seedProfilePath = seedProfilePath;
     this.workspaceRoot = path.resolve(workspaceRoot);
+    this.workspaceId = workspaceId;
     this.lock = Promise.resolve();
+  }
+
+  // 소속이 없거나 global이면 모든 workspace에서 보인다. scope가 없는 기존 기록을 조용히
+  // 감추지 않는 이유는 검사가 사라진 것을 아무도 모르게 되기 때문이다.
+  static visibleIn(harness, workspaceId) {
+    const scope = harness?.scope;
+    if (!scope || scope === 'global') return true;
+    return workspaceId != null && scope === workspaceId;
   }
 
   async initialize() {
@@ -30,10 +41,11 @@ export class HarnessRegistry {
     });
   }
 
-  async list({ includeDisabled = true } = {}) {
+  async list({ includeDisabled = true, workspaceId = null } = {}) {
     const db = await readJson(this.path, EMPTY_DB);
     return db.harnesses
       .filter((item) => includeDisabled || item.status === 'ACTIVE')
+      .filter((item) => workspaceId == null || HarnessRegistry.visibleIn(item, workspaceId))
       .map((item) => structuredClone(item))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -87,7 +99,9 @@ export class HarnessRegistry {
     if (commands.length === 0) {
       throw new HttpError(409, 'The selected failures do not contain executable command evidence. Use a skill rule for scope-only or non-command failures.');
     }
+    // 실패에서 나온 검사는 그 실패가 난 곳의 것이다. 전역으로 올리려면 사람이 scope를 바꾼다.
     return this.create(actor, {
+      scope: this.workspaceId ?? undefined,
       id: input.id,
       label: input.label ?? input.id,
       description: input.description ?? `Regression harness derived from ${failureCases.length} failure case(s).`,
@@ -301,6 +315,7 @@ function normalizeDefinition(input, actorUserId, createdAt = nowIso()) {
     version: 1,
     commands: normalizeCommands(input.commands),
     sourceFailureCaseIds: [...new Set((Array.isArray(input.sourceFailureCaseIds) ? input.sourceFailureCaseIds : []).map((item) => String(item).trim()).filter(Boolean))].sort(),
+    ...(input.scope ? { scope: String(input.scope) } : {}),
     fixtureCandidates: [],
     createdByUserId: actorUserId,
     createdAt,

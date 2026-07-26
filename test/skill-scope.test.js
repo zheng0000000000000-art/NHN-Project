@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { SkillRegistry } from '../src/skill-registry.js';
+import { HarnessRegistry } from '../src/harness-registry.js';
 
 // 한 프로젝트에서 승격된 지식이 다른 프로젝트 에이전트에게도 규칙으로 실리면 안 된다.
 // 2026-07-27 관측: 경매 프로젝트의 심사 스킬 4개가 전역 스킬 목록에 섞여 있었다.
@@ -71,4 +72,12 @@ test('a skill promoted from failure is stamped with the workspace it came from',
   assert.equal(created.scope, 'unknown-auction');
   const leaked = (await registry.list({ workspaceId: 'team-loop-lite-ai-learning' })).map((item) => item.id);
   assert.ok(!leaked.includes('derived-rule'), 'a failure from one project must not become another project\'s rule');
+});
+
+// 하네스도 같은 규칙이다 — 한 프로젝트의 실패에서 나온 검사가 다른 프로젝트에 실리면 안 된다.
+test('harness scope hides another project\'s checks and stamps promoted ones', () => {
+  assert.equal(HarnessRegistry.visibleIn({ id: 'h' }, 'unknown-auction'), true);
+  assert.equal(HarnessRegistry.visibleIn({ id: 'h', scope: 'global' }, 'unknown-auction'), true);
+  assert.equal(HarnessRegistry.visibleIn({ id: 'h', scope: 'unknown-auction' }, 'unknown-auction'), true);
+  assert.equal(HarnessRegistry.visibleIn({ id: 'h', scope: 'unknown-auction' }, 'team-loop-lite-ai-learning'), false);
 });
