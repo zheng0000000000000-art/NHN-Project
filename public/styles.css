@@ -616,7 +616,17 @@ label { color: #4d5c58; }
 :root[data-theme="dark"] .card-heading,:root[data-theme="dark"] .loop-section-head,:root[data-theme="dark"] .ai-transcript-head { border-color:#26332f; }
 :root[data-theme="dark"] .card-heading h3,:root[data-theme="dark"] label,:root[data-theme="dark"] .rank-copy,:root[data-theme="dark"] table { color:var(--text); }
 :root[data-theme="dark"] th { color:#8f9793; background:#151816; border-color:var(--line); }:root[data-theme="dark"] td { border-color:#242825; }:root[data-theme="dark"] tbody tr:hover { background:#181c19; }
-:root[data-theme="dark"] .badge { background:#222724; color:#aeb6b2; }:root[data-theme="dark"] .badge.pass { background:#173028; color:#69c9a9; }:root[data-theme="dark"] .badge.fail { background:#351d22; color:#e98b97; }
+:root[data-theme="dark"] .badge { background:#222724; color:#aeb6b2; }
+/* 대화창: 다크에서 어두운 배경에 밝은 글씨. 408~596행이 조건 없이 라이트를 덮어써서
+   다크 모드에서도 대화 배경이 #f7faf9(거의 흰색)로 남아 있었다. */
+:root[data-theme="dark"] .discussion-message { background:#141917; border-color:#2a3531; }
+:root[data-theme="dark"] .discussion-message.mine { background:#172a23; border-color:#2f4f43; }
+:root[data-theme="dark"] .discussion-message p { color:#e6ecea; }
+:root[data-theme="dark"] .discussion-message-head strong { color:#8fd9bd; }
+:root[data-theme="dark"] .discussion-read { color:#7f8d88; }
+:root[data-theme="dark"] .discussion-messages { background:#0d100f; border:1px solid #232c29; border-radius:10px; }
+:root[data-theme="dark"] .ai-advice { background:#101d1a; border-color:#28453e; }
+:root[data-theme="dark"] .ai-advice p { color:#dbe4e1; }:root[data-theme="dark"] .badge.pass { background:#173028; color:#69c9a9; }:root[data-theme="dark"] .badge.fail { background:#351d22; color:#e98b97; }
 :root[data-theme="dark"] .loop-hero { background:linear-gradient(135deg,#111713,#17271f); box-shadow:0 16px 40px rgba(0,0,0,.34); border:1px solid #26332d; }
 :root[data-theme="dark"] .loop-stage,:root[data-theme="dark"] .loop-work,:root[data-theme="dark"] .ai-session-item { background:#151816; border-color:var(--line); color:var(--text); }
 :root[data-theme="dark"] .loop-mode-card { background:#151816; border-color:var(--line); color:var(--text); }

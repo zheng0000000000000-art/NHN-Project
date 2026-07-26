@@ -1529,6 +1529,17 @@ function renderDiscussionBoard() {
   discussionMessages.innerHTML = messages.length
     ? messages.map(renderDiscussionMessage).join('')
     : '<div class="empty">아직 대화가 없습니다.</div>';
+  // 열면 최근 대화가 보이게 맨 아래로 내린다. 위에서 시작하면 매번 스크롤해야 한다.
+  scrollDiscussionToLatest(discussionMessages);
+}
+
+// 사용자가 이미 위를 읽고 있으면 끌어내리지 않는다. 읽던 자리를 뺏는 것이 더 불편하다.
+function scrollDiscussionToLatest(container) {
+  if (!container) return;
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 160;
+  const untouched = container.scrollTop === 0;
+  if (!nearBottom && !untouched) return;
+  requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
 }
 
 function renderDiscussionMessage(message) {
