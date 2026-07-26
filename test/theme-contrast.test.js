@@ -50,3 +50,33 @@ test('a selector the light theme repaints must not keep a dark-theme text colour
     '라이트 테마가 배경을 다시 칠하는 선택자는 글자색도 함께 정해야 한다',
   );
 });
+
+// 다크 모드가 라이트처럼 보이던 원인: 라이트 구역이 조건 없이 밝은 배경을 칠하는데
+// 다크 구역에 같은 선택자가 없으면 그 부품만 흰 채로 남는다(2026-07-27: 대화창이 그랬다).
+test('every light-painted component has a dark counterpart', async () => {
+  const css = (await readFile(new URL('../public/styles.css', import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const lightAt = css.indexOf('color-scheme: light');
+  const darkAt = css.indexOf(':root[data-theme="dark"]');
+  assert.ok(lightAt > 0 && darkAt > lightAt, 'both theme regions must exist');
+
+  const parse = (text) => {
+    const found = new Map();
+    for (const match of text.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+      for (const raw of match[1].split(',')) {
+        const selector = raw.trim().replace(/\s+/g, ' ');
+        if (selector) found.set(selector, (found.get(selector) ?? '') + match[2]);
+      }
+    }
+    return found;
+  };
+
+  const light = parse(css.slice(lightAt, darkAt));
+  const dark = new Set([...parse(css.slice(darkAt)).keys()]
+    .map((selector) => selector.replace(':root[data-theme="dark"]', '').trim()));
+  const lightBackground = /background(?:-color)?:\s*(#[c-fA-F][0-9a-fA-F]{5}|#fff\b|white)/;
+
+  const uncovered = [...light].filter(([selector, body]) => lightBackground.test(body) && !dark.has(selector))
+    .map(([selector]) => selector);
+  assert.deepEqual(uncovered, [], '다크 테마가 되돌리지 않는 밝은 배경 부품이 남아 있다');
+});

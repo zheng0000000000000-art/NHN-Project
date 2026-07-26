@@ -626,7 +626,16 @@ label { color: #4d5c58; }
 :root[data-theme="dark"] .discussion-read { color:#7f8d88; }
 :root[data-theme="dark"] .discussion-messages { background:#0d100f; border:1px solid #232c29; border-radius:10px; }
 :root[data-theme="dark"] .ai-advice { background:#101d1a; border-color:#28453e; }
-:root[data-theme="dark"] .ai-advice p { color:#dbe4e1; }:root[data-theme="dark"] .badge.pass { background:#173028; color:#69c9a9; }:root[data-theme="dark"] .badge.fail { background:#351d22; color:#e98b97; }
+:root[data-theme="dark"] .ai-advice p { color:#dbe4e1; }
+/* 다크가 되돌리지 않아 밝은 채로 남던 나머지. 실측으로 뽑았다(2026-07-27):
+   라이트 구역이 밝은 배경을 칠하는데 다크 구역에 같은 선택자가 없던 것들이다.
+   .context-budget-bar 는 실제 화면에서 밝은 배경에 밝은 글자로 보이던 것을 브라우저로 확인했다. */
+:root[data-theme="dark"] .notice { background:#241d10; border-color:#5b3f1f; color:#f0cd7a; }
+:root[data-theme="dark"] .ai-result-card { background:#101614; border-color:#28352f; }
+:root[data-theme="dark"] .balance-progress-track { background:#1b2320; }
+:root[data-theme="dark"] .context-budget-bar { background:#1b2320; }
+:root[data-theme="dark"] .receipt-stages span { background:#151b19; border-color:#2a3531; color:#c2ccc8; }
+:root[data-theme="dark"] .receipt-stages .done { background:#142b24; color:#6fd0ae; }:root[data-theme="dark"] .badge.pass { background:#173028; color:#69c9a9; }:root[data-theme="dark"] .badge.fail { background:#351d22; color:#e98b97; }
 :root[data-theme="dark"] .loop-hero { background:linear-gradient(135deg,#111713,#17271f); box-shadow:0 16px 40px rgba(0,0,0,.34); border:1px solid #26332d; }
 :root[data-theme="dark"] .loop-stage,:root[data-theme="dark"] .loop-work,:root[data-theme="dark"] .ai-session-item { background:#151816; border-color:var(--line); color:var(--text); }
 :root[data-theme="dark"] .loop-mode-card { background:#151816; border-color:var(--line); color:var(--text); }
