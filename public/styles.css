@@ -311,7 +311,7 @@ button.compact { padding: .38rem .55rem; font-size: .7rem; }
 .discussion-messages { display: flex; flex-direction: column; gap: .55rem; min-height: 360px; max-height: 560px; overflow: auto; margin-bottom: .75rem; padding: .25rem; }
 .discussion-message { max-width: 78%; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.022); }
 .discussion-message-head { display: flex; justify-content: space-between; gap: .75rem; align-items: center; margin-bottom: .35rem; }
-.discussion-message p { margin: 0; color: #d6dde8; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .86rem; }
+.discussion-message p { margin: 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .86rem; }
 .discussion-form { display: grid; grid-template-columns: 1fr; gap: .6rem; }
 .case-archive-grid { display: grid; gap: .5rem; }
 .case-archive-item { padding: .65rem .75rem; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.022); }
@@ -532,10 +532,14 @@ label { color: #4d5c58; }
 .error { color: var(--danger); }
 .toast { background: #17312a; color: #fff; border-color: #285247; }
 .discussion-message { background: #f7faf9; }
+/* 본문 색을 테마에 묶는다. 종전에는 #d6dde8 이 고정이라 라이트 테마의 흰 배경 위에서 안 보였다. */
+.discussion-message p { color: #172320; }
 .discussion-message.mine { background: #e4f6f0; border-color: #b8e2d6; }
 .ai-panel { background: linear-gradient(180deg, #f8fcfb, #fff); border-color: #bcded4; }
 .ai-result-card { background: #fff; border-color: #cfe4de; }
 .ai-advice { background: #eff9f6; border-color: #c9e7de; }
+/* 배경만 밝게 바꾸고 본문 색을 두면 안 보인다. discussion-message 와 같은 결함이었다. */
+.ai-advice p { color: #172320; }
 .details pre, .wiki-text-card pre { background: #f5f8f7; color: #35443f; }
 
 @media (max-width: 1240px) {
