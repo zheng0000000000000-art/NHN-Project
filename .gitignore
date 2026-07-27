@@ -5,6 +5,12 @@ data/generated/
 data/balance-experiments/
 data/balance-portfolio/
 !data/.gitkeep
+# 승격된 지식은 런타임 상태가 아니라 자산이다. 버전 관리하지 않으면
+# 이 기계를 벗어나지 못하고 되돌릴 수도 없다(2026-07-27: 스킬 소속 분류가 git 밖이라
+# 다른 기계에 안 따라갔다). 비밀(app-secret.key·users.json)과 로그는 계속 제외한다.
+!data/skills.json
+!data/harnesses.json
+!data/wiki.json
 .team-loop/
 .team-loop-worktrees/
 .team-loop-sandboxes/

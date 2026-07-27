@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "wiki_38850f37bed8ca69dbaf",
+      "title": "관측: Agent executor failure was ignored by verification",
+      "content": "관측 5회. 근거 성격: REPORTED_OUTCOME.\n\n기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.\n재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.\n\n관측된 실패:\n- EXECUTOR_FAILURE_IGNORED: Agent executor failure was ignored by verification (5회, fail_0bc54b1bc7cc8050387c)\n\n점수 7/12 · 판정 HOLD · 결정가능성 0",
+      "tags": [
+        "promotion",
+        "undecidable",
+        "executor_failure_ignored"
+      ],
+      "status": "CANDIDATE",
+      "evidence": [
+        "fail_0bc54b1bc7cc8050387c"
+      ],
+      "sourceExperienceId": null,
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:10:02.941Z",
+      "updatedAt": "2026-07-25T15:10:02.941Z"
+    },
+    {
+      "id": "wiki_8ab5e172eb18d170b285",
+      "title": "관측: Agent task was approved with no changed deliverable",
+      "content": "관측 5회. 근거 성격: REPORTED_OUTCOME.\n\n기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.\n재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.\n\n관측된 실패:\n- FALSE_COMPLETION_NO_DELIVERABLE: Agent task was approved with no changed deliverable (5회, fail_f66c4de509f09fe3549b)\n\n점수 7/12 · 판정 HOLD · 결정가능성 0",
+      "tags": [
+        "promotion",
+        "undecidable",
+        "false_completion_no_deliverable"
+      ],
+      "status": "CANDIDATE",
+      "evidence": [
+        "fail_f66c4de509f09fe3549b"
+      ],
+      "sourceExperienceId": null,
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:10:02.947Z",
+      "updatedAt": "2026-07-25T15:10:02.947Z"
+    },
+    {
+      "id": "wiki_4d75cfdba9aa52dfd519",
+      "title": "관측: Autonomous loop exhausted maximum recovery depth",
+      "content": "관측 2회. 근거 성격: REPORTED_OUTCOME.\n\n기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.\n재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.\n\n관측된 실패:\n- LOOP_STALLED_MAX_TURN_DEPTH: Autonomous loop exhausted maximum recovery depth (2회, fail_593c8643b1f158f2bc78)\n\n점수 6/12 · 판정 HOLD · 결정가능성 0",
+      "tags": [
+        "promotion",
+        "undecidable",
+        "loop_stalled_max_turn_depth"
+      ],
+      "status": "CANDIDATE",
+      "evidence": [
+        "fail_593c8643b1f158f2bc78"
+      ],
+      "sourceExperienceId": null,
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:10:02.951Z",
+      "updatedAt": "2026-07-25T15:10:02.951Z"
+    },
+    {
+      "id": "wiki_26b514b262f48a976b54",
+      "title": "관측: AI review failed: Original 12-turn executor run produced no changes. Automatic focused retry reduced scope to the first acceptance criterion and omitted ful",
+      "content": "관측 2회. 근거 성격: REPORTED_OUTCOME.\n\n기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.\n재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.\n\n관측된 실패:\n- MAX_TURNS_RECOVERY_EXHAUSTED: AI review failed: Original 12-turn executor run produced no changes. Automatic focused retry reduced scope to the first acceptance criterion and omitted full-suite testing, but also reached 12 turns w (2회, fail_5669d5a8fe0bfb61c4bf)\n\n점수 6/12 · 판정 HOLD · 결정가능성 0",
+      "tags": [
+        "promotion",
+        "undecidable",
+        "max_turns_recovery_exhausted"
+      ],
+      "status": "CANDIDATE",
+      "evidence": [
+        "fail_5669d5a8fe0bfb61c4bf"
+      ],
+      "sourceExperienceId": null,
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:10:02.955Z",
+      "updatedAt": "2026-07-25T15:10:02.955Z"
+    },
+    {
+      "id": "wiki_a677462ccc4924d01521",
+      "title": "관측: AI review failed: reviewer returned ambiguous literal APPROVE|REJECT",
+      "content": "관측 2회. 근거 성격: REPORTED_OUTCOME.\n\n기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.\n재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.\n\n관측된 실패:\n- AI_REVIEW_VERDICT_INVALID: AI review failed: reviewer returned ambiguous literal APPROVE|REJECT (2회, fail_42a9e2f8aa7f95c4fc5d)\n\n점수 6/12 · 판정 HOLD · 결정가능성 0",
+      "tags": [
+        "promotion",
+        "undecidable",
+        "ai_review_verdict_invalid"
+      ],
+      "status": "CANDIDATE",
+      "evidence": [
+        "fail_42a9e2f8aa7f95c4fc5d"
+      ],
+      "sourceExperienceId": null,
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:10:02.960Z",
+      "updatedAt": "2026-07-25T15:10:02.960Z"
+    },
+    {
+      "id": "wiki_633a9a561d820699cc63",
+      "title": "관측: AI review failed: AI reviewer codex-review returned the prompt's example summary instead of a review.",
+      "content": "관측 3회. 근거 성격: REPORTED_OUTCOME.\n\n기계가 PASS/FAIL로 가를 수 있는 근거가 없어 하네스로도 스킬로도 굳히지 않았다.\n재실행 가능한 명령이나 검사 가능한 상태가 확보되면 그때 승격 후보로 다시 올라온다.\n\n관측된 실패:\n- AI_REVIEW_SUMMARY_PLACEHOLDER: AI review failed: AI reviewer codex-review returned the prompt's example summary instead of a review. (3회, fail_3292d48ca0cfca475e67)\n\n점수 7/12 · 판정 HOLD · 결정가능성 0",
+      "tags": [
+        "promotion",
+        "undecidable",
+        "ai_review_summary_placeholder"
+      ],
+      "status": "CANDIDATE",
+      "evidence": [
+        "fail_3292d48ca0cfca475e67"
+      ],
+      "sourceExperienceId": null,
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:12:45.673Z",
+      "updatedAt": "2026-07-26T20:12:45.673Z"
+    }
+  ]
+}

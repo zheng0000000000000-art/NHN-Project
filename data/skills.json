@@ -1,0 +1,1110 @@
+{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "id": "ai-review-json-invalid-d4cf127c",
+      "label": "AI Review JSON Invalid",
+      "description": "The AI reviewer returned invalid JSON.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "AI reviewers must ensure that their output is valid JSON.",
+        "If the AI reviewer returns invalid JSON, it should be recorded as a failure in the failure corpus.",
+        "과거 실패 `AI review failed: AI reviewer codex-review returned invalid JSON.`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_56407efe20d842ded1d7"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:21.840Z",
+      "updatedAt": "2026-07-26T20:13:21.851Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "a5be1cb3370bb3b3f46e9dbacef8e5ca0f9b8debc1b2c5a0e8500c7bcf5ab72b",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe"
+    },
+    {
+      "id": "ai-review-summary-placeholder-fc001b5b",
+      "label": "AI Review Summary Placeholder",
+      "description": "The AI reviewer returned the prompt's example summary instead of a review.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "AI reviewers must not return the prompt's example summary as a valid review.",
+        "Ensure that the AI reviewer provides a meaningful and relevant review based on the task context.",
+        "과거 실패 `AI review failed: AI reviewer codex-review returned the prompt's example summary instead of a review.`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_3292d48ca0cfca475e67"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:19.296Z",
+      "updatedAt": "2026-07-26T20:13:19.306Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "9c0bbb95521698c85b0e209c0c6b636d0c0a54958cf0ed586e0895e788b013d9",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe"
+    },
+    {
+      "id": "ai-review-verdict-invalid-99246511",
+      "label": "AI Review Verdict Invalid",
+      "description": "The AI reviewer returned an invalid verdict, such as 'APPROVE|REJECT' instead of a clear PASS or FAIL.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "리뷰어가 'APPROVE|REJECT'와 같은 모호한 리터럴을 반환하지 않도록 하세요.",
+        "판정은 명확하게 PASS 또는 FAIL 여야 합니다.",
+        "과거 실패 `AI review failed: reviewer returned ambiguous literal APPROVE|REJECT`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_42a9e2f8aa7f95c4fc5d"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:45.068Z",
+      "updatedAt": "2026-07-26T20:13:45.075Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "fe572daf788b20224defdf33bbcca8119f926392715d647f9b3916587e53f102",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe"
+    },
+    {
+      "id": "autonomous-loop-recovery-depth-0847b43f",
+      "label": "Autonomous Loop Recovery Depth Handling",
+      "description": "Handles cases where the autonomous loop exhausts its maximum recovery depth, requiring human intervention to resolve.",
+      "status": "DRAFT",
+      "source": "FAILURE_DERIVED",
+      "version": 1,
+      "rules": [
+        "When an autonomous loop exhausts its maximum recovery depth, it must be recorded as a failure case in the FailureCaseStore.",
+        "The failure case should have a kind of 'LOOP_STALLED_MAX_TURN_DEPTH' and a title indicating that the loop has exhausted its maximum recovery depth.",
+        "The entry for this failure case must wait for human confirmation before being enforced as an active rule, ensuring it does not activate automatically.",
+        "과거 실패 `Autonomous loop exhausted maximum recovery depth`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_593c8643b1f158f2bc78",
+        "fail_debac6f2becff231a45d"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:30.451Z",
+      "updatedAt": "2026-07-26T20:13:30.451Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "773902835e9977895d685e35d48ba35d48bdc12475281619aa9ee08fe2951c0b"
+    },
+    {
+      "id": "balance-tuning",
+      "label": "Deterministic balance tuning",
+      "description": "Tune parameters against explicit metrics without mutating baselines or hiding no-solution outcomes.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "Define target metrics, companion continuous metrics, constraints, and search bounds before simulation.",
+        "Keep the product target separate from the search heuristic and preserve every observation.",
+        "Use a deterministic seed or explicit grid, report no-solution honestly, and never mutate the baseline during search."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-24T13:21:00.301Z",
+      "updatedAt": "2026-07-24T13:21:00.301Z",
+      "statusChangedByUserId": null,
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Approve target metrics and constraints before applying a candidate balance patch."
+        ],
+        "sideEffectScope": [
+          "config/**"
+        ],
+        "requiredCapabilities": [
+          "Read a BalanceSpec and ObservationSet and reproduce the search deterministically."
+        ]
+      },
+      "definitionSha256": "5e362effefb969f90e6e1e41c3524f3d1d48947624fe7fbf4b4876dfc7f6b8d8",
+      "scope": "global"
+    },
+    {
+      "id": "board-task-spec-authoring",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "public-artifacts-system",
+      "createdAt": "2026-07-16T16:14:05.212Z",
+      "updatedAt": "2026-07-19T16:34:53.036Z",
+      "label": "Board task spec (jisiseo) authoring",
+      "description": "How to write a board task instruction the program can verify and any executor (including a small local model) can complete unattended.",
+      "rules": [
+        "Set allowedPaths to the minimal glob set the change needs and nothing more; the claim-time scope lock and the SCOPE_VIOLATION gate both key off it, so an over-broad scope is itself a defect.",
+        "Write acceptance criteria as observable end-states a program can check (files that must exist or be gone, references that must resolve, one exit-0 command), never as intentions; the executor never self-declares done, verify and review do.",
+        "Name the harness/verificationProfile that actually executes the invariant the task asserts, and reuse an existing harness when one fits; a member or local-model task must use a safe profile, while a code-executing harness must be created and activated by an admin first.",
+        "Make the spec self-contained: an executor with no prior context, including a small local model, should finish from the spec alone, so list the exact files, the exact expected final state, and the single command that proves it.",
+        "Keep one task = one scope = one worktree; if a change spans overlapping paths, split it into non-overlapping tasks so parallel executors never collide."
+      ],
+      "definitionSha256": "f72d2a9f38b6bc5003b75f430d412126f0a26197e90b508e43755495071d5785",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "global"
+    },
+    {
+      "id": "delivery-before-done",
+      "label": "Delivery before DONE",
+      "description": "Prevent reviewed work from being marked complete before its verified worktree output reaches the main branch.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "Keep a reviewed task in REVIEW until its worktree changes are committed and merged successfully; approval intent alone is not delivery.",
+        "If commit or merge fails, record TASK_MERGE_FAILED, preserve the worktree, and leave the task reviewable instead of marking it DONE.",
+        "Block archive while a task worktree contains unlanded changes, and remove completed worktrees only after confirming the files exist on the main branch."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-19T15:54:37.422Z",
+      "updatedAt": "2026-07-19T15:54:37.422Z",
+      "statusChangedByUserId": null,
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "definitionSha256": "9cb74f061ef9bf56dcc39a16bc18cdc601d05d3fab2e0565f842d15e2019d2ff",
+      "scope": "global"
+    },
+    {
+      "id": "delivery-gate-verdicts-only-c79fc1a3",
+      "label": "Delivery Gate Verdicts Only",
+      "description": "Draft regression harness from 1 selected case(s).",
+      "status": "DISABLED",
+      "source": "FAILURE_DERIVED",
+      "version": 3,
+      "rules": [
+        "과거 실패 `Agent executor exited with code 1`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_6700e082ccf922edd1b4"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T17:12:52.664Z",
+      "updatedAt": "2026-07-25T17:14:31.700Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "50107785bd86e084390672e3162297a62eecbb29e09495c4cb18b4f523b1abcd",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "team-loop-lite-ai-learning"
+    },
+    {
+      "id": "delivery-integrity-681be38f",
+      "label": "Delivery Integrity Harness",
+      "description": "This harness checks for delivery failures and conflicts, ensuring that task deliveries are handled correctly.",
+      "status": "DRAFT",
+      "source": "FAILURE_DERIVED",
+      "version": 1,
+      "rules": [
+        "과거 실패 `Task delivery conflicted on 3 path(s)`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_31b2179bd3c02f11bbf6"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:47.120Z",
+      "updatedAt": "2026-07-26T20:13:47.120Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "4dd5de9c33f2a3fbf36e938bc0b4d9491641b821c637ebf7df13301e84e55bbe"
+    },
+    {
+      "id": "delivery-integrity-harness-411a6c0b",
+      "label": "Delivery Integrity Harness",
+      "description": "This harness checks the integrity of task delivery by verifying the presence of worktrees and handling Git lock conflicts.",
+      "status": "DRAFT",
+      "source": "FAILURE_DERIVED",
+      "version": 1,
+      "rules": [
+        "과거 실패 `Task delivery failed`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_6c5ce6ef639c74c59c0b"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:32.608Z",
+      "updatedAt": "2026-07-26T20:13:32.608Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "30bd71b76e90af4cbd22430d591ad62e10e41460c44f9207f7b872081fd7733a"
+    },
+    {
+      "id": "delivery-integrity-harness-954bac27",
+      "label": "Delivery Integrity Harness",
+      "description": "Harness for verifying task delivery integrity, including conflict detection and lock handling.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "과거 실패 `Task delivery conflicted on 4 path(s)`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_02033e115039630afa96"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:09:59.691Z",
+      "updatedAt": "2026-07-25T15:09:59.697Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "b613440396542bb77b8f03b784b48b68ccb8550fcbb798690c15d7e3b7307ccc",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "team-loop-lite-ai-learning"
+    },
+    {
+      "id": "execution-verification",
+      "label": "Execution-first verification",
+      "description": "Confirm completed work with real execution instead of code-reading guesses.",
+      "rules": [
+        "After implementation, verify behavior by actually running the server, CLI, HTTP request, browser flow, or test command that proves the feature works.",
+        "When safe, measure a clean baseline first, exercise a failure or boundary condition, then restore and confirm the clean state again.",
+        "Report the exact command, exit code or HTTP status, observed result, and any verification limits separately from assumptions."
+      ],
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 5,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-15T14:00:00.000Z",
+      "updatedAt": "2026-07-16T10:24:19.145Z",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "definitionSha256": "deb7a0f1688c4c2b0af86745fd75bedeaeb23cab3c29ceb601b05dfe91341720",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "global"
+    },
+    {
+      "id": "failure-corpus-discipline",
+      "label": "Failure corpus discipline",
+      "description": "Keep failure learning at the event level so the corpus stays useful instead of filling with duplicate rows.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "When recording verification failures, model one logical failure event as one Failure Case; do not split one scope-violation run into one case per changed file.",
+        "Do not include volatile outcomes such as actual exit code, timestamps, or workspace fingerprint in the stable failure identity unless they change the root cause.",
+        "In the Harness & Skill dashboard, group failures by the human-actionable event before showing counts, and use occurrences for repetition instead of duplicating rows.",
+        "Before closing any implemented task, audit every failure discovered during diagnosis, implementation, integration, and live verification even when the final verification passes.",
+        "For each discovered failure, record one disposition: link an existing skill or harness, create a narrowly reusable artifact, or explicitly mark it one-off with evidence; never silently omit it.",
+        "Prefer strengthening an existing skill or harness over creating a near-duplicate, and include the learning disposition in the final result summary."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "codex",
+      "createdAt": "2026-07-16T14:32:48.841Z",
+      "updatedAt": "2026-07-16T14:32:48.841Z",
+      "statusChangedByUserId": "codex",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "definitionSha256": "44b052f0739f1154ff38b9a5d659763fddd73d07ba36ee236eeb89fe6f89990f",
+      "scope": "global"
+    },
+    {
+      "id": "instruction-contract-authoring",
+      "label": "Instruction contract authoring",
+      "description": "Turn prose directives into internally consistent, adversarially testable contracts.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "Classify each requirement as invariant, conditional rule, or preference before writing enforcement.",
+        "Add at least one adversarial negative case for every blocking gate.",
+        "Generate hashes and derived values from programs, and verify prose, schema, and harness agree."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-24T13:21:00.301Z",
+      "updatedAt": "2026-07-24T13:21:00.301Z",
+      "statusChangedByUserId": null,
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Approve policy-changing directives and their negative tests."
+        ],
+        "sideEffectScope": [
+          "docs/**",
+          "config/**"
+        ],
+        "requiredCapabilities": [
+          "Classify constraints and validate examples, gates, and generated hashes together."
+        ]
+      },
+      "definitionSha256": "39bf089acec91d2ea064079ef9ba41eb8090b9cc7ae32a167b48abd03b177ec2",
+      "scope": "global"
+    },
+    {
+      "id": "judging-ai-native-gameplay",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "criteria-system",
+      "createdAt": "2026-07-16T05:24:24.638Z",
+      "label": "Judging T2 AI-native gameplay",
+      "description": "Review rule for proving AI is part of the playable fun, not only a production tool.",
+      "rules": [
+        "Show that runtime AI output changes game state, player options, NPC behavior, level generation, or win/loss structure.",
+        "Compare AI-on and AI-off runs; if the core play pattern barely changes, treat AI-native score as weak.",
+        "Separate objective AI dependency from subjective fun; human playtests must judge whether the AI change is enjoyable."
+      ],
+      "updatedAt": "2026-07-16T10:24:14.274Z",
+      "definitionSha256": "f954a3947077a56cb3d5dd55b683a62b46a790c540c7a559b56859634f8903db",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "unknown-auction"
+    },
+    {
+      "id": "judging-nhn-fit-human-review",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "criteria-system",
+      "createdAt": "2026-07-16T05:24:24.638Z",
+      "label": "Judging T6 NHN fit human review",
+      "description": "Review rule for keeping NHN alignment as advisory, not an automated pass/fail.",
+      "rules": [
+        "AI may compare genre, service direction, and hiring signals, but must label NHN fit as advisory evidence only.",
+        "Final NHN alignment judgment belongs to human reviewers because internal priorities and taste are not observable.",
+        "Use this criterion as a tie-breaker or positioning guide, not as a deterministic elimination harness."
+      ],
+      "updatedAt": "2026-07-16T10:24:16.483Z",
+      "definitionSha256": "427a6b4a3d9cb97f2ebc18f4cd6915d7c9b10f8453b29351cf7f36dad1e4c264",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "unknown-auction"
+    },
+    {
+      "id": "judging-technical-documentation",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "criteria-system",
+      "createdAt": "2026-07-16T05:24:24.638Z",
+      "label": "Judging T3 technical documentation",
+      "description": "Review rule for technical documents that prove design quality.",
+      "rules": [
+        "The document must explain architecture, model/data flow, prompts as design components, validation, failure modes, fallback, cost, latency, and privacy risks.",
+        "Reject prompt-list-only documentation; require code/document/execution-result consistency.",
+        "Ask whether the team can explain and modify the design under time pressure; plausible generated prose is not enough."
+      ],
+      "updatedAt": "2026-07-16T10:24:15.284Z",
+      "definitionSha256": "1eaa1652b4bfc9434a0d58ba7edd88e75e1b8ff925fca5391e4539d74a2a0252",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "unknown-auction"
+    },
+    {
+      "id": "judging-video-clarity",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "criteria-system",
+      "createdAt": "2026-07-16T05:24:24.638Z",
+      "label": "Judging T1 video clarity",
+      "description": "Review rule for the 60-second silent-video pitch.",
+      "rules": [
+        "The first 30 seconds must show the game genre, core loop, and AI-driven difference without verbal explanation.",
+        "Prefer real gameplay over logos, menus, or slides; the AI-driven event should appear early enough that a silent viewer notices it.",
+        "Validate the final cut with 5-10 people watching silently; AI structure review alone is not enough for surprise or fun."
+      ],
+      "updatedAt": "2026-07-16T10:24:13.240Z",
+      "definitionSha256": "2f66e9c1b1f5e0adba9250a673dbd9a54bbfa1bcbac185da69d3ddfb85deef41",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "unknown-auction"
+    },
+    {
+      "id": "max-turns-recovery-harness-123ea119",
+      "label": "Max Turns Recovery Harness",
+      "description": "A harness to test the recovery mechanism when the executor reaches its turn limit.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "과거 실패 `AI review failed: Original 12-turn executor run produced no changes. Automatic focused retry reduced scope to the first acceptance criterion and omitted full-suite testing, but also reached 12 turns with no deliverable. Work was paused; implementation was completed manually and the recovery/state defects were retained as failure evidence.`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_5669d5a8fe0bfb61c4bf"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:37.554Z",
+      "updatedAt": "2026-07-26T20:13:37.563Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "fb1a098edeccf4656dd3657a0a3175c676028cacb7c30c267e77f7cb0cd65d8f",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe"
+    },
+    {
+      "id": "no-deliverable-failure-069be268",
+      "label": "No Deliverable Failure Handling",
+      "description": "Handles cases where an agent task completes without any deliverable changes.",
+      "status": "DRAFT",
+      "source": "FAILURE_DERIVED",
+      "version": 1,
+      "rules": [
+        "If a task is marked as 'AGENT' and no files are changed, it should be flagged with a 'NO_DELIVERABLE' failure kind.",
+        "The system should not attempt to create a HARNESS from delivery-gate verdicts alone if they do not contain executable command evidence.",
+        "과거 실패 `Agent completed without a changed deliverable`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_4f728024d80c17d86d18"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:26.644Z",
+      "updatedAt": "2026-07-26T20:13:26.644Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "7bced0d11d04ffa9f8de759c97561263f9a171708264717eb7a35c70ca059325"
+    },
+    {
+      "id": "path-escape-qa",
+      "label": "Path containment QA",
+      "description": "Detect traversal, encoded separator, and sibling-prefix escapes at filesystem boundaries.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 3,
+      "rules": [
+        "Resolve both root and candidate before containment checks and require equality or a separator-bounded descendant.",
+        "Test dot segments, alternate separators, URL-encoded separators, absolute paths, and sibling-prefix collisions.",
+        "Fail closed when decoding or normalization is ambiguous."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-15T14:00:00.000Z",
+      "updatedAt": "2026-07-16T10:24:20.876Z",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "executable",
+        "automationLevel": 8,
+        "humanApprovalPoints": [],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Normalize path inputs and compare separator-bounded resolved paths."
+        ]
+      },
+      "definitionSha256": "1d9ac487b36db98d942ed106c8f8c652464c15b912a1226b3de574e3f3132f3b",
+      "scope": "global"
+    },
+    {
+      "id": "powershell-encoding",
+      "label": "PowerShell encoding integrity",
+      "description": "Preserve Korean and structured text across PowerShell, cmd, files, and child-process boundaries.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 3,
+      "rules": [
+        "Treat Windows PowerShell 5.1 defaults as ambiguous; specify UTF-8 explicitly for every file and process boundary.",
+        "Do not infer correctness from terminal appearance alone; verify saved bytes and decode the value again.",
+        "Prefer passing structured input through a UTF-8 file or stdin over shell interpolation."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-15T14:00:00.000Z",
+      "updatedAt": "2026-07-16T10:24:21.500Z",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review byte-level or round-trip evidence before accepting repaired text."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Inspect encoding metadata and verify a UTF-8 round trip."
+        ]
+      },
+      "definitionSha256": "d947878085059ac0ec9f21ca7713698160551aad05b93ef38761145694e27f2b",
+      "scope": "global"
+    },
+    {
+      "id": "promotion-review",
+      "label": "Experience promotion review",
+      "description": "Promote repeated experience into the narrowest durable artifact with evidence.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "Require at least two linked occurrences before proposing durable promotion.",
+        "Prefer an executable harness when the decision is deterministic, then a skill, then wiki knowledge.",
+        "Keep proposals pending until a human accepts them; never auto-promote shared policy."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-24T13:21:00.301Z",
+      "updatedAt": "2026-07-24T13:21:00.301Z",
+      "statusChangedByUserId": null,
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Approve promotion into a shared harness, skill, or wiki entry."
+        ],
+        "sideEffectScope": [
+          "config/**",
+          "docs/**"
+        ],
+        "requiredCapabilities": [
+          "Score repeatability, decidability, isolation, observability, and maintenance value."
+        ]
+      },
+      "definitionSha256": "b40664f7bfef392ad739179b12f7992c24ea7ef771324602385462f3b8140c9c",
+      "scope": "global"
+    },
+    {
+      "id": "review-state-overwritten-by-budget-circuit-3493479a",
+      "label": "Review State Overwritten by Budget Circuit",
+      "description": "Passing verification with pending review was overwritten to BLOCKED by automation budget handling.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "리뷰 상태가 예산 회로에 의해 덮어씌워지는 것을 방지해야 합니다.",
+        "사용 가능한 토큰 수를 최대한 활용하여 리뷰 과정을 완료할 수 있도록 해야 합니다.",
+        "과거 실패 `Passing verification with pending review was overwritten to BLOCKED by automation budget handling`가 재발하지 않도록 관련 검증과 변경 범위를 완료 전에 확인한다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_5bad03cd57f01ac9383a"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:41.665Z",
+      "updatedAt": "2026-07-26T20:13:41.672Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "5d42fa896bfcc1186f9b400a85451492d381920ce25dadf9634abf83f258df22",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe"
+    },
+    {
+      "id": "root-cause-diagnosis",
+      "label": "Direct-evidence root cause diagnosis",
+      "description": "Separate direct observations from proxy signals before changing code or policy.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 3,
+      "rules": [
+        "Record the observed failure, competing hypotheses, and a falsifying check for each hypothesis.",
+        "Do not use names, prefixes, timestamps, or process existence as proof of actor identity, delivery, or success.",
+        "Prefer the smallest direct probe and retain its exit code and evidence."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-15T14:00:00.000Z",
+      "updatedAt": "2026-07-16T10:24:24.488Z",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the falsification evidence before declaring a root cause."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Inspect direct process, authorization, quota, and exit-code evidence."
+        ]
+      },
+      "definitionSha256": "4cfff6406b6349cbec1f13d2fb6f4874cd933922bb244ec069b81ae720a49f1b",
+      "scope": "global"
+    },
+    {
+      "id": "runtime-boundary-consistency",
+      "label": "Runtime boundary consistency",
+      "description": "Keep browser modules, server authorization, and the actually running process on the same verified revision.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "Browser entry modules may import only files reachable from the server static root; verify every relative import over HTTP, not only its source file with node --check.",
+        "When server behavior changes, restart the real server process before UI verification; a refreshed browser with an old Node process is a mixed-version failure.",
+        "For permissions exposed as UI buttons, test both visibility and the matching API authorization using the same actor role.",
+        "After starting a server for a workspace path containing spaces, read bootstrap.workspace.root and compare it to the intended absolute path before running any verification."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-19T15:39:30.660Z",
+      "updatedAt": "2026-07-19T15:39:30.660Z",
+      "statusChangedByUserId": null,
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "definitionSha256": "68d7955b027e662c327aef0bd0862889561f533fd67803e7cbf0245295172363",
+      "scope": "global"
+    },
+    {
+      "id": "scope-guard",
+      "label": "Scope guard (범위 밖 수정 금지)",
+      "description": "여러 에이전트가 한 레포에서 협업할 때 범위 밖 파일 수정으로 검증이 실패한 사례에서 도출.",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 4,
+      "rules": [
+        "완료 전에 변경된 파일이 모두 작업의 allowedPaths 안에 있는지 확인한다.",
+        "범위 밖 변경이 필요하면 별도 스코프 작업으로 분리하고 그 작업의 allowedPaths에 등록한다.",
+        "다른 에이전트가 담당한 경로(예: src/ai.js)는 수정하지 않는다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_5ccbd83e1172b8fb3192",
+        "fail_70fc1c00453adb7717f9",
+        "fail_7487e7f2d141e76005a4",
+        "fail_7af633582897aeede88d",
+        "fail_b59df8cf918a8ff347c9"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-15T14:42:41.646Z",
+      "updatedAt": "2026-07-16T10:24:26.547Z",
+      "definitionSha256": "1e678e1026bd0a4e4c0412a4203a0ef6f985c638312ed011cb7ad7a071888fb0",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "global"
+    },
+    {
+      "id": "scope-violation-cli-files-43c7c38c",
+      "label": "Scope Violation in CLI Files",
+      "description": "Ensure that changes to src/cli/main.js and src/cli/args.js do not violate the project scope, particularly regarding AI advisory roles and server API budgets.",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 5,
+      "rules": [
+        "Changes to src/cli/main.js and src/cli/args.js must not mark work complete or bypass harness verification.",
+        "AI is advisory only; it should not replace human review or modify server configurations without explicit approval.",
+        "Ensure that any changes do not inadvertently count external Codex/Claude CLI usage into server API budgets."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_5ccbd83e1172b8fb3192",
+        "fail_b59df8cf918a8ff347c9"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-15T16:00:28.730Z",
+      "updatedAt": "2026-07-19T16:34:55.141Z",
+      "definitionSha256": "bf445c246f252ec0b79daff3584fcafb7b2c0280cf7c4d99f2657e4fa3a477cf",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "team-loop-lite-ai-learning"
+    },
+    {
+      "id": "scope-violation-handling-4c44458a",
+      "label": "Scope Violation Handling",
+      "description": "Handle scope violations by ensuring that changes do not bypass harness verification, replace human review, or exceed allowed paths.",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 5,
+      "rules": [
+        "Changes must be reviewed for compliance with the project's local-first workflow and AI advisory guidelines.",
+        "AI should only provide advisory output and must not mark work complete or bypass any verification steps.",
+        "Ensure that all changes are small, reviewable tasks with narrow allowedPaths and program-verifiable acceptance criteria.",
+        "Server AI helper should use local Ollama when configured: AI_PROVIDER=ollama, AI_MODEL=qwen2.5-coder:14b, AI_BASE_URL=http://127.0.0.1:11434.",
+        "Usage dashboard shows per-user data to non-admin users; admins can see team data.",
+        "Usage token totals should exclude cached input tokens.",
+        "External Codex/Claude CLI usage is reference-only and must not be counted into server API budgets."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_130824d76c67bef7aa15",
+        "fail_32e64f019ec76a65c997",
+        "fail_76f4aaf803724185c534",
+        "fail_788a337ca404f982ea90",
+        "fail_825660bd9f434efb079e",
+        "fail_948580703cc01a204676",
+        "fail_dfb2b030b8bd6acc864a",
+        "fail_e463437de783f33cdba5",
+        "fail_e73c5d832222c4375ede"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-16T14:41:03.270Z",
+      "updatedAt": "2026-07-19T16:34:53.970Z",
+      "definitionSha256": "91d6c37ad9135f5063064d702506a4d90367bcf8c22250eebdcbcb2c002ed781",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "team-loop-lite-ai-learning"
+    },
+    {
+      "id": "scope-violation-handling-8e8dfe81",
+      "label": "Scope Violation Handling",
+      "description": "Handle cases where the verification evidence indicates scope violations.",
+      "status": "DRAFT",
+      "source": "FAILURE_DERIVED",
+      "version": 1,
+      "rules": [
+        "Do not allow any changes to paths outside the allowed scope.",
+        "Record all scope violations in the failure corpus with details of the affected paths and changed paths.",
+        "`agent-executor` 검증 명령이 현재 환경에서 실제로 실행 가능한지 먼저 확인하고, 실행 불가 상태에서 완료를 보고하지 않는다."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_9001147959beb2af5fdd"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-26T20:13:35.379Z",
+      "updatedAt": "2026-07-26T20:13:35.379Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "ad88e1fcd99cca6c16fc93f5fadf965f7dc3ed34678c7ce5f0f49a6f71ed7c71"
+    },
+    {
+      "id": "scope-violation-resolution-af3d7b99",
+      "label": "Scope Violation Resolution Skill",
+      "description": "Handles scope violations by recording and resolving them according to predefined rules.",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 2,
+      "rules": [
+        "Check allowed paths before changing files.",
+        "Record any changes outside the allowed scope in the failure corpus.",
+        "Ensure that scope violations are reviewed and resolved before proceeding with further actions."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_6a0c2e575ae85168ce69"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:10:02.931Z",
+      "updatedAt": "2026-07-25T15:10:02.937Z",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the failure-derived rule before it changes future agent behavior."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read linked failure evidence and report skill outcomes."
+        ]
+      },
+      "definitionSha256": "2c481e9a1761a812f2f9737533d3c30ba29014b33dcaf42dad03be193198b973",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "team-loop-lite-ai-learning"
+    },
+    {
+      "id": "scope-violation-review-a29aa3bf",
+      "label": "Scope Violation Review",
+      "description": "Review and address scope violations in the project.",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 4,
+      "rules": [
+        "Ensure that all changes adhere to the defined project scope.",
+        "Verify that AI is used only for advisory purposes and does not mark work complete or bypass harness verification.",
+        "Check that server AI helper uses local Ollama when configured.",
+        "Confirm that usage token totals exclude cached input tokens.",
+        "Ensure external Codex/Claude CLI usage is reference-only and not counted into server API budgets."
+      ],
+      "sourceFailureCaseIds": [
+        "fail_130824d76c67bef7aa15",
+        "fail_32e64f019ec76a65c997",
+        "fail_76f4aaf803724185c534",
+        "fail_788a337ca404f982ea90",
+        "fail_825660bd9f434efb079e",
+        "fail_948580703cc01a204676",
+        "fail_dfb2b030b8bd6acc864a",
+        "fail_e73c5d832222c4375ede"
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-16T14:41:24.159Z",
+      "updatedAt": "2026-07-19T16:34:57.544Z",
+      "definitionSha256": "6f6f0a143cc229d077e666414e3ae3a9f12066a1d977d79795a84352e4f08dc2",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 6,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "scope": "team-loop-lite-ai-learning"
+    },
+    {
+      "id": "task-supersession-lifecycle",
+      "label": "Task supersession lifecycle",
+      "description": "Prevent reissued replacement tasks from leaving the original work active on the board or milestone.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "rules": [
+        "When reissuing a task because its scope or contract changed, set supersedesTaskId instead of relying on title suffixes such as R or words such as reissue.",
+        "Treat the replacement as the only executable task; when it reaches DONE, archive the original automatically and record supersededByTaskId for auditability.",
+        "Before reporting a milestone or board as correct, check for active tasks that have an archived or completed replacement with the same work contract."
+      ],
+      "sourceFailureCaseIds": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-19T15:39:30.660Z",
+      "updatedAt": "2026-07-19T15:39:30.660Z",
+      "statusChangedByUserId": null,
+      "manifest": {
+        "schemaVersion": 1,
+        "skillType": "assisted",
+        "automationLevel": 5,
+        "humanApprovalPoints": [
+          "Review the skill outcome before promoting durable knowledge or changing shared policy."
+        ],
+        "sideEffectScope": [],
+        "requiredCapabilities": [
+          "Read the selected context pack and report the observed outcome."
+        ]
+      },
+      "definitionSha256": "ad1851d18402f52cbbe109e4e9f762c8efc86c83ba84b0969109a935dc483978",
+      "scope": "global"
+    }
+  ]
+}

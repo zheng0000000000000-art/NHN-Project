@@ -1,0 +1,1356 @@
+{
+  "schemaVersion": 1,
+  "harnesses": [
+    {
+      "id": "agent-delivery-integrity",
+      "label": "Agent delivery integrity",
+      "description": "Prevents a failed or no-op agent execution from passing on unchanged baseline tests.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "--test",
+            "{teamLoopRoot}/test/delivery-gate.test.js"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-25T05:37:59.297Z",
+      "updatedAt": "2026-07-25T05:37:59.297Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "ee8ddb8ece691be51e8fac55d3c12ef5478efacb64c75e931f8afdc2f4b2bc80",
+      "scope": "global"
+    },
+    {
+      "id": "balance-gate",
+      "label": "Balance target gate",
+      "description": "Evaluates the shipping configuration against declared metric targets, then confirms the tuned candidate also passes.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "{teamLoopRoot}/tools/verification/check-balance-gate.mjs",
+            "{teamLoopRoot}/examples/balance/unknown-auction-economy.json",
+            "--mode=evaluate"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 180000,
+          "mutatesState": false
+        },
+        {
+          "file": "node",
+          "args": [
+            "{teamLoopRoot}/tools/verification/check-balance-gate.mjs",
+            "{teamLoopRoot}/examples/balance/unknown-auction-economy.json",
+            "--mode=tune"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 180000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-25T03:51:50.428Z",
+      "updatedAt": "2026-07-25T03:51:50.428Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "b36a1267e7e25b60032a5346666de650cf2be4db67bbc65d7d6d30d5c0dbc63d",
+      "scope": "global"
+    },
+    {
+      "id": "brainstorm-review",
+      "label": "Brainstorm review",
+      "description": "Checks brainstorm artifacts by role, including spec impact, recommendation status, and experiment separation.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "{teamLoopRoot}/tools/verification/check-writing.mjs",
+            "brainstorm"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        },
+        {
+          "file": "git",
+          "args": [
+            "diff",
+            "--check"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-18T07:23:54.466Z",
+      "updatedAt": "2026-07-18T07:23:54.466Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "1c56bdd871b53f9ccc6cf1d1300b66bbce6c904a5c17cab67a2da70ff9e04c4f",
+      "scope": "global"
+    },
+    {
+      "id": "context-pack-integrity",
+      "label": "Context pack integrity",
+      "description": "Validates a shared context-pack contract and every immutable full-file SHA-256 input.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "{teamLoopRoot}/tools/verification/check-context-pack.mjs",
+            ".team-loop/context-pack.json",
+            "."
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-24T13:21:00.300Z",
+      "updatedAt": "2026-07-24T13:21:00.300Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "827cae980470cbcc5036f65b5a58714f54594eb38e993b4f92e8178046d7f924",
+      "scope": "global"
+    },
+    {
+      "id": "document-review",
+      "label": "Document review",
+      "description": "Checks changed writing for structure, placeholders, merge markers, and relative links.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "{teamLoopRoot}/tools/verification/check-writing.mjs",
+            "document"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        },
+        {
+          "file": "git",
+          "args": [
+            "diff",
+            "--check"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-18T07:23:54.466Z",
+      "updatedAt": "2026-07-18T07:23:54.466Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "3e2ad56d88eadf9d0c7feaa09e7d2d8002bafda1677ce07c709c549740404fe9",
+      "scope": "global"
+    },
+    {
+      "id": "failure-dedupe-regression",
+      "label": "Failure dedupe regression",
+      "description": "Ensures repeated failure events do not explode into duplicate file-level cases.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/learning/check-failure-dedupe.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": "codex",
+      "createdAt": "2026-07-16T14:32:48.841Z",
+      "updatedAt": "2026-07-16T14:32:48.841Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "d308537018cdbe6dae3ed0f6b3455e0cccbe9e0f83199c3738fabff5c83a2a59",
+      "scope": "global"
+    },
+    {
+      "id": "harness-injection-simulation",
+      "label": "Harness injection simulation",
+      "description": "Idle-time proof that each harness fails when it should. Injects a known fault, requires the harness to exit nonzero, reverts, and requires it to go green again. Also reports harnesses that have no injection spec yet.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/verification/check-harness-injection.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 300000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-25T11:28:09.860Z",
+      "updatedAt": "2026-07-25T11:28:09.860Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "449a27dd01cb9f6e2c03692dd20cd89f0a2e8ade82f7e78d63bc91293ba34139",
+      "scope": "global"
+    },
+    {
+      "id": "integration-tree-clean",
+      "label": "Integration tree clean",
+      "description": "Fails when the tree that task worktrees merge into has an unfinished git operation or a committed conflict marker. Task verification only ever runs inside its own worktree, so nothing else looks at the integration tree.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/verification/check-integration-tree.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-25T11:28:09.860Z",
+      "updatedAt": "2026-07-25T11:28:09.860Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "76b5c593ec1c1d1f4a9495d5122b159d78ffeead05358c26d07e1342b601b821",
+      "scope": "global"
+    },
+    {
+      "id": "judging-ops-stability",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "fixtureCandidates": [],
+      "createdByUserId": "criteria-system",
+      "createdAt": "2026-07-16T05:24:24.638Z",
+      "lastTest": {
+        "testId": "ht_41d972fb24ebdec96baa",
+        "definitionSha256": "be865762065a0ffdb6106889f106f893ad2fbe58bd197d2ce9f416fe6d818a00",
+        "passed": true,
+        "startedAt": "2026-07-16T14:40:38.927Z",
+        "finishedAt": "2026-07-16T14:40:39.008Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "node",
+            "args": [
+              "tools/judging/check-criteria.mjs",
+              "ops-stability"
+            ],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 0,
+            "timedOut": false,
+            "spawnError": false,
+            "passed": true,
+            "startedAt": "2026-07-16T14:40:38.927Z",
+            "finishedAt": "2026-07-16T14:40:39.008Z",
+            "stdoutSha256": "749f5130e4967ba6563659f2a349bee20bf4cd2c6ff25b3dd4bd1da2113ac788",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdoutTail": "PASS T5-PACKAGE: package.json is readable\nPASS T5-TEST-SCRIPT: test or check script exists\nPASS T5-OPS-DOC: docs mention cost, quota, cache, fallback, or API-key behavior\nPASS T5-HEALTH: health URL not configured; set SUBMISSION_HEALTH_URL for strict check\n",
+            "stderrTail": ""
+          }
+        ]
+      },
+      "label": "Judging T5 cost and stability",
+      "description": "Checks test/check script, operational documentation, and optional health URL availability.",
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/judging/check-criteria.mjs",
+            "ops-stability"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000
+        }
+      ],
+      "updatedAt": "2026-07-19T16:35:00.669Z",
+      "definitionSha256": "be865762065a0ffdb6106889f106f893ad2fbe58bd197d2ce9f416fe6d818a00",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "unknown-auction"
+    },
+    {
+      "id": "judging-repository-history",
+      "status": "ACTIVE",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 2,
+      "fixtureCandidates": [],
+      "createdByUserId": "criteria-system",
+      "createdAt": "2026-07-16T05:24:24.638Z",
+      "lastTest": {
+        "testId": "ht_48014e2ce25086cf0770",
+        "definitionSha256": "71d91c048ef4ab7528e3448a961b58bb364316f12205399f1b37c7a18d80d489",
+        "passed": true,
+        "startedAt": "2026-07-16T14:40:40.019Z",
+        "finishedAt": "2026-07-16T14:40:40.240Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "node",
+            "args": [
+              "tools/judging/check-criteria.mjs",
+              "repo-history"
+            ],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 0,
+            "timedOut": false,
+            "spawnError": false,
+            "passed": true,
+            "startedAt": "2026-07-16T14:40:40.019Z",
+            "finishedAt": "2026-07-16T14:40:40.240Z",
+            "stdoutSha256": "2ecddd2701dad736c4fd4bf98c9486bb81b05c04a3811126cbe614fc4241f23c",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdoutTail": "PASS T4-COMMITS: repository has enough commits - 24\nPASS T4-CONTRIBUTORS: repository has contributor evidence - 3\nPASS T4-LATEST-DIFF: latest commit diff stat is readable - 0 chars\nPASS T4-DOCS: repository contains documentation files - 17\nPASS T4-SECRETS: repository does not expose obvious API keys\n",
+            "stderrTail": ""
+          }
+        ]
+      },
+      "label": "Judging T4 repository history",
+      "description": "Checks commit count, contributor evidence, documentation presence, and obvious secret leakage.",
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/judging/check-criteria.mjs",
+            "repo-history"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000
+        }
+      ],
+      "updatedAt": "2026-07-19T16:35:01.974Z",
+      "definitionSha256": "71d91c048ef4ab7528e3448a961b58bb364316f12205399f1b37c7a18d80d489",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "unknown-auction"
+    },
+    {
+      "id": "node-project",
+      "label": "Node project",
+      "description": "Runs the Node test suite, an integration-tree check, and Git patch checks.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 5,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "--test"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 180000,
+          "mutatesState": false
+        },
+        {
+          "file": "node",
+          "args": [
+            "tools/verification/check-integration-tree.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        },
+        {
+          "file": "git",
+          "args": [
+            "diff",
+            "--check"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-15T12:06:27.820Z",
+      "updatedAt": "2026-07-15T14:29:22.433Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "4b7ade9fc2a08ec09263003e4ea225b36e2ab30147c75e2411bd2d55c4a69d70",
+      "scope": "global"
+    },
+    {
+      "id": "node-project-4208024c",
+      "label": "Regression check: executor_failed",
+      "description": "Draft regression harness from 1 selected case(s).",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 3,
+      "commands": [
+        {
+          "file": "agent-executor",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_7cd1069dacae4499b506"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_64c429cba24af3d21372",
+          "name": "executor_failed-4499b506",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_7cd1069dacae4499b506",
+          "failureSignatureSha256": "fc2be061d70bf85618f301f7935f368e1edbab16ccd8cdada952443855d1f5ca",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T09:51:34.244Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T09:51:34.241Z",
+      "updatedAt": "2026-07-25T14:51:44.869Z",
+      "lastTest": {
+        "testId": "ht_f7c4eeaafbf924039326",
+        "definitionSha256": "81e5d6d9cd3e9882679d59c4d2efa3a602df20b23085372c9b6e98da19411bed",
+        "passed": false,
+        "startedAt": "2026-07-25T09:52:20.638Z",
+        "finishedAt": "2026-07-25T09:52:20.642Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "agent-executor",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T09:52:20.638Z",
+            "finishedAt": "2026-07-25T09:52:20.642Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "8c1140f4f239bd2d6e6a74f21990e6d1b25ca8d7dac6d95485433803993d49ab",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-executor ENOENT"
+          }
+        ]
+      },
+      "definitionSha256": "81e5d6d9cd3e9882679d59c4d2efa3a602df20b23085372c9b6e98da19411bed",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "node-project-executor-failures-e4129298",
+      "label": "Node Project Executor Failures",
+      "description": "Verification cases for the node-project harness that include executor failures and no deliverable scenarios.",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 4,
+      "commands": [
+        {
+          "file": "agent-executor",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        },
+        {
+          "file": "agent-delivery",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_7cd1069dacae4499b506",
+        "fail_c651a9753f5bbb4d150d"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_ae32209b4906cde7cb77",
+          "name": "executor_failed-4499b506",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_7cd1069dacae4499b506",
+          "failureSignatureSha256": "fc2be061d70bf85618f301f7935f368e1edbab16ccd8cdada952443855d1f5ca",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T05:39:44.523Z"
+        },
+        {
+          "id": "fxc_736d262d8fc1c76ec91d",
+          "name": "no_deliverable-bb4d150d",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_c651a9753f5bbb4d150d",
+          "failureSignatureSha256": "e5b8fbb7975e21730116f148070fd4ee4e943c18efc1fddfaaa2f54669e41317",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T05:39:44.527Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T05:39:44.516Z",
+      "updatedAt": "2026-07-25T14:51:44.873Z",
+      "lastTest": {
+        "testId": "ht_3e71f50b3fcdd46d6fc8",
+        "definitionSha256": "fb8067fb74ec8bb1ae9b568c663a338b8b3d64777ce2ea4f17df4a1a73adaf87",
+        "passed": false,
+        "startedAt": "2026-07-25T05:39:44.540Z",
+        "finishedAt": "2026-07-25T05:39:44.544Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "agent-executor",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T05:39:44.540Z",
+            "finishedAt": "2026-07-25T05:39:44.542Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "8c1140f4f239bd2d6e6a74f21990e6d1b25ca8d7dac6d95485433803993d49ab",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-executor ENOENT"
+          },
+          {
+            "file": "agent-delivery",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T05:39:44.542Z",
+            "finishedAt": "2026-07-25T05:39:44.544Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "f2017ba71f778ba4802b23c80d26ef390d93b618caef8a0a88ff1b48ae8e2a65",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-delivery ENOENT"
+          }
+        ]
+      },
+      "definitionSha256": "fb8067fb74ec8bb1ae9b568c663a338b8b3d64777ce2ea4f17df4a1a73adaf87",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "public-asset-integrity",
+      "status": "DRAFT",
+      "source": "IMPORTED_LOCAL_SKILL",
+      "version": 1,
+      "sourceFailureCaseIds": [],
+      "createdByUserId": "public-artifacts-system",
+      "createdAt": "2026-07-16T16:14:05.212Z",
+      "updatedAt": "2026-07-16T16:14:05.212Z",
+      "label": "Public asset integrity",
+      "description": "Fails on broken local references or orphaned js/css assets under public/.",
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/public/check-assets.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000
+        }
+      ],
+      "fixtureCandidates": [],
+      "definitionSha256": "b91f0af1986abc802902f10df3e9a4c6016766c48a4fd95e29c783cfdb3f9281",
+      "scope": "global"
+    },
+    {
+      "id": "regression-executor-failed-4208024c",
+      "label": "Regression check: executor_failed",
+      "description": "Draft regression harness from 1 selected case(s).",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 3,
+      "commands": [
+        {
+          "file": "agent-executor",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_7cd1069dacae4499b506"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_34023264a870d514a755",
+          "name": "executor_failed-4499b506",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_7cd1069dacae4499b506",
+          "failureSignatureSha256": "fc2be061d70bf85618f301f7935f368e1edbab16ccd8cdada952443855d1f5ca",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T07:53:10.871Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T07:53:10.868Z",
+      "updatedAt": "2026-07-25T14:51:44.877Z",
+      "lastTest": {
+        "testId": "ht_9a389f4c433aa4e28dd5",
+        "definitionSha256": "1fdf9e9813d6966e1990b240e7febd688cda336be9efa09e68762c634125a167",
+        "passed": false,
+        "startedAt": "2026-07-25T07:53:10.878Z",
+        "finishedAt": "2026-07-25T07:53:10.880Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "agent-executor",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T07:53:10.878Z",
+            "finishedAt": "2026-07-25T07:53:10.880Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "8c1140f4f239bd2d6e6a74f21990e6d1b25ca8d7dac6d95485433803993d49ab",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-executor ENOENT"
+          }
+        ]
+      },
+      "definitionSha256": "1fdf9e9813d6966e1990b240e7febd688cda336be9efa09e68762c634125a167",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "regression-executor-failed-no-deliverable-e4129298",
+      "label": "Regression check: executor_failed-no_deliverable",
+      "description": "Draft regression harness from 2 selected case(s).",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 4,
+      "commands": [
+        {
+          "file": "agent-executor",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        },
+        {
+          "file": "agent-delivery",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_7cd1069dacae4499b506",
+        "fail_c651a9753f5bbb4d150d"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_ca06e1c6b5841adae3ca",
+          "name": "executor_failed-4499b506",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_7cd1069dacae4499b506",
+          "failureSignatureSha256": "fc2be061d70bf85618f301f7935f368e1edbab16ccd8cdada952443855d1f5ca",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T05:53:18.681Z"
+        },
+        {
+          "id": "fxc_8d41a106fa60986855cd",
+          "name": "no_deliverable-bb4d150d",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_c651a9753f5bbb4d150d",
+          "failureSignatureSha256": "e5b8fbb7975e21730116f148070fd4ee4e943c18efc1fddfaaa2f54669e41317",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T05:53:18.685Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T05:53:18.678Z",
+      "updatedAt": "2026-07-25T14:51:44.881Z",
+      "lastTest": {
+        "testId": "ht_92ec89d250ef7f470c5a",
+        "definitionSha256": "f64dbd64a3f10cebe6ab28530918dcc555a43b1d1523946bd01e98a6f35cf677",
+        "passed": false,
+        "startedAt": "2026-07-25T05:53:18.695Z",
+        "finishedAt": "2026-07-25T05:53:18.699Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "agent-executor",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T05:53:18.695Z",
+            "finishedAt": "2026-07-25T05:53:18.697Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "8c1140f4f239bd2d6e6a74f21990e6d1b25ca8d7dac6d95485433803993d49ab",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-executor ENOENT"
+          },
+          {
+            "file": "agent-delivery",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T05:53:18.698Z",
+            "finishedAt": "2026-07-25T05:53:18.699Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "f2017ba71f778ba4802b23c80d26ef390d93b618caef8a0a88ff1b48ae8e2a65",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-delivery ENOENT"
+          }
+        ]
+      },
+      "definitionSha256": "f64dbd64a3f10cebe6ab28530918dcc555a43b1d1523946bd01e98a6f35cf677",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "regression-exit-mismatch-58a9ec48",
+      "label": "Regression check: exit_mismatch",
+      "description": "Draft regression harness from 1 selected case(s).",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 3,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "--test"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_d8c0ea96371525805ca4"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_38c6eaaccad58a8b8f74",
+          "name": "exit_mismatch-25805ca4",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_d8c0ea96371525805ca4",
+          "failureSignatureSha256": "6a49bf9b4ac1c19cb7e8c7959c3d31f6b0c62e8918fe2fd932e08fd59226314d",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T05:30:46.102Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T05:30:46.099Z",
+      "updatedAt": "2026-07-25T05:30:51.697Z",
+      "lastTest": {
+        "testId": "ht_6f184ba20687fd916ffe",
+        "definitionSha256": "294d0537c6754744ebb05cd166d18a5fe17e2b2040fbc4d38b898ef8ef0bac6f",
+        "passed": true,
+        "startedAt": "2026-07-25T05:30:46.109Z",
+        "finishedAt": "2026-07-25T05:30:51.694Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "node",
+            "args": [
+              "--test"
+            ],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 0,
+            "timedOut": false,
+            "spawnError": false,
+            "passed": true,
+            "startedAt": "2026-07-25T05:30:46.109Z",
+            "finishedAt": "2026-07-25T05:30:51.694Z",
+            "stdoutSha256": "ea6c92fe809435249d478bc6a019780fdaac33fe2d23972736d874491655217a",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdoutTail": "te matching imported local skills to built-ins (12.1958ms)\n✔ first user is admin and later users are members (175.3825ms)\n✔ disabled users keep their identity but cannot authenticate (243.2184ms)\n✔ server startup recovers persisted RUNNING tasks as interrupted, not completed (104.0458ms)\n✔ task mutations reject stale versions (108.6609ms)\n✔ task creation can auto-apply the default harness and active skills (73.5169ms)\n✔ explicit task harness and skills override automatic learning defaults (71.452ms)\n✔ a PM plan atomically expands into linked dependency tasks (63.9508ms)\n✔ a PM plan rejects dependency cycles without creating partial tasks (46.02ms)\n✔ first administrator bootstrap expires without SIGNUP_CODE (41.6209ms)\n✔ configured SIGNUP_CODE is checked inside the registration lock (74.931ms)\n✔ filters tasks by assignee and reviewer independently (1.1131ms)\n✔ combines assignee and reviewer filters (0.1735ms)\n✔ execution values fail back to simple human and idle states (0.7714ms)\n✔ board labels expose state without executor details (0.1665ms)\n✔ workflow labels keep execution and approval phases mutually exclusive (0.159ms)\n✔ result summary exposes review evidence at a glance (0.8719ms)\n✔ result document contains changes, checks and executor without raw logs (1.192ms)\n✔ result filename is safe and identifies the artifact (0.226ms)\n✔ task specification contains ownership, schedule, scope and completion contract (2.1667ms)\n✔ task specification filename is safe and readable (0.3434ms)\n✔ task specification includes an actionable execution, evidence and review contract (0.3444ms)\n✔ legacy reissued DONE task archives and links its original during migration (73.5755ms)\n✔ finalizing an explicit replacement archives the original (65.8897ms)\n✔ normalizes Responses API token usage (1.3041ms)\n✔ usage tracker preserves provider-reported CLI cost without local pricing (75.6733ms)\n✔ usage tracker aggregates by user, source, feature and budget (46.4469ms)\n✔ usage summary can be limited to the current actor (74.51ms)\n✔ usage summary caches 10k parsed events and invalidates on external append (192.5109ms)\n✔ glob matcher supports recursive and single-segment patterns (1.3337ms)\n✔ process runner uses exit code as verdict (118.2143ms)\n✔ process runner fails closed on timeout (77.4849ms)\n✔ verifier binds command pass to git scope (923.4975ms)\n✔ teamLoopRoot placeholders resolve to the tool runtime rather than an external workspace (397.0163ms)\n✔ workspace verification mutex rejects a concurrent verification instead of queueing (0.4566ms)\n✔ workboard projection exposes board fields and keeps orchestration internals private (1.5153ms)\n✔ standalone renderer embeds escaped data and has no runtime dependency (1.2009ms)\n✔ workspace ids and paths stay inside the managed workspace root (0.7117ms)\n✔ workspace manifest keeps external project locations and context roles (0.1541ms)\n✔ workspace manifest rejects an unnormalized id (0.2868ms)\n✔ workspace handoff is read from the manifest with integrity metadata (17.3436ms)\n✔ per-task worktree physically isolates edits from the main tree (654.895ms)\n✔ createTaskWorktree is idempotent (recreate resets cleanly) (559.0235ms)\n✔ detects unlanded worktree changes before archive (384.9716ms)\n✔ detects a task branch that was manually integrated before approval (524.8452ms)\n✔ sanitizes task id and rejects empty (0.5591ms)\n✔ writing verifier accepts a grounded document (387.6074ms)\n✔ writing verifier ignores a deleted document when it is consolidated into a replacement (409.928ms)\n✔ brainstorm verifier validates candidate, comparison, recommendation, decision, and run by role (246.8306ms)\n✔ candidate must declare spec impact and open questions (215.5636ms)\n✔ recommendation separates product direction and next experiment with an allowed status (180.0686ms)\n✔ general brainstorm keeps the lightweight fallback rules (191.1877ms)\nℹ tests 260\nℹ suites 0\nℹ pass 260\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5536.4427\n",
+            "stderrTail": ""
+          }
+        ]
+      },
+      "definitionSha256": "294d0537c6754744ebb05cd166d18a5fe17e2b2040fbc4d38b898ef8ef0bac6f",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "regression-exit-mismatch-be4dceb4",
+      "label": "Regression check: exit_mismatch",
+      "description": "Draft regression harness from 1 selected case(s).",
+      "status": "ACTIVE",
+      "source": "FAILURE_DERIVED",
+      "version": 57,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "C:\\NHN Project\\team-loop-lite-ai-learning/tools/verification/check-writing.mjs",
+            "document"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_0fc62520304582bd1c27"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_216445a2343910a45d75",
+          "name": "exit_mismatch-82bd1c27",
+          "status": "READY",
+          "sourceFailureCaseId": "fail_0fc62520304582bd1c27",
+          "failureSignatureSha256": "addc076df351880aaefd3f5542e529d3c0d1bf78d9a904867b3ed123227555e8",
+          "expectedAfterFix": "PASS",
+          "replayReady": true,
+          "replayBlocker": null,
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-19T16:35:23.905Z",
+          "lastReplay": {
+            "injection": "unresolved-placeholder-left-in-a-document",
+            "injectedExit": 1,
+            "restoredExit": 0,
+            "caught": true,
+            "verifiedByUserId": "system",
+            "at": "2026-07-27T00:51:06.947Z"
+          }
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-19T16:35:23.902Z",
+      "updatedAt": "2026-07-27T00:51:06.947Z",
+      "lastTest": {
+        "testId": "ht_2eec02fee0edf2bcf239",
+        "definitionSha256": "531fd87955ef04ba929e1565e0e84d5b1078e962ddd43cdbe128d51a70e084d6",
+        "passed": true,
+        "startedAt": "2026-07-19T16:35:31.784Z",
+        "finishedAt": "2026-07-19T16:35:31.961Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "node",
+            "args": [
+              "C:\\NHN Project\\team-loop-lite-ai-learning/tools/verification/check-writing.mjs",
+              "document"
+            ],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 0,
+            "timedOut": false,
+            "spawnError": false,
+            "passed": true,
+            "startedAt": "2026-07-19T16:35:31.784Z",
+            "finishedAt": "2026-07-19T16:35:31.961Z",
+            "stdoutSha256": "91c793854a7d7984efac48220017212f6b7bcbb844bc7c855a74da9b5e241dc2",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdoutTail": "document review passed for 1 file(s): docs/decisions/004-bot-trait-tree.decision.md\n",
+            "stderrTail": ""
+          }
+        ]
+      },
+      "definitionSha256": "531fd87955ef04ba929e1565e0e84d5b1078e962ddd43cdbe128d51a70e084d6",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "regression-exit-mismatch-executor-failed-1fb94d89",
+      "label": "Regression check: exit_mismatch-executor_failed",
+      "description": "Draft regression harness from 2 selected case(s).",
+      "status": "DISABLED",
+      "source": "FAILURE_DERIVED",
+      "version": 5,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "--test"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_6700e082ccf922edd1b4",
+        "fail_d8c0ea96371525805ca4"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_39387bd4a5c146e442fb",
+          "name": "exit_mismatch-25805ca4",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_d8c0ea96371525805ca4",
+          "failureSignatureSha256": "6a49bf9b4ac1c19cb7e8c7959c3d31f6b0c62e8918fe2fd932e08fd59226314d",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T15:56:27.587Z"
+        },
+        {
+          "id": "fxc_be873fc9895460cf8d0a",
+          "name": "executor_failed-22edd1b4",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_6700e082ccf922edd1b4",
+          "failureSignatureSha256": "e13437baa31f5b6533535f17b3d05304dbe68da4d3d2f7fa8fa40ce89c4be28a",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T15:56:27.591Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T15:56:27.580Z",
+      "updatedAt": "2026-07-25T15:57:47.556Z",
+      "lastTest": {
+        "testId": "ht_5c69400146f7ed98fc9e",
+        "definitionSha256": "78cd576c229e388e5d871773da210e84682fa56a3814bcac2104d69672966fda",
+        "passed": true,
+        "startedAt": "2026-07-25T15:56:27.601Z",
+        "finishedAt": "2026-07-25T15:56:33.823Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "node",
+            "args": [
+              "--test"
+            ],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 0,
+            "timedOut": false,
+            "spawnError": false,
+            "passed": true,
+            "startedAt": "2026-07-25T15:56:27.601Z",
+            "finishedAt": "2026-07-25T15:56:33.823Z",
+            "stdoutSha256": "50f7a40f87352a71bbacd16803e4094e4193dd842a334361cd51fdbab576f7f8",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdoutTail": "ged, even with no verification (0.1091ms)\n✔ normalizes Responses API token usage (1.4255ms)\n✔ usage tracker preserves provider-reported CLI cost without local pricing (34.0079ms)\n✔ usage tracker aggregates by user, source, feature and budget (27.5394ms)\n✔ usage summary can be limited to the current actor (65.4433ms)\n✔ usage summary caches 10k parsed events and invalidates on external append (203.4458ms)\n✔ glob matcher supports recursive and single-segment patterns (0.8957ms)\n✔ process runner uses exit code as verdict (107.063ms)\n✔ process runner fails closed on timeout (80.6191ms)\n✔ verifier binds command pass to git scope (1097.7337ms)\n✔ teamLoopRoot placeholders resolve to the tool runtime rather than an external workspace (485.3267ms)\n✔ workspace verification mutex rejects a concurrent verification instead of queueing (0.5375ms)\n✔ a source the work may write is not counted as reading (1.4042ms)\n✔ a glob write scope covers what it matches (0.1689ms)\n✔ the ceiling is the one the evidence supports, and says it is a ceiling not a spend (0.5407ms)\n✔ pack facts are recorded even though they do not yet decide the ceiling (0.2164ms)\n✔ the decision does not pretend to have a discriminator it has not validated (0.1127ms)\n✔ retrieval noise cannot silently change the ceiling (0.2374ms)\n✔ a missing pack still yields a usable ceiling and honest zeros (0.1845ms)\n✔ paths are read out of the task text, with or without a line suffix (1.1678ms)\n✔ a reference the task may also write is not a reading burden (1.3058ms)\n✔ a glob write scope still excludes what it covers (0.1333ms)\n✔ work that only has to produce a file is separated from work that must read first (0.7741ms)\n✔ the classification carries its evidence, so a judgement can be checked (0.2527ms)\n✔ a decomposed child keeps the reading burden its parent declared (0.7296ms)\n✔ a child is still scoped to one criterion even though it inherits context (0.349ms)\n✔ a parent with no description decomposes without inventing one (0.2417ms)\n✔ workboard projection exposes board fields and keeps orchestration internals private (2.0113ms)\n✔ standalone renderer embeds escaped data and has no runtime dependency (2.1376ms)\n✔ every task shape resolves to exactly one known workflow phase with a label (0.9373ms)\n✔ a settled approval state is never reported as an execution phase (0.2442ms)\n✔ a still-running agent is never reported as ready for review (0.1726ms)\n✔ review readiness requires a passed verification and an idle executor (0.0903ms)\n✔ execution and workflow labels never both claim an idle task (0.4111ms)\n✔ a human task never shows an agent execution label (0.2226ms)\n✔ workspace ids and paths stay inside the managed workspace root (2.5873ms)\n✔ workspace manifest keeps external project locations and context roles (0.4408ms)\n✔ workspace manifest rejects an unnormalized id (1.0957ms)\n✔ workspace handoff is read from the manifest with integrity metadata (23.0029ms)\n✔ per-task worktree physically isolates edits from the main tree (751.0254ms)\n✔ createTaskWorktree is idempotent (recreate resets cleanly) (624.6552ms)\n✔ detects unlanded worktree changes before archive (471.986ms)\n✔ detects a task branch that was manually integrated before approval (612.9424ms)\n✔ sanitizes task id and rejects empty (0.4816ms)\n✔ a conflicting merge is aborted so the integration tree never keeps conflict markers (732.2133ms)\n✔ writing verifier accepts a grounded document (418.4534ms)\n✔ writing verifier ignores a deleted document when it is consolidated into a replacement (455.5805ms)\n✔ brainstorm verifier validates candidate, comparison, recommendation, decision, and run by role (288.6578ms)\n✔ candidate must declare spec impact and open questions (225.5085ms)\n✔ recommendation separates product direction and next experiment with an allowed status (224.3584ms)\n✔ general brainstorm keeps the lightweight fallback rules (212.0408ms)\nℹ tests 385\nℹ suites 0\nℹ pass 385\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 6167.2598\n",
+            "stderrTail": ""
+          }
+        ]
+      },
+      "definitionSha256": "78cd576c229e388e5d871773da210e84682fa56a3814bcac2104d69672966fda",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "regression-exit-mismatch-executor-failed-5d643c15",
+      "label": "Regression check: exit_mismatch-executor_failed",
+      "description": "Draft regression harness from 2 selected case(s).",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 4,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "--test"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        },
+        {
+          "file": "agent-executor",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_7cd1069dacae4499b506",
+        "fail_d8c0ea96371525805ca4"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_90e934ea2a79f0d2dc96",
+          "name": "exit_mismatch-25805ca4",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_d8c0ea96371525805ca4",
+          "failureSignatureSha256": "6a49bf9b4ac1c19cb7e8c7959c3d31f6b0c62e8918fe2fd932e08fd59226314d",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T07:54:10.074Z"
+        },
+        {
+          "id": "fxc_8872683caaf74b8770cc",
+          "name": "executor_failed-4499b506",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_7cd1069dacae4499b506",
+          "failureSignatureSha256": "fc2be061d70bf85618f301f7935f368e1edbab16ccd8cdada952443855d1f5ca",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T07:54:10.078Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T07:54:10.071Z",
+      "updatedAt": "2026-07-25T14:51:44.884Z",
+      "lastTest": {
+        "testId": "ht_3d11bf6ff3f350c616ee",
+        "definitionSha256": "a2af55852570da42d64a8ba770ead17a57f714a635d9f3383ac6ee8118cc392c",
+        "passed": false,
+        "startedAt": "2026-07-25T07:54:10.087Z",
+        "finishedAt": "2026-07-25T07:54:15.929Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "node",
+            "args": [
+              "--test"
+            ],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 1,
+            "timedOut": false,
+            "spawnError": false,
+            "passed": false,
+            "startedAt": "2026-07-25T07:54:10.087Z",
+            "finishedAt": "2026-07-25T07:54:15.928Z",
+            "stdoutSha256": "9a13b3838a3360e7819cb209700b603547697c08b01a03dd1248d243f3ef66bf",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdoutTail": "cycles without creating partial tasks (73.8151ms)\n✔ first administrator bootstrap expires without SIGNUP_CODE (46.8306ms)\n✔ configured SIGNUP_CODE is checked inside the registration lock (91.7268ms)\n✔ filters tasks by assignee and reviewer independently (2.2236ms)\n✔ combines assignee and reviewer filters (0.1444ms)\n✔ execution values fail back to simple human and idle states (0.8556ms)\n✔ board labels expose state without executor details (0.1976ms)\n✔ workflow labels keep execution and approval phases mutually exclusive (0.1807ms)\n✔ result summary exposes review evidence at a glance (0.605ms)\n✔ result document contains changes, checks and executor without raw logs (1.1183ms)\n✔ result filename is safe and identifies the artifact (0.2702ms)\n✔ task specification contains ownership, schedule, scope and completion contract (1.6635ms)\n✔ task specification filename is safe and readable (0.23ms)\n✔ task specification includes an actionable execution, evidence and review contract (0.2159ms)\n✔ legacy reissued DONE task archives and links its original during migration (74.6922ms)\n✔ finalizing an explicit replacement archives the original (70.7894ms)\n✔ normalizes Responses API token usage (0.972ms)\n✔ usage tracker preserves provider-reported CLI cost without local pricing (47.547ms)\n✔ usage tracker aggregates by user, source, feature and budget (76.4937ms)\n✔ usage summary can be limited to the current actor (43.1948ms)\n✖ usage summary caches 10k parsed events and invalidates on external append (219.928ms)\n✔ glob matcher supports recursive and single-segment patterns (1.846ms)\n✔ process runner uses exit code as verdict (113.2146ms)\n✔ process runner fails closed on timeout (77.2508ms)\n✔ verifier binds command pass to git scope (1055.5422ms)\n✔ teamLoopRoot placeholders resolve to the tool runtime rather than an external workspace (443.4125ms)\n✔ workspace verification mutex rejects a concurrent verification instead of queueing (0.9301ms)\n✔ workboard projection exposes board fields and keeps orchestration internals private (1.5858ms)\n✔ standalone renderer embeds escaped data and has no runtime dependency (1.0032ms)\n✔ workspace ids and paths stay inside the managed workspace root (0.6929ms)\n✔ workspace manifest keeps external project locations and context roles (0.1716ms)\n✔ workspace manifest rejects an unnormalized id (0.5388ms)\n✔ workspace handoff is read from the manifest with integrity metadata (71.9587ms)\n✔ per-task worktree physically isolates edits from the main tree (759.8225ms)\n✔ createTaskWorktree is idempotent (recreate resets cleanly) (600.9622ms)\n✔ detects unlanded worktree changes before archive (411.1686ms)\n✔ detects a task branch that was manually integrated before approval (562.0641ms)\n✔ sanitizes task id and rejects empty (0.7451ms)\n✔ writing verifier accepts a grounded document (459.0569ms)\n✔ writing verifier ignores a deleted document when it is consolidated into a replacement (486.3663ms)\n✔ brainstorm verifier validates candidate, comparison, recommendation, decision, and run by role (288.6741ms)\n✔ candidate must declare spec impact and open questions (212.4367ms)\n✔ recommendation separates product direction and next experiment with an allowed status (198.673ms)\n✔ general brainstorm keeps the lightweight fallback rules (211.5966ms)\nℹ tests 274\nℹ suites 0\nℹ pass 273\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5789.6143\n\n✖ failing tests:\n\ntest at test\\usage.test.js:119:1\n✖ usage summary caches 10k parsed events and invalidates on external append (219.928ms)\n  AssertionError [ERR_ASSERTION]: warm summary median took 15.1ms\n      at TestContext.<anonymous> (file:///C:/NHN%20Project/team-loop-lite-ai-learning/test/usage.test.js:160:10)\n      at async Test.run (node:internal/test_runner/test:1125:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n",
+            "stderrTail": ""
+          },
+          {
+            "file": "agent-executor",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T07:54:15.928Z",
+            "finishedAt": "2026-07-25T07:54:15.929Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "8c1140f4f239bd2d6e6a74f21990e6d1b25ca8d7dac6d95485433803993d49ab",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-executor ENOENT"
+          }
+        ]
+      },
+      "definitionSha256": "a2af55852570da42d64a8ba770ead17a57f714a635d9f3383ac6ee8118cc392c",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "regression-no-deliverable-57bcffbf",
+      "label": "Regression check: no_deliverable",
+      "description": "Draft regression harness from 1 selected case(s).",
+      "status": "ARCHIVED",
+      "source": "FAILURE_DERIVED",
+      "version": 3,
+      "commands": [
+        {
+          "file": "agent-delivery",
+          "args": [],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "sourceFailureCaseIds": [
+        "fail_14e89db50ffad62f7934"
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_cde873cd2cfa3691716c",
+          "name": "no_deliverable-d62f7934",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_14e89db50ffad62f7934",
+          "failureSignatureSha256": "6a674601fe99378ce633ee781178c223f6db93fb56d6ed9f3e0d65ca464435d0",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-25T09:36:42.381Z"
+        }
+      ],
+      "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+      "createdAt": "2026-07-25T09:36:42.378Z",
+      "updatedAt": "2026-07-25T14:51:44.888Z",
+      "lastTest": {
+        "testId": "ht_1b1bf0f1a6f2b576048d",
+        "definitionSha256": "87ce382f893b96f7efe6faaa24adf87ab619e7931bc96f7b6fac58f3cb2a4bf6",
+        "passed": false,
+        "startedAt": "2026-07-25T09:36:42.388Z",
+        "finishedAt": "2026-07-25T09:36:42.393Z",
+        "testedByUserId": "usr_623d85eb5a9b38dc5efe",
+        "checks": [
+          {
+            "file": "agent-delivery",
+            "args": [],
+            "cwd": ".",
+            "expectedExit": 0,
+            "actualExit": 2,
+            "timedOut": false,
+            "spawnError": true,
+            "passed": false,
+            "startedAt": "2026-07-25T09:36:42.388Z",
+            "finishedAt": "2026-07-25T09:36:42.392Z",
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "f2017ba71f778ba4802b23c80d26ef390d93b618caef8a0a88ff1b48ae8e2a65",
+            "stdoutTail": "",
+            "stderrTail": "spawn agent-delivery ENOENT"
+          }
+        ]
+      },
+      "definitionSha256": "87ce382f893b96f7efe6faaa24adf87ab619e7931bc96f7b6fac58f3cb2a4bf6",
+      "statusChangedByUserId": "usr_623d85eb5a9b38dc5efe",
+      "scope": "global"
+    },
+    {
+      "id": "repository-basic",
+      "label": "Repository basic",
+      "description": "Checks patch whitespace and merge-marker problems.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 10,
+      "commands": [
+        {
+          "file": "git",
+          "args": [
+            "diff",
+            "--check"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [
+        {
+          "id": "fxc_41ca4f8c313b688ecdb9",
+          "name": "scope_violation-f33cdba5",
+          "status": "DRAFT",
+          "sourceFailureCaseId": "fail_e463437de783f33cdba5",
+          "failureSignatureSha256": "82ce15b65b9511d999e51b483fcf135e785b93cb23a67b6daadaecc6ee02746d",
+          "expectedAfterFix": "PASS",
+          "replayReady": false,
+          "replayBlocker": "Fixture files or deterministic setup steps have not been supplied.",
+          "createdByUserId": "usr_623d85eb5a9b38dc5efe",
+          "createdAt": "2026-07-16T14:41:13.183Z"
+        }
+      ],
+      "createdByUserId": null,
+      "createdAt": "2026-07-15T12:06:27.820Z",
+      "updatedAt": "2026-07-16T14:41:13.183Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "4ce3e5b00e0ab28ee6fefa9bd5b05a41470670480c32b826880eb752567514ed",
+      "scope": "global"
+    },
+    {
+      "id": "task-supersession-regression",
+      "label": "Task supersession regression",
+      "description": "Checks that completed replacement tasks archive their original task and retain explicit linkage.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/learning/check-task-supersession.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-19T15:39:30.658Z",
+      "updatedAt": "2026-07-19T15:39:30.658Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "58e9267d5450ac0cbe9a2bd060bb7a9518b119881cf64d5da7857572ee6f34a3",
+      "scope": "global"
+    },
+    {
+      "id": "token-efficiency-regression",
+      "label": "Token efficiency regression",
+      "description": "Fails when a context or traceability contract regresses: context tier budgets, the bounded turn ladder, context pack receipt ids, review-safe state under an exhausted AI review budget, and READY-over-REVIEW START_WORK priority.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "tools/verification/check-token-efficiency.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-25T11:28:09.860Z",
+      "updatedAt": "2026-07-25T11:28:09.860Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "07a0dcd2ba7bdd25bc0c23c209511330c91b3c58e207864839fcb8371ae47609",
+      "scope": "global"
+    },
+    {
+      "id": "verified-run",
+      "label": "Verified run E2E",
+      "description": "Runs tests, syntax checks, a temporary server health probe, dashboard shell probe, and Git patch checks.",
+      "status": "ACTIVE",
+      "source": "BUILTIN",
+      "version": 1,
+      "commands": [
+        {
+          "file": "node",
+          "args": [
+            "--test"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 180000,
+          "mutatesState": false
+        },
+        {
+          "file": "node",
+          "args": [
+            "{teamLoopRoot}/tools/verification/check-runtime.mjs"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 120000,
+          "mutatesState": false
+        },
+        {
+          "file": "git",
+          "args": [
+            "diff",
+            "--check"
+          ],
+          "cwd": ".",
+          "expectedExit": 0,
+          "timeoutMs": 60000,
+          "mutatesState": false
+        }
+      ],
+      "fixtureCandidates": [],
+      "createdByUserId": null,
+      "createdAt": "2026-07-18T06:24:44.848Z",
+      "updatedAt": "2026-07-18T06:24:44.848Z",
+      "lastTest": null,
+      "sourceFailureCaseIds": [],
+      "definitionSha256": "f44ede4423f235b3655e788ed4661c18c26bb898ef5a9777ac7252b42cc73c02",
+      "scope": "global"
+    }
+  ]
+}
