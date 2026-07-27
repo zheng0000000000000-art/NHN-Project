@@ -48,6 +48,48 @@ test('omitting the workspace returns every skill, so audits still see all of the
   assert.equal(ids.length, 4);
 });
 
+// 소속을 찍어놓고 기본값이 "전부"면 아무도 안 본다.
+// 2026-07-27 실측: team-loop 태스크를 하나 만들었더니 unknown-auction 심사 스킬 4개가
+// 자동 배정됐다. 레지스트리는 자기 workspace를 알고 있었는데 list()가 그것을 안 썼다.
+test('a registry that knows its workspace filters by it without being asked', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'skill-scope-default-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, 'skills.json'), JSON.stringify({ schemaVersion: 1, skills: SKILLS }), 'utf8');
+
+  const registry = new SkillRegistry({ dataDirectory: directory, workspaceId: 'team-loop-lite-ai-learning' });
+  const ids = (await registry.list()).map((item) => item.id);
+  assert.ok(!ids.includes('auction-only'), 'another project rule must not leak into the default listing');
+  assert.deepEqual(ids, ['global-rule', 'legacy-no-scope', 'toolchain-only']);
+});
+
+// 감사와 승격 중복 판정은 전부 봐야 한다. 다만 명시해야 한다 — 기본이 "전부"면 새 호출부가 샌다.
+test('allScopes is how you opt into seeing every workspace', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'skill-scope-all-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, 'skills.json'), JSON.stringify({ schemaVersion: 1, skills: SKILLS }), 'utf8');
+
+  const registry = new SkillRegistry({ dataDirectory: directory, workspaceId: 'team-loop-lite-ai-learning' });
+  assert.equal((await registry.list({ allScopes: true })).length, 4);
+});
+
+// 하네스도 같은 기본값이어야 한다. 한쪽만 고치면 그쪽으로 샌다.
+test('the harness registry defaults to its own workspace too', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-scope-default-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, 'harnesses.json'), JSON.stringify({
+    schemaVersion: 1,
+    harnesses: [
+      { id: 'global-check', status: 'ACTIVE', commands: [], scope: 'global' },
+      { id: 'auction-check', status: 'ACTIVE', commands: [], scope: 'unknown-auction' },
+    ],
+  }), 'utf8');
+
+  const registry = new HarnessRegistry({ dataDirectory: directory, workspaceRoot: directory, workspaceId: 'team-loop-lite-ai-learning' });
+  const ids = (await registry.list()).map((item) => item.id);
+  assert.deepEqual(ids, ['global-check']);
+  assert.equal((await registry.list({ allScopes: true })).length, 2);
+});
+
 // scope가 없는 기존 기록을 조용히 감추면 규칙이 사라진 것을 아무도 모른다.
 test('a record without a scope stays visible instead of silently disappearing', () => {
   assert.equal(SkillRegistry.visibleIn({ id: 'x' }, 'unknown-auction'), true);

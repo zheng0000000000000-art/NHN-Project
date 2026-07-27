@@ -35,8 +35,10 @@ export class PromotionEngine {
   async candidates(actorUserId) {
     const [cases, harnesses, skills, receipts] = await Promise.all([
       this.failureCases.list({ limit: 1000 }),
-      this.harnessRegistry.list(),
-      this.skillRegistry.list(),
+      // 승격 후보를 고를 때는 소속을 가리지 않고 다 본다. 이건 "이미 다뤄진 실패인가"를
+      // 세는 자리라서, 남의 workspace 스킬이 안 보이면 같은 실패를 또 승격한다.
+      this.harnessRegistry.list({ allScopes: true }),
+      this.skillRegistry.list({ allScopes: true }),
       this.list(actorUserId, { limit: 200 }),
     ]);
     const covered = new Set([

@@ -872,7 +872,7 @@
       "description": "Draft regression harness from 1 selected case(s).",
       "status": "ACTIVE",
       "source": "FAILURE_DERIVED",
-      "version": 57,
+      "version": 59,
       "commands": [
         {
           "file": "node",
@@ -906,13 +906,13 @@
             "restoredExit": 0,
             "caught": true,
             "verifiedByUserId": "system",
-            "at": "2026-07-27T00:51:06.947Z"
+            "at": "2026-07-27T01:56:07.064Z"
           }
         }
       ],
       "createdByUserId": "usr_623d85eb5a9b38dc5efe",
       "createdAt": "2026-07-19T16:35:23.902Z",
-      "updatedAt": "2026-07-27T00:51:06.947Z",
+      "updatedAt": "2026-07-27T01:56:07.064Z",
       "lastTest": {
         "testId": "ht_2eec02fee0edf2bcf239",
         "definitionSha256": "531fd87955ef04ba929e1565e0e84d5b1078e962ddd43cdbe128d51a70e084d6",

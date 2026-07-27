@@ -40,11 +40,14 @@ export class SkillRegistry {
     return workspaceId != null && scope === workspaceId;
   }
 
-  async list({ includeDisabled = true, workspaceId = null } = {}) {
+  // 기본값은 이 레지스트리가 속한 workspace다. 안 그러면 소속을 찍어놓고도 아무도 안 본다 —
+  // 2026-07-27 실측: team-loop 태스크를 만드니 unknown-auction 심사 스킬 4개가 자동 배정됐다.
+  // 전부 보려면 allScopes를 명시해야 한다. 기본이 "전부"면 새 호출부가 조용히 새어 나간다.
+  async list({ includeDisabled = true, workspaceId = this.workspaceId, allScopes = false } = {}) {
     const db = await readJson(this.path, EMPTY_DB);
     return db.skills
       .filter((item) => includeDisabled || item.status === 'ACTIVE')
-      .filter((item) => workspaceId == null || SkillRegistry.visibleIn(item, workspaceId))
+      .filter((item) => allScopes || workspaceId == null || SkillRegistry.visibleIn(item, workspaceId))
       .map((item) => structuredClone(item))
       .sort((a, b) => a.id.localeCompare(b.id));
   }

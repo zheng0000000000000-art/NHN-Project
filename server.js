@@ -21,6 +21,7 @@ import { mergeTaskWorktree, removeTaskBranch, removeTaskWorktree, taskBranchExis
 import { applyRemoteTaskSubmission, readRemoteTaskFiles } from './src/remote-submission.js';
 import { ProjectContextStore } from './src/project-context.js';
 import { DiscussionStore } from './src/discussions.js';
+import { readCoordinatorPresence, absenceNotice } from './src/coordinator-presence.js';
 import { FixedWindowRateLimiter } from './src/rate-limit.js';
 import { selectLearningForTask } from './src/learning-selector.js';
 import { auditLearningArtifacts } from './src/learning-audit.js';
@@ -219,6 +220,20 @@ const constitutionObservations = new ConstitutionObservationStore(dataDirectory)
 const orchestrationEngine = new OrchestrationEngine({ constitutionCompiler, entryService });
 
 // 유휴 판정은 프록시가 아니라 권위 있는 신호로 한다: 살아있는 워커와 태스크 실행 상태.
+// 조율자가 조용하면 즉시 알린다. 실패해도 메시지 저장은 성공으로 둔다 —
+// 알림이 안 갔다고 사람이 쓴 글을 잃으면 안 된다.
+async function notifyIfCoordinatorAbsent(authorUserId, message) {
+  try {
+    if (authorUserId === (process.env.COORDINATOR_USER_ID || 'usr_claude_coordinator')) return null;
+    const presence = await readCoordinatorPresence();
+    if (presence.alive) return { alive: true, ageMinutes: presence.ageMinutes };
+    Notifier.notifyText('Coordinator not running', absenceNotice(presence));
+    return { alive: false, ageMinutes: presence.ageMinutes };
+  } catch {
+    return null;
+  }
+}
+
 async function workspaceIdleState() {
   if (boardWorkers.size) return { idle: false, reason: 'BOARD_WORKER_ACTIVE' };
   const tasks = await store.listTasks();
@@ -1091,7 +1106,10 @@ async function handleApi(request, response) {
       messageId: message.id,
       length: message.content.length,
     });
-    sendJson(response, 201, { message });
+    // 글을 쓰는 순간 조율자가 도는지 알린다. 대화 채널은 조율자를 깨우지 못하므로
+    // 안 돌고 있으면 이 글은 읽히지 않는다 — 그 사실을 15분 뒤가 아니라 지금 알려준다.
+    const presence = await notifyIfCoordinatorAbsent(actor.id, message);
+    sendJson(response, 201, { message, coordinator: presence });
     return;
   }
 

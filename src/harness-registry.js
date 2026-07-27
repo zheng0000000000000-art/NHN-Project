@@ -41,11 +41,13 @@ export class HarnessRegistry {
     });
   }
 
-  async list({ includeDisabled = true, workspaceId = null } = {}) {
+  // 기본값은 이 레지스트리가 속한 workspace다. 스킬 쪽과 같은 이유다 —
+  // 소속을 찍어놓고 기본이 "전부"면 아무도 안 보고 지식이 남의 프로젝트로 샌다.
+  async list({ includeDisabled = true, workspaceId = this.workspaceId, allScopes = false } = {}) {
     const db = await readJson(this.path, EMPTY_DB);
     return db.harnesses
       .filter((item) => includeDisabled || item.status === 'ACTIVE')
-      .filter((item) => workspaceId == null || HarnessRegistry.visibleIn(item, workspaceId))
+      .filter((item) => allScopes || workspaceId == null || HarnessRegistry.visibleIn(item, workspaceId))
       .map((item) => structuredClone(item))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
